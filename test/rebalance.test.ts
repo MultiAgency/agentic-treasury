@@ -1,0 +1,46 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import type { Holding } from "../src/agent.js";
+import { DEFAULT_STRATEGY } from "../src/strategy.js";
+import { ASSETS } from "../src/policy.js";
+import { type Leg, planLegs, planSteps } from "../src/treasury.js";
+
+const MAX_COST_BPS = DEFAULT_STRATEGY.maxCostBps;
+
+const holding = (asset: string) => ({ asset }) as Holding;
+const leg = (from: string, to: string, amount: bigint): Leg => ({ from: holding(from), to: holding(to), usd: 3, amount });
+const quote = (costBps: number) => ({ amountOut: "561", minAmountOut: "555", costBps });
+
+test("each leg worth its cost becomes a swap held to its quoted floor", () => {
+  const { actions, steps } = planSteps([leg("usdc", "wnear", 3_000_000n)], [quote(44)], MAX_COST_BPS);
+  assert.deepEqual(actions, [
+    { type: "swap", from: "usdc", to: "wnear", amount: "3000000", amountOut: "561", minAmountOut: "555", costBps: 44 },
+  ]);
+  assert.deepEqual(steps, [0]);
+});
+
+test("a leg costing more than it is worth is left out, and later steps keep their legs", () => {
+  const legs = [leg("usdc", "wnear", 1n), leg("usdc", "eth", 2n), leg("eth", "wnear", 3n)];
+  const { actions, steps } = planSteps(legs, [quote(MAX_COST_BPS + 1), quote(MAX_COST_BPS), quote(10)], MAX_COST_BPS);
+  assert.deepEqual(
+    actions.map((a) => a.type === "swap" && a.amount),
+    ["2", "3"],
+  );
+  assert.deepEqual(steps, [undefined, 0, 1]);
+});
+
+test("the owner's strategy decides the legs: its targets, and the smallest leg worth a fee", () => {
+  const held = (asset: string, usd: number) => ({ asset, usd, public: 0n, confidential: 1_000_000n }) as Holding;
+  // $20 USDC, $10 wNEAR, $10 ETH: on target for the default 50/25/25.
+  const book = [held(ASSETS.USDC, 20), held(ASSETS.wNEAR, 10), held(ASSETS.ETH, 10)];
+  assert.deepEqual(planLegs(book, DEFAULT_STRATEGY).legs, []);
+
+  const stable = { ...DEFAULT_STRATEGY, targetBps: { [ASSETS.USDC]: 7_000, [ASSETS.wNEAR]: 1_500, [ASSETS.ETH]: 1_500 } };
+  const legs = planLegs(book, stable).legs.map((l) => [l.from.asset, l.to.asset, Math.round(l.usd)]);
+  assert.deepEqual(legs, [
+    [ASSETS.wNEAR, ASSETS.USDC, 4],
+    [ASSETS.ETH, ASSETS.USDC, 4],
+  ]);
+  // The same drift, but each leg is now under the owner's minimum: left alone.
+  assert.deepEqual(planLegs(book, { ...stable, minLegUsd: 5 }).legs, []);
+});

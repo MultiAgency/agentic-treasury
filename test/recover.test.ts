@@ -1,0 +1,117 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, beforeEach, test } from "node:test";
+import { AgentApiError } from "@near-intents-agent-api/sdk";
+import { api } from "../src/api.js";
+import { acquireMoneyLock, UnresolvedOperations } from "../src/lock.js";
+import { opsLog, readOps } from "../src/ops.js";
+import { recover } from "../src/recover.js";
+
+// Offline: the API's status reads and the grant's sends are replaced per test.
+const home = process.cwd();
+const sent: string[] = [];
+beforeEach(() => {
+  process.chdir(mkdtempSync(join(tmpdir(), "recover-")));
+  process.env.AGENT_GRANT_TOKEN = "ngt_test";
+  sent.length = 0;
+});
+after(() => process.chdir(home));
+
+/** The API's answer to a resend; `null` means the grant must not be used at all. */
+function grant(answer: (() => Promise<{ correlation_id: string }>) | null) {
+  const method = async (_id: string, _request: unknown, { idempotencyKey }: { idempotencyKey: string }) => {
+    if (!answer) assert.fail("this action must not be resent");
+    sent.push(idempotencyKey);
+    return answer();
+  };
+  Object.assign(api, { forGrant: () => ({ swap: method, transfer: method, shield: method, unshield: method }) });
+}
+const statuses = (status: string) => Object.assign(api, { getStatus: async (correlation_id: string) => ({ correlation_id, status }) });
+
+const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+const request = (key: string, at: string) =>
+  JSON.stringify({ at, idempotencyKey: key, kind: "rebalance", method: "swap", request: { origin_asset: "a", destination_asset: "b", amount: "1" } });
+const log = (...lines: string[]) => writeFileSync(opsLog(), `${lines.join("\n")}\n`);
+const blocked = () => assert.rejects(acquireMoneyLock(), UnresolvedOperations);
+const unblocked = async () => (await acquireMoneyLock()).release();
+
+test("a sent action is resolved by reading its status, never by sending again", async () => {
+  log(request("swap:sent", ago(60 * 60_000)), JSON.stringify({ idempotencyKey: "swap:sent", correlation_id: "op_1", status: "UNCERTAIN" }));
+  grant(null);
+  statuses("SUCCESS");
+  const [r] = await recover();
+  assert.equal(r?.outcome, "settled");
+  assert.equal(readOps()[0]?.status, "SUCCESS");
+  await unblocked();
+});
+
+test("one still moving stays unresolved, its latest status recorded", async () => {
+  log(request("swap:moving", ago(60_000)), JSON.stringify({ idempotencyKey: "swap:moving", correlation_id: "op_2", status: "SENT" }));
+  grant(null);
+  statuses("PROCESSING");
+  const [r] = await recover();
+  assert.equal(r?.outcome, "pending");
+  assert.equal(readOps()[0]?.status, "PROCESSING");
+  await blocked();
+});
+
+test("an action with no answer is resent under its original key, only when a person asks", async () => {
+  log(request("swap:lost", ago(60_000)));
+  grant(null);
+  const [left] = await recover();
+  assert.equal(left?.outcome, "unknown");
+  await blocked();
+
+  grant(async () => ({ correlation_id: "op_3" }));
+  statuses("SUCCESS");
+  const [r] = await recover({ resend: true });
+  assert.deepEqual(sent, ["swap:lost"]);
+  assert.equal(r?.outcome, "settled");
+  assert.equal(readOps()[0]?.correlationId, "op_3");
+  await unblocked();
+});
+
+test("a resend the API refuses is recorded as that refusal", async () => {
+  log(request("swap:refused", ago(60_000)));
+  grant(async () => {
+    throw new AgentApiError(409, { errors: [{ status: "409", code: "policy_denied", title: "Policy denied" }] } as never);
+  });
+  const [r] = await recover({ resend: true });
+  assert.equal(r?.outcome, "refused");
+  assert.equal(readOps()[0]?.refused, "policy_denied");
+  await unblocked();
+});
+
+test("a resend whose answer is lost proves nothing: the action stays unresolved", async () => {
+  log(request("swap:unknown", ago(60_000)));
+  grant(async () => {
+    throw new Error("fetch failed");
+  });
+  const [r] = await recover({ resend: true });
+  assert.equal(r?.outcome, "unknown");
+  assert.equal(readOps()[0]?.refused, undefined);
+  await blocked();
+});
+
+test("a failed status read does not prevent another known id from settling", async () => {
+  log(request("first", ago(1000)), JSON.stringify({ idempotencyKey: "first", correlation_id: "bad" }),
+      request("second", ago(1000)), JSON.stringify({ idempotencyKey: "second", correlation_id: "good" }));
+  grant(null);
+  Object.assign(api, { getStatus: async (id: string) => {
+    if (id === "bad") throw new Error("lost status response");
+    return { correlation_id: id, status: "SUCCESS" };
+  } });
+  assert.deepEqual((await recover()).map((r) => r.outcome), ["unknown", "settled"]);
+  assert.deepEqual(sent, []);
+  await blocked();
+});
+
+for (const status of ["UNCERTAIN", "NEEDS_REVIEW"]) test(status + " stays blocked without replay", async () => {
+  log(request("unknown", ago(1000)), JSON.stringify({ idempotencyKey: "unknown", correlation_id: "known" }));
+  grant(null); statuses(status);
+  assert.equal((await recover())[0]?.outcome, "unknown");
+  assert.deepEqual(sent, []);
+  await blocked();
+});

@@ -1,0 +1,147 @@
+import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, beforeEach, test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { dispatch, held } from "../src/agent.js";
+import { api } from "../src/api.js";
+import { acquireMoneyLock, MoneyLockBusy, STALE_MS, UnresolvedOperations } from "../src/lock.js";
+import { opsLog, readOps, settle } from "../src/ops.js";
+
+const TSX = fileURLToPath(new URL("../node_modules/.bin/tsx", import.meta.url));
+const FIXTURE = fileURLToPath(new URL("./fixtures/lock.ts", import.meta.url));
+const home = process.cwd();
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Every test gets an empty directory: the lock and the ops log live in the working directory.
+beforeEach(() => process.chdir(mkdtempSync(join(tmpdir(), "money-lock-"))));
+after(() => process.chdir(home));
+
+/** Runs the fixture in another process in the current directory; returns what it printed. */
+const child = (mode: string) =>
+  spawnSync(TSX, [FIXTURE, mode], { cwd: process.cwd(), encoding: "utf8" }).stdout.trim();
+
+test("another process can't take the lock while it is held", async () => {
+  const lock = await acquireMoneyLock();
+  assert.equal(child("try"), "busy");
+  await lock.release();
+  assert.equal(child("try"), "acquired");
+});
+
+test("a second run in the same process can't take it either", async () => {
+  const lock = await acquireMoneyLock();
+  await assert.rejects(acquireMoneyLock(), MoneyLockBusy);
+  await lock.release();
+});
+
+test("a crashed holder's lock is taken over only once it goes stale", { timeout: 30_000 }, async () => {
+  const holder = spawn(TSX, [FIXTURE, "hold"], { cwd: process.cwd() });
+  // tsx runs the script in a child of its own: kill that process, the one holding the lock.
+  const pid = await new Promise<number>((resolve) =>
+    holder.stdout.on("data", (d) => {
+      const match = /held (\d+)/.exec(String(d));
+      if (match) resolve(Number(match[1]));
+    }),
+  );
+  process.kill(pid, "SIGKILL");
+  await new Promise((resolve) => holder.on("exit", resolve));
+  await assert.rejects(acquireMoneyLock(), MoneyLockBusy);
+  await sleep(STALE_MS + 1_000);
+  const lock = await acquireMoneyLock();
+  assert.ok(lock.held);
+  await lock.release();
+});
+
+test("an operation cut off by a crash blocks every new money action after restart", async () => {
+  assert.equal(child("crash-after-log"), "");
+  const [op] = readOps();
+  assert.equal(op?.idempotencyKey, "swap:crashed");
+  // The crashed process never released its lock; once stale, the next run is refused anyway.
+  await sleep(STALE_MS + 1_000);
+  await assert.rejects(acquireMoneyLock(), (error: unknown) => {
+    assert.ok(error instanceof UnresolvedOperations);
+    assert.deepEqual(error.ops.map((o) => o.idempotencyKey), ["swap:crashed"]);
+    return true;
+  });
+  assert.equal(child("try"), "unresolved");
+  // Only reconcile may take the lock, to resolve it under the original key.
+  const lock = await acquireMoneyLock({ reconcile: true });
+  await lock.release();
+});
+
+test("only proven outcomes resolve an operation", async () => {
+  const request = (key: string) => JSON.stringify({ at: "t", idempotencyKey: key, kind: "k", method: "swap", request: {} });
+  writeFileSync(
+    opsLog(),
+    [
+      request("refused"),
+      JSON.stringify({ idempotencyKey: "refused", refused: "policy_denied" }),
+      request("settled"),
+      JSON.stringify({ idempotencyKey: "settled", correlation_id: "op_1", status: "SENT" }),
+      JSON.stringify({ idempotencyKey: "settled", correlation_id: "op_1", status: "SUCCESS" }),
+      request("uncertain"),
+      JSON.stringify({ idempotencyKey: "uncertain", correlation_id: "op_2", status: "UNCERTAIN" }),
+      request("sent"),
+      JSON.stringify({ idempotencyKey: "sent", correlation_id: "op_3", status: "SENT" }),
+      "",
+    ].join("\n"),
+  );
+  await assert.rejects(acquireMoneyLock(), (error: unknown) => {
+    assert.ok(error instanceof UnresolvedOperations);
+    assert.deepEqual(error.ops.map((o) => o.idempotencyKey), ["uncertain", "sent"]);
+    return true;
+  });
+});
+
+test("an action held for the owner's approval doesn't block, and settles by its correlation id", async () => {
+  writeFileSync(
+    opsLog(),
+    [
+      JSON.stringify({ at: "t", idempotencyKey: "held", kind: "payout", method: "transfer", request: {} }),
+      JSON.stringify({ idempotencyKey: "held", correlation_id: "op_held", status: "PENDING_APPROVAL" }),
+      "",
+    ].join("\n"),
+  );
+  const lock = await acquireMoneyLock();
+  await lock.release();
+  settle("op_held", "SUCCESS");
+  assert.equal(readOps()[0]?.status, "SUCCESS");
+  // Outcome lines are stamped when written, so the log shows how long resolution took.
+  const last = JSON.parse(readFileSync(opsLog(), "utf8").trimEnd().split("\n").at(-1)!);
+  assert.ok(!Number.isNaN(Date.parse(last.at)));
+});
+
+test("a held action seen mid-settlement keeps waiting for its outcome without blocking", async () => {
+  writeFileSync(
+    opsLog(),
+    [
+      JSON.stringify({ at: "t", idempotencyKey: "held", kind: "payout", method: "transfer", request: {} }),
+      JSON.stringify({ idempotencyKey: "held", correlation_id: "op_held", status: "PENDING_APPROVAL" }),
+      "",
+    ].join("\n"),
+  );
+  // Released by a vote, not settled yet: the status read in between is not an outcome.
+  Object.assign(api, { getStatus: async () => ({ correlation_id: "op_held", status: "PROCESSING", details: null }) });
+  assert.deepEqual(await held(), []);
+  assert.equal(readOps()[0]?.status, "PENDING_APPROVAL");
+  const lock = await acquireMoneyLock();
+  await lock.release();
+
+  // An outcome nobody can vouch for is recorded, and blocks until reconciled.
+  Object.assign(api, { getStatus: async () => ({ correlation_id: "op_held", status: "UNCERTAIN", details: null }) });
+  await held();
+  assert.equal(readOps()[0]?.status, "UNCERTAIN");
+  await assert.rejects(acquireMoneyLock(), UnresolvedOperations);
+});
+
+test("dispatch refuses to send without a held lock, before logging anything", async () => {
+  const released = await acquireMoneyLock();
+  await released.release();
+  await assert.rejects(
+    dispatch(released, "test", { method: "swap", request: { origin_asset: "a", destination_asset: "b", amount: "1" } }),
+    /money lock/,
+  );
+  assert.deepEqual(readOps(), []);
+});

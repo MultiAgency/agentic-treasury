@@ -1,0 +1,20 @@
+# Only package files, tsconfig.json and src/ are copied; this keeps secrets and state out of the build context.
+.env
+.env.*
+.ops
+.intake
+.plans
+.owner-intents
+.git
+.claude
+.agents
+.playwright-mcp
+node_modules
+web
+contracts
+research
+feedback
+test
+.inbox
+.strategy
+.DS_Store

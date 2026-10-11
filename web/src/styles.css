@@ -1,0 +1,130 @@
+@import "tailwindcss" source("./");
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Tokens follow the CityNode design system (ui/src/styles.css there). */
+:root {
+  --radius: 0.45rem;
+  --background: oklch(0.99 0.002 240);
+  --foreground: oklch(0.22 0.02 250);
+  --card: oklch(1 0 0);
+  --primary: oklch(0.25 0.03 250);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.96 0.005 240);
+  --muted: oklch(0.965 0.004 240);
+  --muted-foreground: oklch(0.5 0.016 250);
+  --accent: oklch(0.955 0.03 170);
+  --border: oklch(0.92 0.005 240);
+  --border-strong: oklch(0.78 0.01 245);
+  --ring: oklch(0.62 0.12 172);
+  --brand: oklch(0.8 0.15 168);
+  --brand-strong: oklch(0.5 0.1 172);
+  --brand-muted: oklch(0.955 0.035 168);
+  --success: oklch(0.56 0.14 152);
+  --success-muted: oklch(0.96 0.035 152);
+  --success-muted-foreground: oklch(0.38 0.09 152);
+  --warning-muted: oklch(0.97 0.04 85);
+  --warning-muted-foreground: oklch(0.44 0.1 60);
+  --info-muted: oklch(0.96 0.02 250);
+  --info-muted-foreground: oklch(0.4 0.11 255);
+  --destructive: oklch(0.58 0.21 27);
+  --destructive-muted: oklch(0.965 0.02 25);
+  --destructive-muted-foreground: oklch(0.45 0.16 27);
+  --chart-1: oklch(0.25 0.03 250);
+  --chart-2: oklch(0.72 0.14 168);
+  --chart-3: oklch(0.56 0.14 250);
+}
+
+.dark {
+  --background: oklch(0.16 0.01 250);
+  --foreground: oklch(0.96 0.004 240);
+  --card: oklch(0.2 0.012 250);
+  --primary: oklch(0.96 0.004 240);
+  --primary-foreground: oklch(0.2 0.02 250);
+  --secondary: oklch(0.26 0.012 250);
+  --muted: oklch(0.24 0.012 250);
+  --muted-foreground: oklch(0.72 0.012 245);
+  --accent: oklch(0.3 0.05 172);
+  --border: oklch(1 0 0 / 10%);
+  --border-strong: oklch(1 0 0 / 22%);
+  --ring: oklch(0.72 0.13 170);
+  --brand: oklch(0.8 0.15 168);
+  --brand-strong: oklch(0.8 0.14 168);
+  --brand-muted: oklch(0.28 0.05 170);
+  --success: oklch(0.7 0.15 152);
+  --success-muted: oklch(0.27 0.05 152);
+  --success-muted-foreground: oklch(0.86 0.1 152);
+  --warning-muted: oklch(0.29 0.05 70);
+  --warning-muted-foreground: oklch(0.9 0.1 85);
+  --info-muted: oklch(0.27 0.04 250);
+  --info-muted-foreground: oklch(0.86 0.07 250);
+  --destructive: oklch(0.7 0.18 25);
+  --destructive-muted: oklch(0.28 0.06 25);
+  --destructive-muted-foreground: oklch(0.86 0.09 25);
+  --chart-1: oklch(0.96 0.004 240);
+  --chart-2: oklch(0.8 0.15 168);
+  --chart-3: oklch(0.7 0.13 250);
+}
+
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-ring: var(--ring);
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-muted: var(--brand-muted);
+  --color-success: var(--success);
+  --color-success-muted: var(--success-muted);
+  --color-success-muted-foreground: var(--success-muted-foreground);
+  --color-warning-muted: var(--warning-muted);
+  --color-warning-muted-foreground: var(--warning-muted-foreground);
+  --color-info-muted: var(--info-muted);
+  --color-info-muted-foreground: var(--info-muted-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-muted: var(--destructive-muted);
+  --color-destructive-muted-foreground: var(--destructive-muted-foreground);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply m-0 min-h-dvh bg-background font-sans text-foreground antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply font-heading;
+  }
+
+  code {
+    @apply font-mono;
+  }
+}

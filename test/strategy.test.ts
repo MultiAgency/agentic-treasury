@@ -1,0 +1,74 @@
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, beforeEach, test } from "node:test";
+import { ASSETS } from "../src/policy.js";
+import {
+  DEFAULT_STRATEGY,
+  grantApproves,
+  loadStrategy,
+  saveStrategy,
+  STRATEGY_FILE,
+  type Strategy,
+  strategyDigest,
+  strategyLabelSuffix,
+} from "../src/strategy.js";
+
+// Every test gets an empty directory: the strategy file is read from the working directory.
+const home = process.cwd();
+beforeEach(() => process.chdir(mkdtempSync(join(tmpdir(), "strategy-"))));
+after(() => process.chdir(home));
+
+const save = (strategy: unknown) => {
+  mkdirSync(".strategy", { recursive: true });
+  writeFileSync(STRATEGY_FILE, JSON.stringify(strategy));
+};
+
+// Pinned: any other implementation of the canonical form must reproduce this digest.
+test("without a file, today's constants apply, under a fixed digest", () => {
+  assert.deepEqual(loadStrategy(), DEFAULT_STRATEGY);
+  assert.equal(strategyDigest(DEFAULT_STRATEGY), "sha256:25747ed6e7256817b6304d5a3902a0f68ec115581d576594133054a21161f621");
+});
+
+test("the owner's file replaces the defaults; key order doesn't change the digest", () => {
+  const owner: Strategy = { ...DEFAULT_STRATEGY, autopilot: { everyMin: 30, maxUsd: 5 } };
+  save({ autopilot: owner.autopilot, maxCostBps: 150, minLegUsd: 2, targetBps: { ...owner.targetBps } });
+  assert.deepEqual(loadStrategy(), owner);
+  assert.equal(strategyDigest(loadStrategy()), strategyDigest(owner));
+  assert.notEqual(strategyDigest(owner), strategyDigest(DEFAULT_STRATEGY));
+});
+
+test("a file that isn't a whole, consistent strategy is refused, never half-applied", () => {
+  const cases: [string, unknown, RegExp][] = [
+    ["targets off 10 000", { ...DEFAULT_STRATEGY, targetBps: { ...DEFAULT_STRATEGY.targetBps, [ASSETS.ETH]: 2_000 } }, /10 000/],
+    ["an asset missing", { ...DEFAULT_STRATEGY, targetBps: { [ASSETS.USDC]: 5_000, [ASSETS.wNEAR]: 5_000 } }, /targetBps/],
+    ["an asset outside the treasury", { ...DEFAULT_STRATEGY, targetBps: { ...DEFAULT_STRATEGY.targetBps, "nep141:usdt.tether-token.near": 0 } }, /targetBps/],
+    ["a fraction", { ...DEFAULT_STRATEGY, autopilot: { everyMin: 60, maxUsd: 2.5 } }, /maxUsd/],
+    ["runs too often", { ...DEFAULT_STRATEGY, autopilot: { everyMin: 1, maxUsd: 0 } }, /everyMin/],
+    ["no ceiling", { ...DEFAULT_STRATEGY, autopilot: { everyMin: 60 } }, /maxUsd/],
+  ];
+  for (const [name, strategy, expected] of cases) {
+    save(strategy);
+    assert.throws(() => loadStrategy(), expected, name);
+  }
+});
+
+test("a grant approves the strategy whose digest its label carries, and no other", () => {
+  const suffix = strategyLabelSuffix(DEFAULT_STRATEGY);
+  assert.match(suffix, /^[0-9a-f]{32}$/);
+  assert.equal(strategyDigest(DEFAULT_STRATEGY).slice(7, 39), suffix);
+  const label = `treasury:${suffix}`;
+  assert.ok(label.length <= 64, "fits the API's 64-character label");
+  assert.ok(grantApproves(label, DEFAULT_STRATEGY));
+  assert.ok(!grantApproves("treasury", DEFAULT_STRATEGY));
+  assert.ok(!grantApproves(label, { ...DEFAULT_STRATEGY, autopilot: { everyMin: 60, maxUsd: 1_000 } }));
+});
+
+test("a saved strategy is what loads next, and an inconsistent one is never written", () => {
+  const owner: Strategy = { ...DEFAULT_STRATEGY, autopilot: { everyMin: 15, maxUsd: 3 } };
+  saveStrategy(owner);
+  assert.deepEqual(loadStrategy(), owner);
+  assert.throws(() => saveStrategy({ ...owner, minLegUsd: 0 }));
+  assert.deepEqual(loadStrategy(), owner);
+});

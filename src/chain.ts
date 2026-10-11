@@ -1,0 +1,127 @@
+import { Near } from "near-kit";
+import { ASSETS } from "./policy.js";
+
+/** A FastNear API key, when set, goes in a header (not the URL) on RPC and indexer calls. */
+export const fastnearHeaders: Record<string, string> = process.env.FASTNEAR_API_KEY
+  ? { Authorization: `Bearer ${process.env.FASTNEAR_API_KEY}` }
+  : {};
+
+/** FastNear's Transactions API: an account's transactions, relayed ones included, with their receipts. */
+export async function transactionsApi<T>(path: "/account" | "/transactions", body: object) {
+  const response = await fetch(`https://tx.main.fastnear.com/v0${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...fastnearHeaders },
+    body: JSON.stringify(body),
+  });
+  const result = (await response.json()) as T & { error?: string; message?: string };
+  if (!response.ok || result.error) throw new Error(`FastNear ${path}: ${result.message ?? result.error ?? response.status}`);
+  return result;
+}
+
+/** How every `Near` client here reaches mainnet: the keyed FastNear host when there is a key. */
+export const mainnet = {
+  network: {
+    rpcUrl: process.env.NEAR_RPC_URL ?? (process.env.FASTNEAR_API_KEY ? "https://rpc.mainnet.fastnear.com" : "https://free.rpc.fastnear.com"),
+    networkId: "mainnet",
+  },
+  headers: fastnearHeaders,
+};
+
+/** Read-only NEAR access for the treasury view; owner signing builds its own client in owner.ts. */
+const near = new Near(mainnet);
+
+const contractOf = (asset: string) => asset.replace(/^nep141:/, "");
+
+type DaoPolicy = {
+  roles: { name: string; kind: { Group: string[] } | string; permissions: string[]; vote_policy: Record<string, { threshold: unknown }> }[];
+  default_vote_policy: { threshold: unknown };
+};
+type DaoProposal = {
+  id: number;
+  proposer: string;
+  description: string;
+  status: string;
+  kind: Record<string, Record<string, unknown>> | string;
+};
+
+/** Sputnik thresholds are a vote weight ("2") or a share of the role ([1, 2]). */
+const threshold = (t: unknown) =>
+  Array.isArray(t) ? `${t[0]}/${t[1]} of the role` : `${t} vote${t === "1" ? "" : "s"}`;
+
+/** A Sputnik DAO answers get_policy; any other account is treated as a plain NEAR account. */
+async function daoPolicy(accountId: string) {
+  try {
+    return (await near.view<DaoPolicy>(accountId, "get_policy")) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function isDao(accountId: string) {
+  return (await daoPolicy(accountId)) !== null;
+}
+
+/**
+ * The account the agent works for: its balances and, for a DAO, the council that votes on
+ * funding and payee agreements.
+ */
+export async function describeTreasury(accountId: string) {
+  const [policy, near_, usdc] = await Promise.all([
+    daoPolicy(accountId),
+    near.getBalance(accountId),
+    near.view<string>(contractOf(ASSETS.USDC), "ft_balance_of", { account_id: accountId }),
+  ]);
+  const dao = policy && {
+    members: [...new Set(policy.roles.flatMap((r) => (typeof r.kind === "object" ? r.kind.Group : [])))],
+    // Who approves a FunctionCall proposal (how funding is filed) and how many votes it needs.
+    approvers: policy.roles
+      .filter((r) => r.permissions.some((p) => p === "call:VoteApprove" || p === "*:VoteApprove" || p === "*:*"))
+      .map((r) => ({ role: r.name, threshold: threshold(r.vote_policy.call?.threshold ?? policy.default_vote_policy.threshold) })),
+  };
+  return { accountId, dao, balances: { near: near_, usdc: usdc ?? "0" } };
+}
+
+/**
+ * Payees the DAO has already voted to pay: receivers of its approved public transfer proposals.
+ * They are candidates for the agent's agreement; the owner still signs them into the policy.
+ * Implicit (64-hex) receivers are skipped: deposit addresses, such as Trezu's for funding its
+ * private side, are implicit accounts and look the same as a payee on chain.
+ */
+export async function daoPayees(accountId: string) {
+  const last = await near.view<number>(accountId, "get_last_proposal_id");
+  if (!last) return [];
+  const proposals =
+    (await near.view<DaoProposal[]>(accountId, "get_proposals", { from_index: Math.max(0, last - 100), limit: 100 })) ?? [];
+  const payees = new Map<string, { proposalId: number; description: string }>();
+  for (const p of proposals) {
+    if (p.status !== "Approved" || typeof p.kind !== "object" || !p.kind.Transfer) continue;
+    const receiver = p.kind.Transfer.receiver_id as string;
+    if (/^[0-9a-f]{64}$/.test(receiver)) continue;
+    payees.set(receiver, { proposalId: p.id, description: p.description });
+  }
+  return [...payees].map(([address, why]) => ({ address, ...why }));
+}
+
+export async function accountExists(accountId: string) {
+  return near.accountExists(accountId);
+}
+
+const STORAGE_DEPOSIT = "1250000000000000000000"; // 0.00125 NEAR: one NEP-145 registration
+const GAS = "30000000000000";
+const call = (methodName: string, args: object, deposit: string) => ({
+  type: "FunctionCall" as const,
+  params: { methodName, args, gas: GAS, deposit },
+});
+
+/**
+ * One transaction that pays `amount` into an agent deposit address, ready for either signer: a
+ * NEAR account's wallet sends it, a DAO files the same calls as one proposal. Deposit addresses
+ * start unregistered on the token, so the transfer registers them first; NEAR is wrapped.
+ */
+export function fundingTransaction(asset: "USDC" | "NEAR", address: string, amount: string) {
+  const register = call("storage_deposit", { account_id: address, registration_only: true }, STORAGE_DEPOSIT);
+  const transfer = call("ft_transfer", { receiver_id: address, amount }, "1");
+  return asset === "USDC"
+    ? { receiverId: contractOf(ASSETS.USDC), actions: [register, transfer] }
+    : { receiverId: contractOf(ASSETS.wNEAR), actions: [register, call("near_deposit", {}, amount), transfer] };
+}
