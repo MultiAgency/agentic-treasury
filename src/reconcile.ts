@@ -2,7 +2,7 @@ import type { Op } from "./ops.js";
 import { ageMinutes, methodOf, recover, unresolved } from "./recover.js";
 
 // `pnpm reconcile` lists money actions without a proven outcome; `--replay` resolves them under their
-// original keys. Replay of an ambiguous request requires a deliberate operator decision (see recover.ts).
+// original identities. Ambiguous replay is blocked, including when an old client supplies --replay.
 const replay = process.argv.includes("--replay");
 
 const label = (op: Op) =>
@@ -12,7 +12,7 @@ if (!replay && !process.argv.includes("--poll")) {
   const open = unresolved();
   if (open.length === 0) console.log("Every money action has a proven outcome.");
   for (const op of open) console.log(`unresolved ${label(op)}`);
-  if (open.length > 0) console.log("\nPass --poll for status-only recovery. --replay may duplicate an ambiguous request; provider deduplication is unconfirmed.");
+  if (open.length > 0) console.log("\nPass --poll for status-only recovery. Ambiguous replay is blocked; provider deduplication is unverified.");
 } else {
   const recoveries = await recover({ resend: replay });
   if (recoveries.length === 0) console.log("Every money action has a proven outcome.");

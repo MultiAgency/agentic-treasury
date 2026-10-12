@@ -95,7 +95,7 @@ function tools(plan: PlannedAction[], strategy: Strategy): Tool[] {
     ),
     tool(
       "quote_swap",
-      `Quote a swap without executing it. Returns the expected output, the floor, and the cost in basis points of the input value (swaps above ${maxCostBps} bps are refused).`,
+      `Quote a swap without executing it. Returns the expected output, the floor, and the cost in basis points of the input value (swaps that could cost more than ${maxCostBps} bps at their floor are refused).`,
       SwapInput,
       async (input) => {
         const leg = await legFor(input);
@@ -103,7 +103,7 @@ function tools(plan: PlannedAction[], strategy: Strategy): Tool[] {
         if (denied) return denied;
         const quote = await quoteLeg(leg).catch(refusal);
         if (typeof quote === "string") return quote;
-        return `${format(leg.amount, leg.from)} (~$${leg.usd.toFixed(2)}) → ${format(quote.amountOut, leg.to)}, floor ${format(quote.minAmountOut, leg.to)}, cost ${quote.costBps} bps`;
+        return `${format(leg.amount, leg.from)} (~$${leg.usd.toFixed(2)}) → ${format(quote.amountOut, leg.to)}, floor ${format(quote.minAmountOut, leg.to)}, cost ${quote.costBps} bps, at worst ${quote.worstCostBps} bps`;
       },
     ),
     tool(
@@ -116,7 +116,8 @@ function tools(plan: PlannedAction[], strategy: Strategy): Tool[] {
         if (denied) return denied;
         const quote = await quoteLeg(leg).catch(refusal);
         if (typeof quote === "string") return quote;
-        if (quote.costBps > maxCostBps) return `NOT PROPOSED: cost ${quote.costBps} bps is above ${maxCostBps} bps`;
+        if (quote.worstCostBps > maxCostBps)
+          return `NOT PROPOSED: at its floor it costs ${quote.worstCostBps} bps, above ${maxCostBps} bps`;
         plan.push({ type: "swap", from: leg.from.asset, to: leg.to.asset, amount: leg.amount.toString(), ...quote });
         return `PROPOSED as step ${plan.length}: swap ${format(leg.amount, leg.from)} → ${format(quote.amountOut, leg.to)}, floor ${format(quote.minAmountOut, leg.to)}, ${quote.costBps} bps`;
       },
@@ -143,7 +144,7 @@ Target allocation by USD value: ${Object.entries(targets(strategy))
   .map(([asset, weight]) => `${symbolOf(asset)} ${weight * 100}%`)
   .join(", ")}.
 
-Read the treasury once before acting. Before a swap, state what it does to each asset's weight. Move toward the target only when drift is worth a fee: skip legs under $${strategy.minLegUsd}, and never accept a quote above ${strategy.maxCostBps} bps. Nothing should stay public: every swap spends and credits the confidential balance, and any public balance belongs in it.
+Read the treasury once before acting. Before a swap, state what it does to each asset's weight. Move toward the target only when drift is worth a fee: skip legs under $${strategy.minLegUsd}, and never accept a quote that could cost more than ${strategy.maxCostBps} bps at its floor. Nothing should stay public: every swap spends and credits the confidential balance, and any public balance belongs in it.
 
 The owner's policy is enforced outside you, by the API and the wallet provider. If an action comes back REFUSED, say which rule refused it and do not try to route around it.
 

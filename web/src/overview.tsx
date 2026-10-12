@@ -87,7 +87,10 @@ function useAttention() {
     {
       when: unresolved.length,
       to: "/activity",
-      text: `${unresolved.length} money action${unresolved.length === 1 ? " has" : "s have"} no known outcome, the oldest from ${ago(oldest ?? "")}. Nothing new moves until ${unresolved.length === 1 ? "it is" : "they are"} resolved.`,
+      // Every item's text is built, shown or not: format a date only when there is one.
+      text: oldest
+        ? `${unresolved.length} money action${unresolved.length === 1 ? " has" : "s have"} no known outcome, the oldest from ${ago(oldest)}. Nothing new moves until ${unresolved.length === 1 ? "it is" : "they are"} resolved.`
+        : "",
     },
     { when: policy?.frozen, to: "/policy", text: "The agent is frozen. Nothing moves until the owner unfreezes it." },
     {
@@ -102,7 +105,7 @@ function useAttention() {
     },
     {
       when: grantMs < 2 * 86_400_000,
-      text: `The agent's grant expires ${ago(setup.grant?.expiresAt ?? "")}. The owner signs a new one when it does.`,
+      text: setup.grant ? `The agent's grant expires ${ago(setup.grant.expiresAt)}. The owner signs a new one when it does.` : "",
     },
     { when: bookValue(data) === 0, to: "/treasury", text: "The book is empty. Fund it to give the agent something to manage." },
     { when: !treasury, to: "/treasury", text: "No treasury linked. Link the account this agent works for." },

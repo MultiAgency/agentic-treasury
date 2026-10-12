@@ -4,7 +4,7 @@ import { grantLabel } from "../src/intents.js";
 
 test("a grant's label names its purpose, then any suffix the owner's signature binds", () => {
   assert.equal(grantLabel("payout"), "payout");
-  assert.equal(grantLabel("intake"), "intake");
+  assert.equal(grantLabel("invoices"), "invoices");
   const digest = "0123456789abcdef0123456789abcdef";
   assert.equal(grantLabel("treasury", digest), `treasury:${digest}`);
 });

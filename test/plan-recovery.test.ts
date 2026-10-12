@@ -1,3 +1,4 @@
+import { completeExecutionEvidence, policyView } from "./fixtures/authority.js";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -45,6 +46,7 @@ beforeEach(() => {
       return { correlation_id: String(sends.length) };
     },
   }));
+  completeExecutionEvidence();
 });
 afterEach(() => { mock.restoreAll(); process.chdir(home); });
 const swap = (amount = "15"): PlannedAction => ({ type: "swap", from: a, to: b, amount, amountOut: amount, minAmountOut: amount, costBps: 0 });
@@ -80,7 +82,9 @@ for (const change of ["policy", "strategy", "expiry"]) {
     const events = await run([swap()]);
     assert.deepEqual(sends, ["shield"]);
     assert.equal(events.at(-1)?.type, "rejected");
-    assert.equal(readOps().length, 1);
+    // The refused swap is logged with the reason, resolved, so it blocks nothing.
+    const code = { policy: "plan_policy_changed", strategy: "strategy_changed", expiry: "plan_expired" }[change];
+    assert.deepEqual(readOps().map((op) => op.refused), [undefined, code]);
   });
 }
 test("policy change after the first leg stops the second leg", async () => {
@@ -97,12 +101,12 @@ test("a feasible sequence executes once and updates the book between actions", a
 
 test("policy drift during asynchronous send preflight produces zero sends", async () => {
   let reads = 0;
-  mock.method(api, "getPolicy", async () => ({ policy: treasuryPolicy, revision: ++reads >= 4 ? 2 : 1 }));
+  mock.method(api, "getPolicy", async () => policyView(treasuryPolicy, ++reads >= 4 ? 2 : 1));
   // Preview, execution snapshot and leg observation see revision 1; dispatch sees revision 2.
   const events = await run([{ type: "shield", asset: a, amount: "1" }]);
   assert.equal(events.at(-1)?.type, "rejected");
   assert.deepEqual(sends, []);
-  assert.deepEqual(readOps(), []);
+  assert.deepEqual(readOps().map((op) => op.refused), ["plan_policy_changed"]);
 });
 
 test("an output floor above the strategy's cost ceiling stops before shielding", async () => {

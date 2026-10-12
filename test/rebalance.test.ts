@@ -9,7 +9,8 @@ const MAX_COST_BPS = DEFAULT_STRATEGY.maxCostBps;
 
 const holding = (asset: string) => ({ asset }) as Holding;
 const leg = (from: string, to: string, amount: bigint): Leg => ({ from: holding(from), to: holding(to), usd: 3, amount });
-const quote = (costBps: number) => ({ amountOut: "561", minAmountOut: "555", costBps });
+/** A quote expected to cost `costBps`, and `worstCostBps` if it only returns its guaranteed floor. */
+const quote = (costBps: number, worstCostBps = costBps) => ({ amountOut: "561", minAmountOut: "555", costBps, worstCostBps });
 
 test("each leg worth its cost becomes a swap held to its quoted floor", () => {
   const { actions, steps } = planSteps([leg("usdc", "wnear", 3_000_000n)], [quote(44)], MAX_COST_BPS);
@@ -27,6 +28,14 @@ test("a leg costing more than it is worth is left out, and later steps keep thei
     ["2", "3"],
   );
   assert.deepEqual(steps, [undefined, 0, 1]);
+});
+
+test("the cost cap holds at the swap's guaranteed floor, not only at its expected price", () => {
+  // Expected to cost 94 bps, but the floor the API guarantees is ~1% lower: 194 bps in the worst case.
+  const { actions, steps } = planSteps([leg("wnear", "usdc", 1n)], [quote(94, 194)], 150);
+  assert.deepEqual(actions, []);
+  assert.deepEqual(steps, [undefined]);
+  assert.equal(planSteps([leg("wnear", "usdc", 1n)], [quote(94, 194)], 250).actions.length, 1);
 });
 
 test("the owner's strategy decides the legs: its targets, and the smallest leg worth a fee", () => {

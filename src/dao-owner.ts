@@ -1,7 +1,7 @@
-import { createHash, createPublicKey, verify } from "node:crypto";
 import type { Intent, OwnerWallet } from "@near-intents-agent-api/sdk";
 import { DELEGATE_ACTION_PREFIX, encodeSignedDelegateAction, Near, parsePublicKey } from "near-kit";
 import { mainnet, transactionsApi } from "./chain.js";
+import { nep413Hash, rawKey, verifyEd25519 } from "./nep413.js";
 
 /**
  * A DAO as an agent's owner. A Sputnik DAO holds no keys, but it can sign through NEAR's MPC
@@ -15,16 +15,6 @@ const near = new Near(mainnet);
 
 export type NearOwner = Extract<OwnerWallet, { type: "near" }>;
 
-const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-/** The 32 raw bytes of an `ed25519:<base58>` key. */
-function rawKey(key: string) {
-  let n = 0n;
-  for (const c of key.replace(/^ed25519:/, "")) n = n * 58n + BigInt(B58.indexOf(c));
-  return Buffer.from(n.toString(16).padStart(64, "0"), "hex");
-}
-const verifier = (key: string) =>
-  createPublicKey({ key: Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), rawKey(key)]), format: "der", type: "spki" });
-
 /** The DAO's owner account: the implicit account of its MPC key on the `agent-owner` path. */
 export async function daoOwner(dao: string): Promise<NearOwner> {
   const publicKey = await near.view<string>("v1.signer", "derived_public_key", { path: PATH, predecessor: dao, domain_id: 1 });
@@ -35,19 +25,6 @@ export async function daoOwner(dao: string): Promise<NearOwner> {
 /** The owner account exists once funded; a delegate action needs its access key on chain. */
 export async function ownerFunded(owner: NearOwner) {
   return near.accountExists(owner.account_id);
-}
-
-/** NEP-413: sha256(borsh(tag 2^31+413) ++ borsh({ message, nonce[32], recipient, callbackUrl: None })). */
-function nep413Hash(message: string, nonce: Buffer, recipient: string) {
-  const str = (s: string) => {
-    const bytes = Buffer.from(s, "utf8");
-    const length = Buffer.alloc(4);
-    length.writeUInt32LE(bytes.length);
-    return Buffer.concat([length, bytes]);
-  };
-  const tag = Buffer.alloc(4);
-  tag.writeUInt32LE(2 ** 31 + 413);
-  return createHash("sha256").update(Buffer.concat([tag, str(message), nonce, str(recipient), Buffer.from([0])])).digest();
 }
 
 /**
@@ -123,6 +100,28 @@ export function signTransaction(hash: string) {
   };
 }
 
+/**
+ * The same request filed by a member's own wallet as a Sputnik proposal, with a description saying
+ * what it signs. (Through Trezu as a wallet, the description is Trezu's generic "sign on v1.signer".)
+ * `bond` is the DAO's proposal_bond, attached exactly.
+ */
+export function proposalTransaction(dao: string, hash: string, description: string, bond: string) {
+  const { receiverId, actions } = signTransaction(hash);
+  const { methodName, args, gas, deposit } = actions[0]!.params;
+  const kind = {
+    FunctionCall: {
+      receiver_id: receiverId,
+      actions: [{ method_name: methodName, args: Buffer.from(JSON.stringify(args)).toString("base64"), deposit, gas }],
+    },
+  };
+  return {
+    receiverId: dao,
+    actions: [
+      { type: "FunctionCall" as const, params: { methodName: "add_proposal", args: { proposal: { description, kind } }, gas: "100000000000000", deposit: bond } },
+    ],
+  };
+}
+
 type Transactions = { transactions?: { receipts?: { execution_outcome?: { outcome?: { status?: { SuccessValue?: string } } } }[] }[] };
 
 /**
@@ -160,7 +159,7 @@ export async function findSignature(dao: string, { owner, hash, since }: DaoSign
         const result = JSON.parse(Buffer.from(value, "base64").toString());
         if (result?.scheme !== "Ed25519" || !Array.isArray(result.signature)) continue;
         const signature = Buffer.from(result.signature);
-        if (verify(null, Buffer.from(hash, "hex"), verifier(owner.public_key), signature)) return signature;
+        if (verifyEd25519(owner.public_key, Buffer.from(hash, "hex"), signature)) return signature;
       } catch {}
     }
   }

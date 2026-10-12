@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Policy } from "@near-intents-agent-api/sdk";
-import { agentId, dispatch, type SendGate, type Holding, holdings } from "./agent.js";
+import { agentId, dispatch, type Holding, holdings, LocalRefusal, type Sending } from "./agent.js";
 import { api } from "./api.js";
 import { acquireMoneyLock } from "./lock.js";
 import { mandateDigest } from "./mandate.js";
@@ -191,7 +191,7 @@ export type PlanEvent =
       failureCode: string | null | undefined;
     };
 
-class PlanChanged extends Error {}
+const PLAN_REFUSALS = new Set(["plan_expired", "plan_agent_changed", "strategy_changed", "plan_policy_changed", "swap_cost_exceeded"]);
 
 const legFor = (book: Holding[], action: Extract<PlannedAction, { type: "swap" }>) => {
   const from = book.find((h) => h.asset === action.from)!;
@@ -201,7 +201,7 @@ const legFor = (book: Holding[], action: Extract<PlannedAction, { type: "swap" }
 };
 
 /** Executes a saved plan exactly as previewed, under the money lock, or says why it can't. */
-export async function* executePlan(id: string, now = () => new Date()): AsyncGenerator<PlanEvent> {
+export async function* executePlan(id: string, now = () => new Date(), { autopilot = false } = {}): AsyncGenerator<PlanEvent> {
   const plan = loadPlan(id);
   const lock = await acquireMoneyLock();
   try {
@@ -224,26 +224,8 @@ export async function* executePlan(id: string, now = () => new Date()): AsyncGen
       return;
     }
 
-    let currentAction: PlannedAction | undefined;
-    const gate: SendGate = (view, tokens) => {
-      if (now().getTime() >= Date.parse(plan.expiresAt)) throw new PlanChanged("plan expired");
-      if (agentId() !== plan.agentId) throw new PlanChanged("plan agent changed");
-      if (strategyDigest(loadStrategy()) !== plan.strategyDigest) throw new PlanChanged("owner strategy changed");
-      if (view.revision !== plan.policyRevision || (view.policy ? mandateDigest(view.policy) : null) !== plan.policyDigest)
-        throw new PlanChanged("plan policy changed");
-      if (currentAction?.type === "swap") {
-        const action = currentAction;
-        const input = tokens.find((t) => t.asset_id === action.from);
-        const output = tokens.find((t) => t.asset_id === action.to);
-        const usdIn = input?.price ? Number(action.amount) / 10 ** input.decimals * input.price : NaN;
-        const floorUsd = output?.price ? Number(action.minAmountOut) / 10 ** output.decimals * output.price : NaN;
-        const cost = (1 - floorUsd / usdIn) * 10_000;
-        if (!Number.isFinite(cost) || cost > loadStrategy().maxCostBps)
-          throw new PlanChanged("swap output floor exceeds the strategy cost limit");
-      }
-    };
+    const sending = (leg: PlannedAction): Sending => ({ plan, leg, autopilot, now });
     for (const [index, action] of plan.actions.entries()) {
-      currentAction = action;
       const current = await observe();
       const problems = feasibility(plan.actions.slice(index), current.snapshot.balances);
       // The initial preview-balance check is replaced with remaining-plan feasibility after each leg.
@@ -252,12 +234,12 @@ export async function* executePlan(id: string, now = () => new Date()): AsyncGen
       if (problems.length) { yield { type: "rejected", problems }; return; }
       if (action.type === "shield") {
         const request = { asset: action.asset, amount: action.amount };
-        const settled = await dispatch(lock, plan.source, { method: "shield", request }, id, gate);
+        const settled = await dispatch(lock, plan.source, { method: "shield", request }, sending(action));
         yield { type: "action", index, action, status: settled.status, correlationId: settled.correlation_id, failureCode: settled.failure_code };
         if (settled.status !== "SUCCESS") return;
         continue;
       }
-      const { shortfall, shielded, swapped } = await executeLeg(lock, legFor(current.book, action), action.minAmountOut, plan.source, id, gate);
+      const { shortfall, shielded, swapped } = await executeLeg(lock, legFor(current.book, action), action.minAmountOut, plan.source, sending(action));
       const shield = shielded && { amount: shortfall.toString(), status: shielded.status };
       if (!swapped) {
         yield { type: "action", index, action, shield, status: "NOT_SENT", correlationId: "", failureCode: null };
@@ -268,7 +250,8 @@ export async function* executePlan(id: string, now = () => new Date()): AsyncGen
       if (swapped.status !== "SUCCESS") return;
     }
   } catch (error) {
-    if (!(error instanceof PlanChanged)) throw error;
+    // `authorize` refuses a send whose plan no longer holds; the refusal is logged and the plan stops.
+    if (!(error instanceof LocalRefusal && PLAN_REFUSALS.has(error.code))) throw error;
     yield { type: "rejected", problems: [error.message] };
   } finally {
     await lock.release();

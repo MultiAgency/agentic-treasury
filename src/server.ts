@@ -1,45 +1,58 @@
-import { readFile } from "node:fs/promises";
-import { createServer } from "node:http";
-import { extname, join } from "node:path";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { RPCHandler } from "@orpc/server/node";
 import { startAutopilot } from "./autopilot.js";
 import { startReconciliation } from "./recover.js";
 import { router } from "./router.js";
+import { executes } from "./agent.js";
+import { acquireExecutorLease } from "./executor-lease.js";
+import { serveStatic } from "./http.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
-const DIST = "web/dist";
-const TYPES: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript",
-  ".css": "text/css",
-  ".svg": "image/svg+xml",
-  ".woff2": "font/woff2",
-};
 
 const handler = new RPCHandler(router);
+if (process.env.INVOICES_PORT && !process.env.AGENT_ID) throw new Error("Configure the payout agent before enabling invoices");
+// An approve-only instance (EXECUTOR=off) is not the agent's executor: no lease, and no invoice page, which sends.
+if (!executes() && process.env.INVOICES_PORT) throw new Error("EXECUTOR=off can't serve invoices: invoices send payouts");
+const releaseExecutor = process.env.AGENT_ID && executes() ? await acquireExecutorLease(process.env.AGENT_ID) : undefined;
+const invoices = process.env.INVOICES_PORT ? (await import("./invoice-http.js")).startInvoiceServer() : undefined;
 
 // This process holds the agent's grant: answer only same-origin requests on loopback.
-createServer(async (req, res) => {
+const dashboard = createServer(async (req, res) => {
+  // Nothing a request carries may end this process: it also runs the agent's money loops.
+  try {
+    await serveDashboard(req, res);
+  } catch (error) {
+    console.error(error);
+    if (!res.headersSent) res.writeHead(500);
+    res.end();
+  }
+}).listen(PORT, "127.0.0.1", () => {
+  console.log(`Treasury dashboard on http://localhost:${PORT}`);
+  // Ticks only once the owner turns the autopilot on and an agent exists, and only on its executor.
+  if (process.env.AGENT_ID && executes()) { startReconciliation(); startAutopilot(); }
+});
+
+async function serveDashboard(req: IncomingMessage, res: ServerResponse) {
   const host = req.headers.host ?? "";
   const origin = req.headers.origin;
-  if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host) || (origin && new URL(origin).host !== host)) {
+  // A malformed Origin (`null`, garbage) parses to null and is refused like a foreign one.
+  if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host) || (origin && URL.parse(origin)?.host !== host)) {
     res.writeHead(403).end();
     return;
   }
   const { matched } = await handler.handle(req, res, { prefix: "/rpc" });
   if (matched) return;
 
-  // URL parsing resolves dot segments, so the path cannot climb out of DIST.
-  const { pathname } = new URL(req.url ?? "/", "http://localhost");
-  const file = join(DIST, extname(pathname) ? pathname : "index.html");
-  try {
-    const body = await readFile(file);
-    res.writeHead(200, { "content-type": TYPES[extname(file)] ?? "application/octet-stream" }).end(body);
-  } catch {
-    res.writeHead(404).end("Not found. Run `pnpm build:web` first, or use `pnpm web` in development.");
+  const url = URL.parse(req.url ?? "/", "http://localhost");
+  if (!url) {
+    res.writeHead(400).end();
+    return;
   }
-}).listen(PORT, "127.0.0.1", () => {
-  console.log(`Treasury dashboard on http://localhost:${PORT}`);
-  // Ticks only once the owner turns the autopilot on and an agent exists.
-  if (process.env.AGENT_ID) { startReconciliation(); startAutopilot(); }
+  await serveStatic(res, "web/dist", url.pathname, "Not found. Run `pnpm build:web` first, or use `pnpm web` in development.");
+}
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, async () => {
+  dashboard.close(); invoices?.close();
+  await releaseExecutor?.();
+  process.exit(0);
 });

@@ -57,40 +57,27 @@ test("one still moving stays unresolved, its latest status recorded", async () =
   await blocked();
 });
 
-test("an action with no answer is resent under its original key, only when a person asks", async () => {
+test("ambiguous replay stays blocked even when explicitly requested", async () => {
   log(request("swap:lost", ago(60_000)));
-  grant(null);
-  const [left] = await recover();
-  assert.equal(left?.outcome, "unknown");
-  await blocked();
-
-  grant(async () => ({ correlation_id: "op_3" }));
-  statuses("SUCCESS");
-  const [r] = await recover({ resend: true });
-  assert.deepEqual(sent, ["swap:lost"]);
-  assert.equal(r?.outcome, "settled");
-  assert.equal(readOps()[0]?.correlationId, "op_3");
-  await unblocked();
+  grant(async () => { throw new Error("must not send"); });
+  for (const resend of [false, true]) {
+    const [r] = await recover({ resend });
+    assert.equal(r?.outcome, "unknown");
+    assert.match(r!.detail!, /unverified/);
+    assert.deepEqual(sent, []);
+    assert.equal(readOps()[0]?.refused, undefined);
+    await blocked();
+  }
 });
 
-test("a resend the API refuses is recorded as that refusal", async () => {
+test("a later potential policy refusal cannot erase original uncertainty", async () => {
   log(request("swap:refused", ago(60_000)));
   grant(async () => {
     throw new AgentApiError(409, { errors: [{ status: "409", code: "policy_denied", title: "Policy denied" }] } as never);
   });
   const [r] = await recover({ resend: true });
-  assert.equal(r?.outcome, "refused");
-  assert.equal(readOps()[0]?.refused, "policy_denied");
-  await unblocked();
-});
-
-test("a resend whose answer is lost proves nothing: the action stays unresolved", async () => {
-  log(request("swap:unknown", ago(60_000)));
-  grant(async () => {
-    throw new Error("fetch failed");
-  });
-  const [r] = await recover({ resend: true });
   assert.equal(r?.outcome, "unknown");
+  assert.deepEqual(sent, []);
   assert.equal(readOps()[0]?.refused, undefined);
   await blocked();
 });

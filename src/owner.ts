@@ -44,7 +44,9 @@ async function sign({ intent, signer }: GenerateIntentResponse): Promise<SignedD
 
 /** generate → show preview → owner confirms → sign → submit → settle. */
 export async function runOwnerIntent(request: Parameters<typeof api.generateIntent>[0]) {
+  if (request.type === "approval_vote") throw new Error("Use the bound payment approval flow; generic owner signing cannot release payments");
   const generated = await api.generateIntent(request, { idempotencyKey: crypto.randomUUID() });
+  if (generated.type !== request.type) throw new Error("Provider generated a different owner intent type");
   console.log(JSON.stringify(generated.preview, null, 2));
   const rl = createInterface({ input: stdin, output: stdout });
   const answer = await rl.question(`\nSign ${generated.type} as ${owner.account_id} on mainnet? [y/N] `);

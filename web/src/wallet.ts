@@ -75,12 +75,12 @@ const owner = walletSession(
   new NearConnector({ network: "mainnet", features: { signMessage: true, signDelegateActions: true } }),
 );
 
-/** Keeps the DAO's session apart from the owner's in the same browser. */
-const daoStorage: DataStorage = {
-  get: async (key) => localStorage.getItem(`dao:${key}`),
-  set: async (key, value) => localStorage.setItem(`dao:${key}`, value),
-  remove: async (key) => localStorage.removeItem(`dao:${key}`),
-};
+/** Keeps each connection's session apart from the owner's in the same browser. */
+const namespaced = (prefix: string): DataStorage => ({
+  get: async (key) => localStorage.getItem(`${prefix}:${key}`),
+  set: async (key, value) => localStorage.setItem(`${prefix}:${key}`, value),
+  remove: async (key) => localStorage.removeItem(`${prefix}:${key}`),
+});
 
 /**
  * A DAO acting through Trezu, a second connection beside the owner's: it signs as the DAO by
@@ -91,12 +91,30 @@ export const dao = walletSession(
   new NearConnector({
     network: "mainnet",
     manifest: "https://raw.githubusercontent.com/hot-dao/near-selector/refs/heads/main/repository/manifest.json",
-    storage: daoStorage,
+    storage: namespaced("dao"),
   }),
   "trezu-wallet",
 );
 
 export const useWallet = owner.use;
+
+/** A member signing in to the hosted dashboard: a NEP-413 signature is all it needs. */
+const member = walletSession(new NearConnector({ network: "mainnet", features: { signMessage: true }, storage: namespaced("member") }));
+
+/** Signs the gateway's sign-in challenge with the member's wallet, connecting first. */
+export async function signChallenge({ message, recipient, nonce }: { message: string; recipient: string; nonce: string }) {
+  if ((await member.connector.getConnectedWallet().catch(() => null))?.accounts.length !== 1) await member.connect();
+  const { wallet } = await member.connector.getConnectedWallet();
+  const signed = await wallet.signMessage({ message, recipient, nonce: fromBase64(nonce) });
+  // Some wallets also sign the page that asked as a callback URL, without saying so: offer the candidates.
+  const callbackUrls = [...new Set([`${location.origin}/`, location.href])];
+  return { accountId: signed.accountId, publicKey: signed.publicKey, signature: signed.signature, nonce, callbackUrls };
+}
+
+export const signOutMember = () => member.disconnect();
+
+/** Sends a transaction from the signed-in member's own wallet, such as a DAO proposal they file. */
+export const sendAsMember = (transaction: Transaction) => member.send(transaction);
 export const connect = () => owner.connect();
 export const disconnect = () => owner.disconnect();
 export const send = (transaction: Transaction) => owner.send(transaction);

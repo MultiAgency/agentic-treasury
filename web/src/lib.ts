@@ -5,7 +5,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Router } from "../../src/router.js";
 
-export const client: RouterClient<Router> = createORPCClient(new RPCLink({ url: "/rpc" }));
+/**
+ * Where this agent's pages live: "" when a local agent server serves them, "/a/<agent>" behind the
+ * hosted gateway, which forwards that prefix's calls to the agent's own server.
+ */
+export const BASE = (location.pathname.match(/^\/a\/[a-z0-9-]+/)?.[0] ?? "") as "" | `/${string}`;
+
+export const client: RouterClient<Router> = createORPCClient(new RPCLink({ url: `${BASE}/rpc` }));
 
 export type Overview = Awaited<ReturnType<typeof client.overview>>;
 export type Holding = Overview["book"][number];

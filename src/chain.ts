@@ -32,7 +32,9 @@ const near = new Near(mainnet);
 
 const contractOf = (asset: string) => asset.replace(/^nep141:/, "");
 
-type DaoPolicy = {
+export type DaoPolicy = {
+  /** Attached to every add_proposal, exactly (yoctoNEAR). */
+  proposal_bond: string;
   roles: { name: string; kind: { Group: string[] } | string; permissions: string[]; vote_policy: Record<string, { threshold: unknown }> }[];
   default_vote_policy: { threshold: unknown };
 };
@@ -49,7 +51,7 @@ const threshold = (t: unknown) =>
   Array.isArray(t) ? `${t[0]}/${t[1]} of the role` : `${t} vote${t === "1" ? "" : "s"}`;
 
 /** A Sputnik DAO answers get_policy; any other account is treated as a plain NEAR account. */
-async function daoPolicy(accountId: string) {
+export async function daoPolicy(accountId: string) {
   try {
     return (await near.view<DaoPolicy>(accountId, "get_policy")) ?? null;
   } catch {

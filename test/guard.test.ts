@@ -9,14 +9,18 @@ import { acquireMoneyLock, UnresolvedOperations } from "../src/lock.js";
 import { mandateDigest } from "../src/mandate.js";
 import { readOps, record } from "../src/ops.js";
 import { ASSETS, treasuryPolicy } from "../src/policy.js";
+import { authorityFixture, policyView } from "./fixtures/authority.js";
 
 // Offline: the API's policy and token reads are fixed, and anything that would send fails the test.
 const home = process.cwd();
 before(() => {
   process.chdir(mkdtempSync(join(tmpdir(), "guard-")));
   process.env.AGENT_ID = "a".repeat(64);
+  process.env.AGENT_GRANT_TOKEN = "ngt_fixture";
+  const { getAgent, getWallet, listGrants } = authorityFixture("treasury");
   Object.assign(api, {
-    getPolicy: async () => ({ policy: treasuryPolicy, revision: 7 }),
+    getPolicy: async () => policyView(treasuryPolicy, 7),
+    getAgent, getWallet, listGrants,
     getTokens: async () => [{ asset_id: ASSETS.USDC, symbol: "USDC", decimals: 6, price: 1 }],
     forGrant: () => assert.fail("a refused swap must not reach the API"),
   });
@@ -52,7 +56,7 @@ test("a lock lost while the policy is read stops dispatch before anything is log
   const lock = { get held() { return held; }, release: async () => {} };
   const policyRead = api.getPolicy;
   // The holder stalls past the lock's stale window during the read; another process takes it over.
-  Object.assign(api, { getPolicy: async () => ((held = false), { policy: treasuryPolicy, revision: 7 }) });
+  Object.assign(api, { getPolicy: async () => ((held = false), policyView(treasuryPolicy, 7)) });
   try {
     const before = readOps().length;
     const swap = { origin_asset: ASSETS.USDC, destination_asset: ASSETS.wNEAR, amount: "1000000", confidential: true };

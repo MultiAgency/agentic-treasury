@@ -14,6 +14,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, type LinkProps, Outlet } from "@tanstack/react-router";
 import { createContext, type ReactNode, useContext } from "react";
 import { client, type Overview, swaps } from "./lib";
+import { ViewerBadge } from "./session";
+import { useViewer } from "./viewer";
 import { Onboarding, ownerName, type Setup, WalletButton } from "./owner";
 import type { Treasury } from "./treasury";
 import { Badge, Button, Spinner } from "./ui";
@@ -119,6 +121,7 @@ function Notice({ children }: { children: ReactNode }) {
  * agent exists and this server holds a grant for it, onboarding is the only screen.
  */
 export function Shell() {
+  const viewer = useViewer();
   const setup = useQuery({ queryKey: ["setup"], queryFn: () => client.setup() });
   const ready = Boolean(setup.data?.agentId && setup.data.grant);
   const overview = useQuery({
@@ -167,7 +170,13 @@ export function Shell() {
         </div>
         <Nav className="flex flex-col gap-1" data={overview.data} />
         <div className="mt-auto flex flex-col gap-6 px-4">
+          {viewer && (
+            <a href="/" className="text-sm text-muted-foreground hover:text-foreground">
+              ← All agents
+            </a>
+          )}
           {overview.data && <Identity setup={setup.data} data={overview.data} />}
+          <ViewerBadge />
           <div className="flex items-center gap-2">
             <WalletButton />
             {refresh}

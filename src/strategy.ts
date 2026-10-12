@@ -26,7 +26,10 @@ const Strategy = z.object({
     .refine((t) => Object.values(t).reduce((sum, bps) => sum + bps, 0) === 10_000, "targets must add up to 10 000 bps"),
   /** Drift below this is left alone: not worth a fee, and likely under the route minimum. */
   minLegUsd: z.number().int().min(1),
-  /** Most a swap may lose to fees and price impact, in basis points of its input value. */
+  /**
+   * Most a swap may lose, in basis points of its input value, measured at its guaranteed floor: fees,
+   * price impact and the slippage the floor allows (the API sets it about 1% under the quote).
+   */
   maxCostBps: z.number().int().min(1).max(1_000),
   autopilot: z.object({
     /** Minutes between the agent's own runs. */
@@ -41,7 +44,7 @@ export type Strategy = z.infer<typeof Strategy>;
 export const DEFAULT_STRATEGY: Strategy = {
   targetBps: { [ASSETS.USDC]: 5_000, [ASSETS.wNEAR]: 2_500, [ASSETS.ETH]: 2_500 },
   minLegUsd: 2,
-  maxCostBps: 150,
+  maxCostBps: 250,
   autopilot: { everyMin: 60, maxUsd: 0 },
 };
 

@@ -6,7 +6,8 @@
 research/
 node_modules/
 .ops/
-.intake/
+.invoices/
+.release/
 .inbox/
 web/dist/
 .plans/
@@ -15,3 +16,6 @@ contracts/*/target/
 .owner-intents/
 .strategy/
 .DS_Store
+/dashboard.json
+.runtime/
+.evidence

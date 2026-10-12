@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 
 /**
@@ -16,7 +16,9 @@ if (ENV_FILE !== ".env") {
 
 /**
  * Saves values to this instance's settings file, replacing earlier ones, and applies them to this
- * process. The dashboard and the CLIs share the agent through it, beside the API key.
+ * process. The dashboard and the CLIs share the agent through it, beside the API key. It holds the
+ * grant token, so it is readable only by its owner, and is replaced whole: a crash mid-write leaves
+ * the previous file, never a truncated one. A symlinked file is updated at its target.
  */
 export function saveEnv(values: Record<string, string>) {
   const kept = (existsSync(ENV_FILE) ? readFileSync(ENV_FILE, "utf8") : "")
@@ -25,6 +27,9 @@ export function saveEnv(values: Record<string, string>) {
     .join("\n")
     .trimEnd();
   const added = Object.entries(values).map(([key, value]) => `${key}=${value}`);
-  writeFileSync(ENV_FILE, `${[kept, ...added].filter(Boolean).join("\n")}\n`);
+  const file = existsSync(ENV_FILE) ? realpathSync(ENV_FILE) : ENV_FILE;
+  rmSync(`${file}.tmp`, { force: true }); // a leftover from a crash would keep its own mode
+  writeFileSync(`${file}.tmp`, `${[kept, ...added].filter(Boolean).join("\n")}\n`, { mode: 0o600 });
+  renameSync(`${file}.tmp`, file);
   Object.assign(process.env, values);
 }

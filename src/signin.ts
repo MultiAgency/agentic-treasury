@@ -1,0 +1,142 @@
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import type { IncomingMessage } from "node:http";
+import { Near } from "near-kit";
+import { mainnet } from "./chain.js";
+import { nep413Hash, signatureBytes, verifyEd25519 } from "./nep413.js";
+
+/**
+ * Sign-in with a NEAR wallet: the server issues a single-use nonce, the wallet signs a NEP-413
+ * message bound to this host, and the server checks the signature, then that the key is a full-access
+ * key of the account it claims. A session is an HMAC-signed cookie naming the account. What the
+ * account may do is the caller's decision, made per request (the DAO gateway reads the DAO's policy),
+ * never stored in the session.
+ */
+
+export const CHALLENGE_TTL_MS = 5 * 60_000;
+export const SESSION_TTL_MS = 12 * 60 * 60_000;
+
+export const signInMessage = (host: string) => `Sign in to ${host}`;
+
+/** Nonces issued and not yet used, with when each expires. */
+const challenges = new Map<string, number>();
+/**
+ * The client's address for rate limits. Behind a proxy that sets X-Forwarded-For (TRUST_PROXY=true,
+ * e.g. Railway) it is the last entry, the one the proxy appended; earlier entries are whatever the
+ * client sent.
+ */
+export const clientAddress = (req: IncomingMessage) =>
+  (process.env.TRUST_PROXY === "true" && String(req.headers["x-forwarded-for"] ?? "").split(",").at(-1)?.trim()) ||
+  req.socket.remoteAddress || "unknown";
+
+/** A per-key hourly limit. Once there are many keys, idle ones are forgotten, so distinct callers can't grow memory without bound. */
+export function hourlyLimit(perHour: number) {
+  const hits = new Map<string, number[]>();
+  return (key: string, now = Date.now()) => {
+    if (hits.size > 10_000) for (const [k, times] of hits) if (now - (times.at(-1) ?? 0) >= 3_600_000) hits.delete(k);
+    const recent = (hits.get(key) ?? []).filter((t) => now - t < 3_600_000);
+    if (recent.length >= perHour) return false;
+    hits.set(key, [...recent, now]);
+    return true;
+  };
+}
+
+/** The most open challenges at once, so a flood of requests can't grow memory without bound. */
+export const MAX_CHALLENGES = 10_000;
+export class ChallengeLimit extends Error {
+  constructor() { super("Too many sign-ins in progress. Try again in a few minutes."); }
+}
+
+export function issueChallenge(host: string, now = Date.now()) {
+  for (const [nonce, expires] of challenges) if (expires <= now) challenges.delete(nonce);
+  if (challenges.size >= MAX_CHALLENGES) throw new ChallengeLimit();
+  const nonce = randomBytes(32).toString("base64");
+  challenges.set(nonce, now + CHALLENGE_TTL_MS);
+  return { message: signInMessage(host), recipient: host, nonce };
+}
+
+/**
+ * What a wallet's signMessage returns, plus the nonce. Some wallets also sign a callbackUrl, which
+ * they fill in themselves (the page that asked) and don't report back: the page sends what it might
+ * have been, in `callbackUrls`, and `callbackUrl` when it knows.
+ */
+export type SignIn = {
+  accountId: string;
+  publicKey: string;
+  signature: string;
+  nonce: string;
+  callbackUrl?: string | null;
+  callbackUrls?: string[];
+};
+
+/** Looks up a key: its permission, or null if the account has no such key. */
+export type KeyLookup = (accountId: string, publicKey: string) => Promise<"FullAccess" | "FunctionCall" | null>;
+
+const near = new Near(mainnet);
+
+/** The key as NEAR mainnet has it now (`view_access_key`). */
+export const chainKeyLookup: KeyLookup = async (accountId, publicKey) => {
+  const key = await near.getAccessKey(accountId, publicKey).catch(() => null);
+  if (!key) return null;
+  return key.permission === "FullAccess" ? "FullAccess" : "FunctionCall";
+};
+
+/** The account a sign-in proves, or an error saying why it doesn't. The nonce is spent either way. */
+export async function verifySignIn(
+  { accountId, publicKey, signature, nonce, callbackUrl, callbackUrls = [] }: SignIn,
+  host: string,
+  lookup: KeyLookup,
+  now = Date.now(),
+) {
+  const expires = challenges.get(nonce);
+  challenges.delete(nonce);
+  if (expires === undefined) throw new Error("Unknown or used sign-in challenge: start again");
+  if (expires <= now) throw new Error("The sign-in challenge expired: start again");
+  // A callback the wallet signed must be this site too, so the signature stays bound to it.
+  const offered = callbackUrl === undefined ? [null, ...callbackUrls] : [callbackUrl];
+  if (offered.length > 4) throw new Error("Too many callback URLs");
+  if (offered.some((url) => url !== null && URL.parse(url)?.host !== host)) throw new Error("The signed callback URL is not this site");
+  const bytes = signatureBytes(signature);
+  const signed = offered.some((url) =>
+    verifyEd25519(publicKey, nep413Hash(signInMessage(host), Buffer.from(nonce, "base64"), host, url), bytes),
+  );
+  if (!signed) throw new Error("The signature doesn't match this challenge");
+  const permission = await lookup(accountId, publicKey);
+  if (permission === null) throw new Error(`${publicKey} is not a key of ${accountId}`);
+  if (permission !== "FullAccess") throw new Error("Sign in with a full-access key of the account");
+  return accountId;
+}
+
+const mac = (secret: string, payload: string) => createHmac("sha256", secret).update(payload).digest("base64url");
+
+/** A session cookie value: `<account>.<expiry ms>.<hmac>`. */
+export function sessionToken(accountId: string, secret: string, now = Date.now()) {
+  const payload = `${Buffer.from(accountId).toString("base64url")}.${now + SESSION_TTL_MS}`;
+  return `${payload}.${mac(secret, payload)}`;
+}
+
+/** The account a session cookie names, or null if it was forged, altered or has expired. */
+export function sessionAccount(token: string | undefined, secret: string, now = Date.now()) {
+  const [account, expires, signature] = token?.split(".") ?? [];
+  if (!account || !expires || !signature) return null;
+  const expected = Buffer.from(mac(secret, `${account}.${expires}`));
+  const given = Buffer.from(signature);
+  if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;
+  if (Number(expires) <= now) return null;
+  return Buffer.from(account, "base64url").toString();
+}
+
+/**
+ * One app's sessions, under its own cookie name so a session from another app on the same domain never
+ * counts. `open` and `close` return the set-cookie header to answer with.
+ */
+export function sessions({ cookie, secret, secure }: { cookie: string; secret: string; secure: boolean }) {
+  const header = (value: string, maxAgeS: number) =>
+    `${cookie}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAgeS}${secure ? "; Secure" : ""}`;
+  return {
+    /** The signed-in account, or null. */
+    account: (req: IncomingMessage) =>
+      sessionAccount(req.headers.cookie?.split(";").map((c) => c.trim().split("=")).find(([name]) => name === cookie)?.[1], secret),
+    open: (accountId: string) => header(sessionToken(accountId, secret), SESSION_TTL_MS / 1000),
+    close: () => header("", 0),
+  };
+}

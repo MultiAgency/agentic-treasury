@@ -101,7 +101,7 @@ export function Rebalance() {
                       Quote {amount(quote.amountOut, leg.to)} · floor {amount(quote.minAmountOut, leg.to)}
                     </span>
                     <Badge tone={quote.skipped ? "warning" : "neutral"}>
-                      {quote.costBps} bps{quote.skipped ? " · skipped" : ""}
+                      {quote.costBps} bps · at worst {quote.worstCostBps}{quote.skipped ? " · skipped" : ""}
                     </Badge>
                   </>
                 )}

@@ -1,4 +1,4 @@
-import type { SendGate } from "./agent.js";
+import type { Sending } from "./agent.js";
 import type { StatusResponse } from "@near-intents-agent-api/sdk";
 import { type Action, agent, agentId, allHoldings, budgetRemaining, dispatch, type Holding, holdings, LocalRefusal } from "./agent.js";
 import { provenRefusal } from "./ops.js";
@@ -18,7 +18,11 @@ export const targets = (strategy: Strategy): Record<string, number> =>
   Object.fromEntries(Object.entries(strategy.targetBps).map(([asset, bps]) => [asset, bps / 10_000]));
 export type Leg = { from: Holding; to: Holding; usd: number; amount: bigint };
 
-export type Quote = { amountOut: string; minAmountOut: string; costBps: number };
+/**
+ * A dry quote: `costBps` is what the swap is expected to lose to fees and price impact; `worstCostBps`
+ * what it loses if it returns only its guaranteed floor. The strategy's cost cap applies to the worst case.
+ */
+export type Quote = { amountOut: string; minAmountOut: string; costBps: number; worstCostBps: number };
 
 export type RebalanceEvent =
   | { type: "plan"; total: number; book: Holding[]; legs: Leg[]; budget: string | null | undefined; strategy: Strategy }
@@ -61,7 +65,7 @@ export async function* rebalance(): AsyncGenerator<RebalanceEvent> {
   for (const [i, leg] of legs.entries()) {
     const quote = await quoteLeg(leg);
     quotes.push(quote);
-    yield { type: "quote", leg: i, ...quote, skipped: quote.costBps > strategy.maxCostBps };
+    yield { type: "quote", leg: i, ...quote, skipped: quote.worstCostBps > strategy.maxCostBps };
   }
   const { actions, steps } = planSteps(legs, quotes, strategy.maxCostBps);
   if (actions.length > 0) yield { type: "saved", plan: savePlan(snapshot, "rebalance", "Rebalance toward the target split", actions), steps };
@@ -74,8 +78,8 @@ export async function* rebalance(): AsyncGenerator<RebalanceEvent> {
 export function planSteps(legs: Leg[], quotes: Quote[], maxCostBps: number) {
   const actions: PlannedAction[] = [];
   const steps = legs.map((leg, i) => {
-    const { amountOut, minAmountOut, costBps } = quotes[i]!;
-    if (costBps > maxCostBps) return undefined;
+    const { amountOut, minAmountOut, costBps, worstCostBps } = quotes[i]!;
+    if (worstCostBps > maxCostBps) return undefined;
     actions.push({ type: "swap", from: leg.from.asset, to: leg.to.asset, amount: leg.amount.toString(), amountOut, minAmountOut, costBps });
     return actions.length - 1;
   });
@@ -90,30 +94,30 @@ const swapRequest = (leg: Leg) => ({
   confidential: true,
 });
 
-/** A dry quote for one leg, with what it would lose to fees and price impact. */
+/** A dry quote for one leg, with what it would lose to fees and price impact, expected and at worst. */
 export async function quoteLeg(leg: Leg): Promise<Quote> {
   const { quote } = await agent().swap(agentId(), { ...swapRequest(leg), dry: true });
   const amountOut = typeof quote.amount_out === "string" ? quote.amount_out : undefined;
   const minAmountOut = typeof quote.min_amount_out === "string" ? quote.min_amount_out : undefined;
   if (!amountOut || !minAmountOut) throw new Error("quote has no amount_out/min_amount_out");
-  const outUsd = (Number(amountOut) / 10 ** leg.to.decimals) * leg.to.price;
-  return { amountOut, minAmountOut, costBps: Math.round((1 - outUsd / leg.usd) * 10_000) };
+  const cost = (raw: string) => Math.round((1 - ((Number(raw) / 10 ** leg.to.decimals) * leg.to.price) / leg.usd) * 10_000);
+  return { amountOut, minAmountOut, costBps: cost(amountOut), worstCostBps: cost(minAmountOut) };
 }
 
 /**
  * Executes one quoted leg. Swaps spend the confidential balance, so any part still public is
  * shielded first; `swapped` is absent when that shield did not succeed.
  */
-export async function executeLeg(lock: MoneyLock, leg: Leg, minAmountOut: string, kind: string, planId?: string, gate?: SendGate) {
+export async function executeLeg(lock: MoneyLock, leg: Leg, minAmountOut: string, kind: string, sending?: Sending) {
   const shortfall = leg.amount - leg.from.confidential;
   let shielded: StatusResponse | undefined;
   if (shortfall > 0n) {
     const request = { asset: leg.from.asset, amount: shortfall.toString() };
-    shielded = await dispatch(lock, "shield", { method: "shield", request }, planId, gate);
+    shielded = await dispatch(lock, "shield", { method: "shield", request }, sending);
     if (shielded.status !== "SUCCESS") return { shortfall, shielded };
   }
   const request = { ...swapRequest(leg), min_amount_out: minAmountOut };
-  const swapped = await dispatch(lock, kind, { method: "swap", request }, planId, gate);
+  const swapped = await dispatch(lock, kind, { method: "swap", request }, sending);
   return { shortfall, shielded, swapped };
 }
 

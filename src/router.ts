@@ -1,11 +1,12 @@
 import { AgentApiError } from "@near-intents-agent-api/sdk";
 import { ORPCError, os as base } from "@orpc/server";
 import { z } from "zod";
-import { agentId, allHoldings, depositAddress, held, pay } from "./agent.js";
+import { agentId, allHoldings, depositAddress, executes, held, pay } from "./agent.js";
 import { api } from "./api.js";
 import { accountExists, daoPayees, describeTreasury, fundingTransaction, isDao } from "./chain.js";
 import { daoOwner, ownerFunded } from "./dao-owner.js";
 import { MIN_EVERY_MIN, saveSettings, status as autopilotStatus, tick } from "./autopilot.js";
+import { ticks } from "./evidence.js";
 import { saveEnv } from "./env.js";
 import { dismiss, readInbox } from "./inbox.js";
 import { ledger, ledgerCsv, reconcileBooks } from "./ledger.js";
@@ -18,7 +19,8 @@ import { executePlan } from "./plans.js";
 import { ASSETS } from "./policy.js";
 import { loadStrategy } from "./strategy.js";
 import { rebalance, refusals, sweep, targets } from "./treasury.js";
-import { prepare, status, submit } from "./wallet-intents.js";
+import { daoRequests, prepare, status, submit } from "./wallet-intents.js";
+import { cancelPreparedInvoice, listInvoices } from "./invoice-store.js";
 
 /** The agent's ops log, one row per action, newest first: the request as sent and how it settled or was refused. */
 const activity = () =>
@@ -85,7 +87,7 @@ const ownerAction = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("grant_issue"),
-    purpose: z.enum(["treasury", "payout", "intake"]).optional(),
+    purpose: z.enum(["treasury", "payout", "invoices"]).optional(),
     suffix: z.string().min(1).max(64).optional(),
   }),
   z.object({ type: z.literal("grant_revoke"), grantId: z.string().min(1) }),
@@ -125,7 +127,10 @@ export const router = {
     if (!id) return { agentId: null, wallet: null, owner: null, grant: null, dao };
     const [agent, grants] = await Promise.all([api.getAgent(id), api.listGrants(id)]);
     adoptStagedGrant(grants);
-    const grant = liveGrant(grants, process.env.AGENT_GRANT_TOKEN);
+    // An approve-only copy holds no grant token: it shows the executor's grant, read from the API.
+    const grant = executes()
+      ? liveGrant(grants, process.env.AGENT_GRANT_TOKEN)
+      : grants.filter((g) => !g.revoked_at && Date.parse(g.expires_at) > Date.now()).sort((a, b) => b.expires_at.localeCompare(a.expires_at))[0];
     return {
       agentId: id,
       // The NEAR account that holds the agent's balances: where a treasury pays it.
@@ -164,6 +169,8 @@ export const router = {
       .input(z.object({ action: ownerAction, signer: z.enum(["wallet", "dao"]) }))
       .handler(({ input }) => prepare(input.action, input.signer)),
     status: os.input(z.object({ correlationId: z.string() })).handler(({ input }) => status(input.correlationId)),
+    /** What this server waits for the DAO to sign, for members to check each proposal before voting. */
+    pending: os.handler(() => daoRequests()),
     submit: os
       .input(z.object({ correlationId: z.string(), signedData: z.record(z.string(), z.unknown()) }))
       .handler(({ input }) => submit(input.correlationId, input.signedData)),
@@ -199,6 +206,10 @@ export const router = {
     .input(z.object({ recipient: account, asset: z.string(), amount: units, confidential: z.boolean() }))
     .handler(({ input }) => pay(input)),
   activity: os.handler(() => activity()),
+  /** Operator review reads the same durable invoice records; it never initiates a second payout. */
+  invoices: os.handler(() => listInvoices()),
+  cancelPreparedInvoice: os.input(z.object({ id: z.string().regex(/^[0-9a-f]{32}$/) }))
+    .handler(({ input }) => cancelPreparedInvoice(input.id)),
   /**
    * Money actions without a proven outcome: each blocks every new one until resolved. Those held for
    * the owner's approval are listed by `held` instead.
@@ -208,7 +219,7 @@ export const router = {
       .filter((op) => !isHeld(op))
       .map((op) => ({ key: op.idempotencyKey, at: op.at, kind: op.kind, request: op.request, status: op.status ?? null, sent: Boolean(op.correlationId) })),
   ),
-  /** Reads each one's status; with `resend`, a person's call, also resends the unsent ones under their keys. */
+  /** Reads existing operation statuses. Legacy resend requests cannot replay ambiguous submissions. */
   recover: os.input(z.object({ resend: z.boolean() })).handler(async ({ input }) =>
     (await recover(input)).map(({ op, outcome, status, detail }) => ({ key: op.idempotencyKey, outcome, status: status ?? null, detail: detail ?? null })),
   ),
@@ -221,7 +232,9 @@ export const router = {
         saveSettings(input);
         return autopilotStatus();
       }),
-    tick: os.handler(() => tick()),
+    tick: os.handler(() => tick("operator")),
+    /** Every tick's evidence line since `since`: what the scheduler saw and did (src/evidence.ts). */
+    evidence: os.input(z.object({ since: z.iso.datetime().optional() })).handler(({ input }) => ticks(input.since)),
   },
   inbox: {
     list: os.handler(() => readInbox().slice(0, 50)),

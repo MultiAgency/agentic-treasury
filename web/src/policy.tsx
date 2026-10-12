@@ -282,6 +282,9 @@ function describe(request: Record<string, unknown>, book: Holding[]) {
 }
 
 /** Payments the policy holds for the owner: each one released or rejected by its own vote. */
+/** How long the API keeps a held payment approvable (the server's APPROVAL_TTL_MS). */
+const APPROVAL_WINDOW_MS = 24 * 60 * 60_000;
+
 function Held({ data, setup }: { data: Overview; setup: Setup }) {
   const held = useQuery({ queryKey: ["held"], queryFn: () => client.held(), refetchInterval: 15_000 });
   const action = useOwnerAction(setup);
@@ -301,8 +304,8 @@ function Held({ data, setup }: { data: Overview; setup: Setup }) {
       title="Waiting for approval"
       description={
         viaDao
-          ? "Each vote is one proposal. The API's signing window is about five minutes, so approve it in Trezu promptly."
-          : "Each payment waits for your signature."
+          ? "A payment stays approvable for 24 hours. Approve files one proposal, and the API's signing window closes about five minutes later, so vote in Trezu right away."
+          : "A payment stays approvable for 24 hours and waits for your signature."
       }
     >
       <Card>
@@ -312,7 +315,7 @@ function Held({ data, setup }: { data: Overview; setup: Setup }) {
               <div className="flex flex-col gap-1 text-sm">
                 <span>{describe(item.request, data.book)}</span>
                 <span className="text-muted-foreground">
-                  {item.kind} · requested {ago(item.at)}
+                  {item.kind} · requested {ago(item.at)} · expires {ago(new Date(Date.parse(item.at) + APPROVAL_WINDOW_MS).toISOString())}
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -380,6 +383,7 @@ function Grants({ data, setup }: { data: Overview; setup: Setup }) {
   const action = useOwnerAction(setup);
   const canSign = useCanSign(setup);
   const [revoking, setRevoking] = useState<string>();
+  const [issuing, setIssuing] = useState(false);
   const live = data.grants.filter((g) => new Date(g.expires_at) > new Date());
   if (live.length === 0) return null;
   const viaDao = ownerSigner(setup) === "dao";
@@ -391,6 +395,11 @@ function Grants({ data, setup }: { data: Overview; setup: Setup }) {
     setRevoking(grantId);
     await action.run({ type: "grant_revoke", grantId });
     setRevoking(undefined);
+  };
+  const issue = async () => {
+    setIssuing(true);
+    await action.run({ type: "grant_issue" });
+    setIssuing(false);
   };
 
   return (
@@ -407,7 +416,7 @@ function Grants({ data, setup }: { data: Overview; setup: Setup }) {
               <li key={g.grant_id} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
                 <div className="flex flex-col gap-1 text-sm">
                   <span className="flex items-center gap-2">
-                    {g.label} {held && <Badge tone="info">this server</Badge>}
+                    {g.label} {held && <Badge tone="info">Current</Badge>}
                   </span>
                   <span className="text-muted-foreground">
                     issued {ago(g.issued_at)} · expires {ago(g.expires_at)}
@@ -423,7 +432,8 @@ function Grants({ data, setup }: { data: Overview; setup: Setup }) {
                     <ConfirmButton
                       label={label}
                       disabled={action.busy || !canSign}
-                      title="Revoke this server's grant?"
+                      ownerAction
+                      title="Revoke the current grant?"
                       description="The agent stops: nothing moves until the owner issues a new grant. Operations it already committed still finish."
                       confirm="Revoke"
                       onConfirm={() => revoke(g.grant_id)}
@@ -438,6 +448,18 @@ function Grants({ data, setup }: { data: Overview; setup: Setup }) {
             );
           })}
         </ul>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3 text-sm">
+          <span className="text-muted-foreground">
+            A new grant replaces the current one once the owner signs it. A treasury grant's label carries the strategy in force, so
+            signing it approves that strategy for the autopilot.
+          </span>
+          <div className="flex items-center gap-2">
+            {issuing && action.label && <span className="text-muted-foreground">{action.label}</span>}
+            <Button size="sm" variant="outline" disabled={action.busy || !canSign || needsWallet} onClick={issue}>
+              {issuing && action.busy ? <Spinner /> : viaDao ? "Propose a new grant" : "Issue a new grant"}
+            </Button>
+          </div>
+        </div>
         {connectedNotOwner && (
           <p className="pt-3 text-xs text-muted-foreground">
             Only {ownerName(setup)} can revoke grants. Connect that account, or run <code>pnpm revoke-grant</code> with its key.

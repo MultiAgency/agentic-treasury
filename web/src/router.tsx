@@ -1,5 +1,6 @@
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
-import { Activity, Books, Unresolved } from "./activity";
+import { Activity, Books, InvoiceReview, Unresolved } from "./activity";
+import { BASE } from "./lib";
 import { Overview } from "./overview";
 import { Policy } from "./policy";
 import { Shell } from "./shell";
@@ -11,6 +12,7 @@ const page = <P extends string>(path: P, component: () => React.ReactNode) =>
   createRoute({ getParentRoute: () => root, path, component });
 
 export const router = createRouter({
+  basepath: BASE || "/",
   routeTree: root.addChildren([
     page("/", Overview),
     page("/steward", Steward),
@@ -21,6 +23,7 @@ export const router = createRouter({
     page("/activity", () => (
       <>
         <Unresolved />
+        <InvoiceReview />
         <Books />
         <Activity />
       </>

@@ -5,9 +5,10 @@ import "./env.js";
 const apiKey = process.env.NEAR_INTENTS_AGENT_API_KEY;
 if (!apiKey) throw new Error("NEAR_INTENTS_AGENT_API_KEY is not set (see .env.example)");
 
+const API_ORIGIN = new URL(process.env.NEAR_INTENTS_AGENT_API_URL ?? "https://api.demo.agentsonintents.com").origin;
 export const api = new AgentApi({
   apiKey,
-  baseUrl: process.env.NEAR_INTENTS_AGENT_API_URL ?? "https://api.demo.agentsonintents.com",
+  baseUrl: API_ORIGIN,
 });
 
 const MOVING = new Set<StatusResponse["status"]>(["PROCESSING", "QUEUED"]);
@@ -15,11 +16,19 @@ const MOVING = new Set<StatusResponse["status"]>(["PROCESSING", "QUEUED"]);
 /** Still on its way: a status that says nothing yet about how the operation ends. */
 export const isMoving = (status: StatusResponse["status"]) => MOVING.has(status);
 
+/** Bind every status observation to the requested operation before applying financial effects. */
+export function checkedStatus<T extends { correlation_id: string; agent_id?: string | null }>(id: string, status: T): T {
+  if (status.correlation_id !== id || (process.env.AGENT_ID && status.agent_id && status.agent_id !== process.env.AGENT_ID)) {
+    throw new Error("Provider returned another operation or agent; preserve the original outcome and investigate");
+  }
+  return status;
+}
+
 /** Polls until the operation stops moving; UNCERTAIN/NEEDS_REVIEW are returned, never retried. */
 export async function waitForStatus(correlationId: string, signal = AbortSignal.timeout(180_000)) {
   while (true) {
     signal.throwIfAborted();
-    const status = await api.getStatus(correlationId, { waitMs: 30_000, signal });
+    const status = checkedStatus(correlationId, await api.getStatus(correlationId, { waitMs: 30_000, signal }));
     if (!isMoving(status.status)) return status;
   }
 }

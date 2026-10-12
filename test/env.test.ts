@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -36,4 +36,20 @@ test("the default instance keeps everything in .env", () => {
   writeFileSync(join(dir, ".env"), "SHARED=kept\n");
   run(dir, { ENV_FILE: "" }, "default");
   assert.equal(readFileSync(join(dir, ".env"), "utf8"), "SHARED=kept\nAGENT_ID=default\n");
+});
+
+test("a new settings file holding the grant token is readable only by its owner", () => {
+  const dir = mkdtempSync(join(tmpdir(), "instance-"));
+  run(dir, { ENV_FILE: ".env.new" }, "fresh");
+  assert.equal(readFileSync(join(dir, ".env.new"), "utf8"), "AGENT_ID=fresh\n");
+  assert.equal(statSync(join(dir, ".env.new")).mode & 0o777, 0o600);
+});
+
+test("saving through a symlinked settings file updates its target and keeps the link", () => {
+  const dir = mkdtempSync(join(tmpdir(), "instance-"));
+  writeFileSync(join(dir, "settings"), "SHARED=kept\n");
+  symlinkSync("settings", join(dir, ".env.linked"));
+  run(dir, { ENV_FILE: ".env.linked" }, "linked");
+  assert.ok(lstatSync(join(dir, ".env.linked")).isSymbolicLink());
+  assert.equal(readFileSync(join(dir, "settings"), "utf8"), "SHARED=kept\nAGENT_ID=linked\n");
 });

@@ -1,3 +1,4 @@
+import { authorityFixture, policyView } from "./fixtures/authority.js";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,12 +9,12 @@ import { type Action, dispatch, pay, send } from "../src/agent.js";
 import { api } from "../src/api.js";
 import { acquireMoneyLock, type MoneyLock, UnresolvedOperations } from "../src/lock.js";
 import { readOps, record } from "../src/ops.js";
-import { ASSETS, treasuryPolicy } from "../src/policy.js";
+import { ASSETS, payoutPolicy } from "../src/policy.js";
 import { refusals, type RefusalEvent } from "../src/treasury.js";
 
 const home = process.cwd();
 const action: Action = { method: "transfer", request: { asset: ASSETS.USDC, amount: "1", recipient: "fixture.near", confidential: true } };
-const policy = { policy: treasuryPolicy, revision: 1, usage: { budget: { monthly: { remaining_usd: "150" } } } };
+const policy = policyView(payoutPolicy(["fixture.near"]));
 let calls: string[];
 let answer: () => Promise<{ correlation_id: string }>;
 let status: string;
@@ -26,9 +27,8 @@ beforeEach(() => {
   status = "FAILED";
   answer = async () => ({ correlation_id: "fixture-op" });
   mock.method(globalThis, "fetch", async () => { throw new Error("Network forbidden in offline fault tests"); });
+  for (const [name, method] of Object.entries(authorityFixture())) mock.method(api, name as keyof typeof api, method as never);
   mock.method(api, "getPolicy", async () => policy);
-  mock.method(api, "getTokens", async () => Object.entries(ASSETS).map(([symbol, asset_id]) => ({ symbol, asset_id, decimals: 6, price: 1 })));
-  mock.method(api, "getBalances", async () => ({ balances: [] }));
   mock.method(api, "getStatus", async (correlation_id: string) => ({ correlation_id, status }));
   const method = async (_id: string, _request: unknown, options: { idempotencyKey: string }) => {
     calls.push(options.idempotencyKey);
@@ -53,7 +53,7 @@ test("live probes default off before any API read or send", async () => {
 });
 
 for (const failure of ["lost response", "retryable API error", "untrusted refusal-shaped error", "status timeout", "non-retryable status error"]) {
-  test(`probes stop as unknown after ${failure}, and a later run stays blocked`, async () => {
+  test(`submission stays unknown after ${failure}, and a later run stays blocked`, async () => {
     if (failure === "non-retryable status error") mock.method(api, "getStatus", async () => {
       throw new AgentApiError(404, { errors: [{ status: "404", code: "not_found", title: "Not found" }], meta: {} });
     });
@@ -65,9 +65,8 @@ for (const failure of ["lost response", "retryable API error", "untrusted refusa
       if (failure === "untrusted refusal-shaped error") throw Object.assign(new Error("unknown"), { errors: [{ code: "policy_denied" }] });
       throw new Error("lost response");
     };
-    const events = await collect();
-    assert.equal(events.length, 1);
-    assert.equal(events[0]?.outcome, "unknown");
+    const lock = await acquireMoneyLock();
+    try { await assert.rejects(dispatch(lock, "fixture", action)); } finally { await lock.release(); }
     assert.equal(calls.length, 1);
     assert.equal(readOps().length, 1);
     assert.equal(readOps()[0]?.refused, undefined);
@@ -76,11 +75,10 @@ for (const failure of ["lost response", "retryable API error", "untrusted refusa
 }
 
 for (const outcome of ["UNCERTAIN", "NEEDS_REVIEW"]) {
-  test(`probes stop on ${outcome} without another request or a refusal label`, async () => {
+  test(`submission stops on ${outcome} without another request or a refusal label`, async () => {
     status = outcome;
-    const events = await collect();
-    assert.equal(events.length, 1);
-    assert.equal(events[0]?.outcome, "unknown");
+    const lock = await acquireMoneyLock();
+    try { assert.equal((await dispatch(lock, "fixture", action)).status, outcome); } finally { await lock.release(); }
     assert.equal(calls.length, 1);
     assert.equal(readOps()[0]?.status, outcome);
     assert.equal(readOps()[0]?.refused, undefined);
@@ -88,26 +86,14 @@ for (const outcome of ["UNCERTAIN", "NEEDS_REVIEW"]) {
   });
 }
 
-test("a proven policy refusal may continue, but an accepted probe stops for review", async () => {
-  answer = async () => {
-    if (calls.length === 1) throw new AgentApiError(409, {
-      errors: [{ status: "409", code: "policy_denied", title: "Policy denied" }], meta: {},
-    });
-    return { correlation_id: "fixture-op" };
-  };
-  status = "SUCCESS";
-  const events = await collect();
-  assert.deepEqual(events.map((e) => e.outcome), ["refused", "passed"]);
-  assert.equal(calls.length, 2);
-});
-
-test("insufficient balance is inconclusive, not policy enforcement evidence", async () => {
+test("a proven first-submission refusal resolves only that operation", async () => {
   answer = async () => { throw new AgentApiError(409, {
-    errors: [{ status: "409", code: "insufficient_balance", title: "Insufficient balance" }], meta: {},
+    errors: [{ status: "409", code: "policy_denied", title: "Policy denied" }], meta: {},
   }); };
-  const events = await collect();
-  assert.equal(events.filter((e) => e.outcome === "inconclusive").length, 4);
-  assert.equal(events.filter((e) => e.outcome === "refused").length, 1); // local output guard
+  const lock = await acquireMoneyLock();
+  try { await assert.rejects(dispatch(lock, "fixture", action), AgentApiError); } finally { await lock.release(); }
+  assert.equal(readOps()[0]?.refused, "policy_denied");
+  assert.equal(calls.length, 1);
 });
 
 test("lock lost during asynchronous preflight produces zero sends and zero request records", async () => {

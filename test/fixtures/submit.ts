@@ -7,6 +7,7 @@
 //   late      the API receives the signature only when it is sent again
 // Prints how the submission ended.
 import { AgentApiError } from "@near-intents-agent-api/sdk";
+import { readFileSync } from "node:fs";
 import { api } from "../../src/api.js";
 import { reconcileOwnerIntents, submit } from "../../src/wallet-intents.js";
 
@@ -27,6 +28,7 @@ const answers = {
   },
 };
 let sends = 0;
+const creation = JSON.parse(readFileSync(".owner-intents/.env.json", "utf8")).grant.type === "agent_create";
 Object.assign(api, {
   submitIntent: async () => {
     sends++;
@@ -35,7 +37,7 @@ Object.assign(api, {
   getStatus: async (correlation_id: string) => {
     if (process.argv[2] === "timeout") throw new Error("status timeout");
     if (process.argv[2] === "unreached" || (process.argv[2] === "late" && sends === 0)) return { correlation_id, status: "PENDING_SIGNATURE" };
-    return { correlation_id, status: process.argv[2] === "uncertain" ? "UNCERTAIN" : "SUCCESS", agent_id: "recovered-agent" };
+    return { correlation_id, status: process.argv[2] === "uncertain" ? "UNCERTAIN" : "SUCCESS", agent_id: creation ? "recovered-agent" : process.env.AGENT_ID };
   },
 });
 

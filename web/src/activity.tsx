@@ -2,13 +2,14 @@ import { DownloadSimple } from "@phosphor-icons/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { ago, amount, client } from "./lib";
+import { ago, amount, client, fromUnits } from "./lib";
+import { useIsOperator } from "./viewer";
 import { useAgent } from "./shell";
 import { Badge, Button, Card, ConfirmButton, Section, Spinner, statusTone } from "./ui";
 
 /**
  * Money actions without a proven outcome. Each blocks every new one, so the agent waits until they
- * are resolved. Checking only reads their statuses; resending an unsent one is the owner's call.
+ * are resolved. Recovery only reads statuses; ambiguous replay is blocked.
  */
 export function Unresolved() {
   const queryClient = useQueryClient();
@@ -16,14 +17,12 @@ export function Unresolved() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string>();
   if (data.length === 0 && !result) return null;
-  const unsent = data.filter((op) => !op.sent);
-  const oldest = unsent.map((op) => op.at).sort()[0];
 
-  const run = async (resend: boolean) => {
+  const run = async () => {
     setBusy(true);
     setResult(undefined);
     try {
-      const outcomes = await client.recover({ resend });
+      const outcomes = await client.recover({ resend: false });
       const counts = new Map<string, number>();
       for (const { outcome } of outcomes) counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
       setResult([...counts].map(([outcome, n]) => `${n} ${outcome}`).join(" · ") || "Nothing left to resolve.");
@@ -47,29 +46,53 @@ export function Unresolved() {
               <span className="whitespace-nowrap text-muted-foreground sm:w-32">{ago(op.at)}</span>
               <span className="w-20 font-medium capitalize">{op.kind}</span>
               <span className="flex-1 font-mono text-xs text-muted-foreground">{op.key}</span>
-              <Badge tone="warning">{op.sent ? (op.status?.toLowerCase() ?? "sent") : "no sign it was sent"}</Badge>
+              <Badge tone="warning">{op.sent ? (op.status?.toLowerCase() ?? "sent") : op.status === "PREPARED" ? "prepared, never submitted" : "submission outcome unknown"}</Badge>
             </li>
           ))}
         </ul>
         <div className="flex flex-wrap items-center justify-end gap-3 pt-4">
           {result && <span className="mr-auto text-sm text-muted-foreground">{result}</span>}
-          <Button variant="outline" size="sm" disabled={busy} onClick={() => run(false)}>
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => run()}>
             {busy && <Spinner />} Check status
           </Button>
-          {unsent.length > 0 && (
-            <ConfirmButton
-              label="Resend unsent…"
-              disabled={busy}
-              title={`Resend ${unsent.length} unsent action${unsent.length === 1 ? "" : "s"}?`}
-              description={`The oldest was logged ${ago(oldest ?? "")}. Each goes out again under its original key: if the API already has it, you get that operation back; if it never arrived, it executes now, against today's balances and prices.`}
-              confirm="Resend"
-              onConfirm={() => run(true)}
-            />
-          )}
+          <span className="text-xs text-muted-foreground">Replay is blocked. Missing operation IDs require review; they do not prove a payment was unsent.</span>
         </div>
       </Card>
     </Section>
   );
+}
+
+/** Payment identity, reserved amount and revisions, read from the executor's authoritative store. */
+export function InvoiceReview() {
+  const operator = useIsOperator();
+  const queryClient = useQueryClient();
+  const invoices = useQuery({ queryKey: ["invoices"], queryFn: () => client.invoices(), enabled: operator, refetchInterval: 15_000 });
+  const [error, setError] = useState<string>();
+  if (!operator || (!invoices.error && !invoices.data?.length)) return null;
+  return <Section title="Invoices" description="Each invoice keeps one payment identity. Changed details require review and never replace a payment already submitted.">
+    {(error || invoices.error) && <p className="text-sm text-warning-muted-foreground">{error ?? invoices.error?.message}</p>}
+    {invoices.data?.map((invoice) => <Card key={invoice.id}>
+      <div className="flex flex-wrap justify-between gap-2">
+        <span>{invoice.payee} · {fromUnits(invoice.amount, 6)} USDC</span>
+        <Badge tone={invoice.operation.status === "SUCCESS" ? "success" : "warning"}>
+          {invoice.operation.refused ?? invoice.operation.status ?? "unknown"}
+        </Badge>
+      </div>
+      <p className="text-sm text-muted-foreground">Reserved: {fromUnits(invoice.reservation, 6)} USDC · Filed {ago(invoice.at)}</p>
+      <p className="break-all font-mono text-xs text-muted-foreground">Invoice {invoice.id}<br />Payment {invoice.operation.idempotencyKey}</p>
+      {invoice.revisions.map((r) => <p key={r.revision} className="text-sm">
+        Revision {r.revision}: {fromUnits(r.amount, 6)} USDC{r.note ? ` · ${r.note}` : ""}{r.review ? " · Needs review; original payment unchanged" : ""}
+      </p>)}
+      {invoice.operation.submissionState === "PREPARED" && <ConfirmButton
+        label="Cancel unsubmitted invoice" title="Cancel this unsubmitted invoice?"
+        description="This payment has never been submitted. Its reservation will be released. Its identity and revisions will remain in the records."
+        confirm="Cancel invoice" onConfirm={async () => {
+          setError(undefined);
+          try { await client.cancelPreparedInvoice({ id: invoice.id }); await queryClient.invalidateQueries(); }
+          catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+        }} />}
+    </Card>)}
+  </Section>;
 }
 
 /** Every action the agent sent, newest first; `limit` shows only the latest few, with a link to the rest. */

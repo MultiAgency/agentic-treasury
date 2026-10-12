@@ -27,9 +27,9 @@ for await (const event of rebalance()) {
     const leg = legs[event.leg]!;
     console.log(`leg ${event.leg + 1}: ${format(leg.amount, leg.from)} → ${leg.to.symbol} (~$${leg.usd.toFixed(2)})`);
     console.log(
-      `  quote ${format(event.amountOut, leg.to)} (floor ${format(event.minAmountOut, leg.to)}), cost ${event.costBps} bps`,
+      `  quote ${format(event.amountOut, leg.to)} (floor ${format(event.minAmountOut, leg.to)}), cost ${event.costBps} bps, at worst ${event.worstCostBps} bps`,
     );
-    if (event.skipped) console.log(`  skipped: cost above ${strategy!.maxCostBps} bps`);
+    if (event.skipped) console.log(`  skipped: could cost more than ${strategy!.maxCostBps} bps at its floor`);
   } else {
     saved = true;
     console.log(`\nPlan ${event.plan.id}, valid until ${event.plan.expiresAt}.`);

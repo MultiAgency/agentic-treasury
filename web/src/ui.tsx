@@ -1,6 +1,7 @@
 import { Check } from "@phosphor-icons/react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { useRef } from "react";
+import { useIsOperator } from "./viewer";
 
 const BUTTON = {
   default: "bg-primary text-primary-foreground hover:bg-primary/90",
@@ -87,7 +88,10 @@ export function Spinner() {
   return <span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" />;
 }
 
-/** A mainnet action is always one deliberate click away: confirm, then run. */
+/**
+ * A mainnet action is always one deliberate click away: confirm, then run. Behind the hosted gateway
+ * only operators may run one, unless it is an owner action, which for a DAO only files a proposal.
+ */
 export function ConfirmButton({
   label,
   title,
@@ -95,6 +99,7 @@ export function ConfirmButton({
   confirm,
   onConfirm,
   disabled,
+  ownerAction = false,
 }: {
   label: ReactNode;
   title: string;
@@ -102,11 +107,13 @@ export function ConfirmButton({
   confirm: string;
   onConfirm: () => void;
   disabled?: boolean;
+  ownerAction?: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const allowed = useIsOperator() || ownerAction;
   return (
     <>
-      <Button disabled={disabled} onClick={() => dialog.current?.showModal()}>
+      <Button disabled={disabled || !allowed} title={allowed ? undefined : "Operators only"} onClick={() => dialog.current?.showModal()}>
         {label}
       </Button>
       {/* Native modal: focus trap, Escape and backdrop come with the element. */}

@@ -3,6 +3,7 @@ import { agentId } from "./agent.js";
 import { api } from "./api.js";
 import { saveEnv } from "./env.js";
 import { type AgentKind, payoutPolicy, treasuryPolicy } from "./policy.js";
+import { loadStrategy, strategyLabelSuffix } from "./strategy.js";
 
 /**
  * The owner actions this treasury uses, built once for both signers: the CLI's owner key and
@@ -20,8 +21,8 @@ export const ownerRequests = {
   agent_unfreeze: () => ({ type: "agent_unfreeze", agent_id: agentId() }) as const,
 };
 
-/** What a grant is for: the agent's own strategies, its payouts, or the public intake. */
-export type GrantPurpose = "treasury" | "payout" | "intake";
+/** What a grant is for: the agent's own strategies, its payouts, or invoices (the public invoice page). */
+export type GrantPurpose = "treasury" | "payout" | "invoices";
 
 /**
  * A grant's label, which the owner sees when signing and the API shows on every operation the grant
@@ -34,11 +35,11 @@ export function grantLabel(purpose: GrantPurpose, suffix?: string) {
   return label;
 }
 
-const PURPOSES: GrantPurpose[] = ["treasury", "payout", "intake"];
+const PURPOSES: GrantPurpose[] = ["treasury", "payout", "invoices"];
 
 /**
  * The purpose of this agent's grants when none is named: `GRANT_PURPOSE` when this instance is set
- * up to issue one kind (an instance that only issues the public intake's grant), otherwise what the
+ * up to issue one kind (an instance that only issues the invoice page's grant), otherwise what the
  * policy allows: an agent that swaps manages a treasury.
  */
 async function agentPurpose(): Promise<GrantPurpose> {
@@ -51,9 +52,14 @@ async function agentPurpose(): Promise<GrantPurpose> {
   return policy?.actions.includes("swap") ? "treasury" : "payout";
 }
 
-/** A fresh grant credential: the token is the agent's secret, the commitment is what the owner signs. */
+/**
+ * A fresh grant credential: the token is the agent's secret, the commitment is what the owner signs.
+ * A treasury grant's label carries the strategy in force (`strategyLabelSuffix`), so signing it is
+ * the owner's approval of that strategy, which the autopilot requires before acting alone.
+ */
 export async function grantRequest({ purpose, suffix }: { purpose?: GrantPurpose; suffix?: string } = {}) {
-  const label = grantLabel(purpose ?? (await agentPurpose()), suffix);
+  const chosen = purpose ?? (await agentPurpose());
+  const label = grantLabel(chosen, suffix ?? (chosen === "treasury" ? strategyLabelSuffix(loadStrategy()) : undefined));
   const { token, commitment } = createGrantCredential();
   return {
     token,

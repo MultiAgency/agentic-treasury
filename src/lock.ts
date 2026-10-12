@@ -31,10 +31,17 @@ export function assertMoneyLock(lock: MoneyLock) {
   if (!lock.held) throw new Error("Money actions need the money lock, held by this process");
 }
 
+/**
+ * An operation whose outcome is unknown, so nothing new may be sent until it's reconciled. Not one
+ * held for the owner's approval (`isHeld`), and not an invoice prepared but never submitted: that is
+ * a business record with nothing in flight, and its own send is guarded by its submission claim.
+ */
+const blocking = (op: Op) => !isResolved(op) && !isHeld(op) && op.submissionState !== "PREPARED";
+
 /** A new action must not follow an unknown outcome, even within the same locked run. */
-export function assertCanDispatch(lock: MoneyLock) {
+export function assertCanDispatch(lock: MoneyLock, initiatingKey?: string) {
   assertMoneyLock(lock);
-  const unresolved = readOps().filter((op) => !isResolved(op) && !isHeld(op));
+  const unresolved = readOps().filter((op) => blocking(op) && op.idempotencyKey !== initiatingKey);
   if (unresolved.length) throw new UnresolvedOperations(unresolved);
 }
 
@@ -44,7 +51,7 @@ export function assertCanDispatch(lock: MoneyLock) {
  * `reconcile` alone may take the lock with unresolved operations, to resolve them. Operations held
  * for the owner's approval don't block (see `isHeld`).
  */
-export async function acquireMoneyLock({ reconcile = false } = {}): Promise<MoneyLock> {
+export async function acquireMoneyLock({ reconcile = false }: { reconcile?: boolean } = {}): Promise<MoneyLock> {
   let held = true;
   let free: () => Promise<void>;
   try {
@@ -72,10 +79,14 @@ export async function acquireMoneyLock({ reconcile = false } = {}): Promise<Mone
       await free();
     },
   };
-  const unresolved = readOps().filter((op) => !isResolved(op) && !isHeld(op));
-  if (unresolved.length > 0 && !reconcile) {
+  try {
+    if (!reconcile) {
+      const unresolved = readOps().filter(blocking);
+      if (unresolved.length > 0) throw new UnresolvedOperations(unresolved);
+    }
+  } catch (error) {
     await lock.release();
-    throw new UnresolvedOperations(unresolved);
+    throw error;
   }
   return lock;
 }

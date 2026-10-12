@@ -136,6 +136,46 @@ test("a held action seen mid-settlement keeps waiting for its outcome without bl
   await assert.rejects(acquireMoneyLock(), UnresolvedOperations);
 });
 
+test("a payout another instance filed is listed from the API's history and never written here", async () => {
+  writeFileSync(opsLog(), "");
+  const remote = { correlation_id: "op_remote", type: "transfer", status: "PENDING_APPROVAL", created_at: new Date().toISOString(), details: { approval_id: "appr-1" } };
+  Object.assign(api, {
+    getHistory: async () => ({ data: [remote, { ...remote, correlation_id: "op_done", status: "SUCCESS" }], next_cursor: null }),
+    getApproval: async () => ({ request_data: { to: "payee.near", token: "nep141:usdc", amount: "1000000" } }),
+  });
+  assert.deepEqual(await held(), [
+    {
+      at: remote.created_at,
+      kind: "remote",
+      request: { asset: "nep141:usdc", amount: "1000000", recipient: "payee.near", confidential: true },
+      correlationId: "op_remote",
+      approvalId: "appr-1",
+    },
+  ]);
+  // A vote releasing it settles by correlation id, which matches no local line: nothing is created.
+  settle("op_remote", "SUCCESS");
+  assert.deepEqual(readOps(), []);
+
+  // Without the history, this instance's own held actions are still listed.
+  Object.assign(api, { getHistory: async () => { throw new Error("down"); } });
+  assert.deepEqual(await held(), []);
+});
+
+test("an approve-only instance (EXECUTOR=off) refuses to send, before logging anything", async () => {
+  const lock = await acquireMoneyLock();
+  process.env.EXECUTOR = "off";
+  try {
+    await assert.rejects(
+      dispatch(lock, "test", { method: "transfer", request: { asset: "a", amount: "1", recipient: "b.near", confidential: true } }),
+      /only approves/,
+    );
+    assert.deepEqual(readOps(), []);
+  } finally {
+    delete process.env.EXECUTOR;
+    await lock.release();
+  }
+});
+
 test("dispatch refuses to send without a held lock, before logging anything", async () => {
   const released = await acquireMoneyLock();
   await released.release();

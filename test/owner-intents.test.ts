@@ -59,6 +59,29 @@ test("a restarted server still follows a DAO vote in progress, and drops intents
   assert.equal(statSync(file).mode & 0o777, 0o600);
 });
 
+test("a restarted server keeps a grant token only while its grant is still waiting to be issued", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "owner-intents-"));
+  const file = join(dir, ".owner-intents", ".env.json");
+  const at = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
+  const dao = await signingRequest(intent, owner);
+  mkdirSync(join(dir, ".owner-intents"));
+  writeFileSync(
+    file,
+    JSON.stringify({
+      waiting: { type: "grant_issue", expiresAt: at(5), grantToken: "ngt_waiting", dao },
+      promoted: { type: "grant_issue", expiresAt: at(5), grantToken: "ngt_promoted", ownerSucceeded: true, stage: "submitted", dao },
+      settled: { type: "grant_issue", expiresAt: at(-60), grantToken: "ngt_settled", stage: "settled", result: { status: "SUCCESS" }, dao },
+    }),
+  );
+  const result = spawnSync(TSX, [FIXTURE, "waiting"], { cwd: dir, env: { ...process.env, ENV_FILE: "" }, encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  const kept = JSON.parse(readFileSync(file, "utf8"));
+  assert.equal(kept.waiting.grantToken, "ngt_waiting");
+  assert.equal(kept.promoted.grantToken, undefined);
+  assert.equal(kept.settled.grantToken, undefined);
+  assert.doesNotMatch(readFileSync(file, "utf8"), /ngt_promoted|ngt_settled/);
+});
+
 const SUBMIT = fileURLToPath(new URL("./fixtures/submit.ts", import.meta.url));
 
 /** A directory where a grant was prepared, its token not yet in use, and the pending file it needs. */
@@ -72,7 +95,8 @@ function preparedGrant() {
 }
 
 function submitIn(dir: string, answer: "lost" | "refused" | "accepted" | "recover" | "timeout" | "uncertain" | "unreached" | "late") {
-  const result = spawnSync(TSX, [SUBMIT, answer], { cwd: dir, env: { ...process.env, ENV_FILE: "" }, encoding: "utf8" });
+  const creating = JSON.parse(readFileSync(join(dir, ".owner-intents", ".env.json"), "utf8")).grant.type === "agent_create";
+  const result = spawnSync(TSX, [SUBMIT, answer], { cwd: dir, env: { ...process.env, ENV_FILE: "", ...(creating && { AGENT_ID: "" }) }, encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   const pending = Object.keys(JSON.parse(readFileSync(join(dir, ".owner-intents", ".env.json"), "utf8")));
   return { outcome: JSON.parse(result.stdout), pending, env: readFileSync(join(dir, ".env"), "utf8") };

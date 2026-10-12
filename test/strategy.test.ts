@@ -28,12 +28,12 @@ const save = (strategy: unknown) => {
 // Pinned: any other implementation of the canonical form must reproduce this digest.
 test("without a file, today's constants apply, under a fixed digest", () => {
   assert.deepEqual(loadStrategy(), DEFAULT_STRATEGY);
-  assert.equal(strategyDigest(DEFAULT_STRATEGY), "sha256:25747ed6e7256817b6304d5a3902a0f68ec115581d576594133054a21161f621");
+  assert.equal(strategyDigest(DEFAULT_STRATEGY), "sha256:bc37ba018a92e973c6a8cc134bfffd6088918f4ff9fac194d478c781b6e8a459");
 });
 
 test("the owner's file replaces the defaults; key order doesn't change the digest", () => {
   const owner: Strategy = { ...DEFAULT_STRATEGY, autopilot: { everyMin: 30, maxUsd: 5 } };
-  save({ autopilot: owner.autopilot, maxCostBps: 150, minLegUsd: 2, targetBps: { ...owner.targetBps } });
+  save({ autopilot: owner.autopilot, maxCostBps: owner.maxCostBps, minLegUsd: owner.minLegUsd, targetBps: { ...owner.targetBps } });
   assert.deepEqual(loadStrategy(), owner);
   assert.equal(strategyDigest(loadStrategy()), strategyDigest(owner));
   assert.notEqual(strategyDigest(owner), strategyDigest(DEFAULT_STRATEGY));
@@ -71,4 +71,15 @@ test("a saved strategy is what loads next, and an inconsistent one is never writ
   assert.deepEqual(loadStrategy(), owner);
   assert.throws(() => saveStrategy({ ...owner, minLegUsd: 0 }));
   assert.deepEqual(loadStrategy(), owner);
+});
+
+test("a treasury grant carries the strategy in force, so the owner's signature approves it", async () => {
+  const { grantRequest } = await import("../src/intents.js");
+  saveStrategy({ ...DEFAULT_STRATEGY, autopilot: { everyMin: 60, maxUsd: 3 } });
+  const treasury = (await grantRequest({ purpose: "treasury" })).request.label;
+  assert.equal(treasury, `treasury:${strategyLabelSuffix(loadStrategy())}`);
+  assert.ok(grantApproves(treasury, loadStrategy()));
+  // Other grants don't run the strategy; a suffix named explicitly is kept as given.
+  assert.equal((await grantRequest({ purpose: "payout" })).request.label, "payout");
+  assert.equal((await grantRequest({ purpose: "treasury", suffix: "x" })).request.label, "treasury:x");
 });

@@ -3,7 +3,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useState } from "react";
 import { client } from "./lib";
 import { Badge, Button, Card, input, Section, Spinner, Step } from "./ui";
-import { connect, dao, disconnect, ownerWallet, send, signIntent, useWallet } from "./wallet";
+import { useViewer } from "./viewer";
+import { connect, dao, disconnect, ownerWallet, send, sendAsMember, signIntent, useWallet } from "./wallet";
 
 export type Setup = Awaited<ReturnType<typeof client.setup>>;
 export type Destination = { address: string; confidential: boolean };
@@ -51,6 +52,7 @@ function useCountdown(iso?: string) {
  */
 export function useOwnerAction(setup: Setup) {
   const queryClient = useQueryClient();
+  const viewer = useViewer();
   const [step, setStep] = useState<"idle" | "preparing" | "signing" | "filing" | "voting" | "settling">("idle");
   const [deadline, setDeadline] = useState<string>();
   const [error, setError] = useState<string>();
@@ -60,12 +62,19 @@ export function useOwnerAction(setup: Setup) {
 
   async function viaDao(action: OwnerAction) {
     if (!setup.dao) throw new Error("Link the DAO as the treasury first");
-    await ensureDao(setup.dao.id);
+    // A signed-in member who may file proposals files it from their own wallet, with a description
+    // saying what it signs; otherwise Trezu files it, as a generic "sign on v1.signer".
+    const ownWallet = viewer?.canPropose ?? false;
+    if (!ownWallet) await ensureDao(setup.dao.id);
     const prepared = await client.owner.prepare({ action, signer: "dao" });
     if (!("dao" in prepared) || !prepared.dao) throw new Error("The server did not prepare a DAO signature");
     setDigest(prepared.digest);
     setStep("filing");
-    await dao.send(prepared.dao.transaction);
+    if (ownWallet && prepared.dao.proposal) await sendAsMember(prepared.dao.proposal);
+    else {
+      if (ownWallet) await ensureDao(setup.dao.id);
+      await dao.send(prepared.dao.transaction);
+    }
     setDeadline(prepared.expiresAt);
     setStep("voting");
     // The server watches for the DAO's signature and submits it; follow it to the end.
@@ -129,7 +138,7 @@ export function useOwnerAction(setup: Setup) {
     idle: null,
     preparing: "Preparing…",
     signing: "Approve in your wallet…",
-    filing: "File the proposal in Trezu…",
+    filing: viewer?.canPropose ? "Confirm the proposal in your wallet…" : "File the proposal in Trezu…",
     voting: `Waiting for ${setup.dao?.id ?? "the DAO"} to approve · ${left === null ? "" : `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")} left`}`,
     settling: "Settling on chain…",
   }[step];

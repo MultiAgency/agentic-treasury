@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentApiError } from "@near-intents-agent-api/sdk";
+import { invoiceOperations, recordInvoiceOperation, type PaymentState } from "./invoice-store.js";
 
 /**
  * The append-only log of one agent's money actions, `.ops/<agent id>.jsonl`. A request line is
@@ -28,13 +29,15 @@ export type Context = {
   usdIn?: number | null;
 };
 
-type Line =
+export type Line =
   | ({ at: string; idempotencyKey: string; kind: string; method?: Method; request: Record<string, unknown> } & Context)
   /** Outcome lines are stamped when written (`at`), so the log shows how long each took to resolve. */
   | { at?: string; idempotencyKey: string; correlation_id: string; status: string }
   | { at?: string; idempotencyKey: string; refused: string };
 
 export type Op = Context & {
+  invoiceId?: string;
+  submissionState?: PaymentState;
   at: string;
   idempotencyKey: string;
   kind: string;
@@ -59,7 +62,17 @@ export const isResolved = (op: Op) => op.refused !== undefined || (op.status !==
 export const isHeld = (op: Op) => op.status === "PENDING_APPROVAL";
 
 export function record(line: Line) {
-  appendFileSync(opsLog(), `${JSON.stringify({ at: new Date().toISOString(), ...line })}\n`);
+  if ("correlation_id" in line) {
+    const existing = readOps().find((op) => op.idempotencyKey === line.idempotencyKey);
+    if (existing?.correlationId && existing.correlationId !== line.correlation_id) {
+      throw new Error("Provider operation identity changed");
+    }
+    if (existing && isResolved(existing) && line.status !== existing.status) {
+      return; // never reopen a proven terminal outcome with contradictory evidence
+    }
+  }
+  if (recordInvoiceOperation(line)) return;
+  appendFileSync(opsLog(), `${JSON.stringify({ at: new Date().toISOString(), ...line })}\n`, { flush: true });
 }
 
 /** Records a logged operation's latest status, found by its correlation id. */
@@ -71,9 +84,8 @@ export function settle(correlationId: string, status: string) {
 /** Every operation in the log, oldest first, folded with the outcomes recorded for it. */
 export function readOps(): Op[] {
   const log = opsLog();
-  if (!existsSync(log)) return [];
   const ops = new Map<string, Op>();
-  for (const text of readFileSync(log, "utf8").split("\n")) {
+  for (const text of (existsSync(log) ? readFileSync(log, "utf8") : "").split("\n")) {
     if (!text.trim()) continue;
     const line = JSON.parse(text) as Line;
     if ("request" in line) ops.set(line.idempotencyKey, { ...line });
@@ -82,13 +94,22 @@ export function readOps(): Op[] {
     if ("refused" in line) op.refused = line.refused;
     if ("correlation_id" in line) Object.assign(op, { correlationId: line.correlation_id, status: line.status });
   }
-  return [...ops.values()];
+  for (const op of invoiceOperations()) {
+    if (ops.has(op.idempotencyKey)) throw new Error("Operation exists in both stores; reconcile before executing");
+    ops.set(op.idempotencyKey, op);
+  }
+  return [...ops.values()].sort((a, b) => a.at.localeCompare(b.at));
 }
 
 /**
  * The code of a refusal the API documents as proven: nothing was sent, and the same key replays
  * the refusal. Anything else (a server failure, `retryable`, a lost response) may have taken effect.
  */
+/** A send or approval this server holds before anything reaches the provider. */
+export class AuthorizationHeld extends Error {
+  constructor(message: string) { super(`Execution held: ${message}`); }
+}
+
 export function provenRefusal(error: unknown): string | undefined {
   if (!(error instanceof AgentApiError) || error.retryable) return undefined;
   if (error.status >= 500 && !PROVEN_5XX.has(error.code ?? "")) return undefined;
