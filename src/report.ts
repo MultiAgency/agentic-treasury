@@ -4,6 +4,8 @@ import type { Row } from "./ledger.js";
 /** How late a scheduled tick may run before it counts as missed: the timer checks once a minute. */
 const SLACK_MIN = 3;
 const MONEY = new Set(["swap", "shield", "unshield", "transfer", "withdraw"]);
+/** Operator-only procedures whose handlers only read. */
+const OPERATOR_READS = new Set(["autopilot/evidence"]);
 
 export type Intervention = { at: string; account: string; agent: string; path: string };
 export type ReportInput = {
@@ -38,7 +40,10 @@ export function outcomeOf(t: Tick): Outcome {
 export function unattendedReport({ since, until, evidence, interventions: allInterventions, ledger, now = new Date().toISOString() }: ReportInput) {
   const ticks = evidence.ticks.filter((t) => t.at >= since && t.at <= until).sort((a, b) => a.at.localeCompare(b.at));
   const rows = ledger.filter((r) => r.at >= since && r.at <= until && MONEY.has(r.type));
-  const interventions = allInterventions.filter((i) => i.at >= since && i.at <= until);
+  // Operator-only calls that only read (the evidence itself) are listed, not counted as interventions.
+  const recorded = allInterventions.filter((i) => i.at >= since && i.at <= until);
+  const reads = recorded.filter((i) => OPERATOR_READS.has(i.path));
+  const interventions = recorded.filter((i) => !OPERATOR_READS.has(i.path));
   const outcome = new Map(ticks.map((t) => [t, outcomeOf(t)]));
 
   // Configuration segments: build, mandate or scheduler settings changing starts a new one.
@@ -154,6 +159,7 @@ export function unattendedReport({ since, until, evidence, interventions: allInt
     ...list("Duplicate references:", references),
     ...list("Operator interventions (dashboard calls beyond reads):", interventions.map((i) => `${i.at} ${i.account} ${i.agent} ${i.path}`)),
     ...list("Operator-triggered ticks:", operatorTicks.map((t) => t.at)),
+    ...list("Operator reads (recorded by the gateway, not interventions):", reads.map((i) => `${i.at} ${i.account} ${i.agent} ${i.path}`)),
     ...list("Refusals (the control was invoked; whether it refused correctly is not judged here):", ticks.filter((t) => outcome.get(t) === "refused").map((t) => `${t.at}: ${t.end!.refusal ?? t.end!.rejected.join("; ")}`)),
     ...list("Failed executions or errors:", ticks.filter((t) => outcome.get(t) === "failed").map((t) => `${t.at}: ${t.end!.outcome}`)),
     ...list("Ticks that couldn't read their book or mandate:", unread.map((t) => t.at)),

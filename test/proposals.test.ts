@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { Intent } from "@near-intents-agent-api/sdk";
 import { DelegateAction, encodeSignedDelegateAction, generateKey, parsePublicKey, serializeDelegateAction } from "near-kit";
 import { checkRequest, type DaoProposal, type DaoRequest, decodeProposals, readDelegate } from "../src/gateway/proposals.js";
-import { proposalTransaction } from "../src/dao-owner.js";
+import { proposalAndVote, proposalTransaction } from "../src/dao-owner.js";
 import { nep413Hash } from "../src/nep413.js";
 
 const DAO = "agentic.sputnik-dao.near";
@@ -131,4 +131,19 @@ test("a proposal a member files with a description asks for exactly the signatur
   assert.equal(decoded?.hash, hash);
   assert.equal(decoded?.what, "unknown");
   assert.equal(decoded?.description, "* Proposal Action: Freeze the agent");
+});
+
+test("a member who may vote files and approves a proposal in one transaction, voting on exactly that proposal", () => {
+  const hash = "ab".repeat(32);
+  const filing = proposalTransaction(DAO, hash, "* Proposal Action: Release a held payment", "0");
+  const { receiverId, actions } = proposalAndVote(DAO, hash, "* Proposal Action: Release a held payment", "0", 51);
+  assert.equal(receiverId, DAO);
+  assert.deepEqual(actions[0], filing.actions[0], "the same filing as a member's plain proposal");
+  const vote = actions[1]!.params;
+  assert.equal(vote.methodName, "act_proposal");
+  // The shape Trezu sends on mainnet (proposals #45, #48, #49): the DAO checks `proposal` against the stored kind.
+  assert.deepEqual(vote.args, { id: 51, action: "VoteApprove", proposal: filing.actions[0]!.params.args.proposal.kind });
+  assert.equal(vote.deposit, "0");
+  // One transaction carries at most 300 Tgas.
+  assert.ok(actions.reduce((sum, a) => sum + BigInt(a.params.gas), 0n) <= 300_000_000_000_000n);
 });

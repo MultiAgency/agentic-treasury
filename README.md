@@ -261,6 +261,14 @@ invoices.multiagency.ai, approved from proto.multiagency.ai and voted in Trezu (
 later (#46), and then failed: the payout wallet was empty, and the API had taken it to `PENDING_APPROVAL`
 anyway (`op_v5cnpSsa6u3…`). The treasury agent refilled it with 2 USDC, without a vote (`op_QtfZedy0…`).
 
+One-click approval, 2026-10-12 22:17 UTC: a member who may propose and vote filed the approval and voted on
+it in one transaction (`add_proposal` + `act_proposal`, tx `HcBkN62VzByJmrWWa26TTiQJKavLcoxZGX9AXDfJyuUh`),
+so proposal #51 executed at once and the server submitted the signature (`intent_V69AdRkC…`). The payout
+itself (`op_9rM_JoIhNqq5…`) then failed at the provider, with the reason redacted. The wallet was empty when checked
+afterwards, which suggests insufficient funds (the deployment has no balance check), but that's unproven. A failed
+vote rolls the filing back: reproduced on a local sandbox with mainnet's DAO code (global hash `DtHZA1…`): a stale id,
+a missing id and too little gas each left no proposal, kept the id counter and refunded the bond.
+
 The treasury agent rebalancing itself under a DAO-approved strategy, 2026-10-12 (UTC). The strategy
 (`.strategy/.env.dao.json`: 50/25/25, cost cap 250 bps at the swap's floor, at most $5 per hourly run) is
 approved only by a grant whose label carries its digest, `treasury:117b0a425eba717b9bd2d4759f06b3c4`.

@@ -110,3 +110,9 @@ test("unreadable evidence lines and configuration changes are reported", () => {
   assert.match(criterion(text, "Evidence file intact"), /\*\*no\*\* \(1 unreadable lines\)/);
   assert.match(text, /## Configuration segments\n1\. [^\n]*policy revision 11[^\n]*\n2\. [^\n]*policy revision 12/);
 });
+
+test("reading the evidence is listed as an operator read, not an intervention", () => {
+  const text = report([tick(1), tick(61), tick(121)], { interventions: [{ at: at(70), account: "ops.near", agent: "treasury", path: "autopilot/evidence" }] });
+  assert.match(criterion(text, "No operator interventions in the gateway's record"), /yes \(0 recorded calls/);
+  assert.match(text, /Operator reads \(recorded by the gateway, not interventions\):\n- [^\n]*autopilot\/evidence/);
+});

@@ -26,8 +26,10 @@ schedule, or manual recovery? It says nothing about custody guarantees or econom
 - **Interventions:** the gateway records every operator call beyond a member's reads in
   `.evidence/interventions.jsonl` (account, agent, procedure, time) before forwarding it. If the record
   can't be written, the call isn't run. Calls made on a host directly (CLI, shell) are not in this record.
-- **Reading the records:** `autopilot/evidence` on the treasury agent server, and `/gw/interventions`.
-  Both are operator-only.
+- **Reading the records:** `autopilot/evidence` on the treasury agent server, and `/gw/interventions`
+  (operator-only). In the build under observation (fe3330c), `autopilot/evidence` is operator-only too, so
+  the gateway records each read of it in the intervention record; the report lists those reads separately as
+  operator reads, not interventions. Later builds make it a member read, which the gateway doesn't record.
 - **The report:** `pnpm run-report` (src/run-report.ts, logic in src/report.ts, tests in
   test/report.test.ts). It reads the evidence, the intervention record and the books, and reports:
   - each criterion;

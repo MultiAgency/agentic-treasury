@@ -70,7 +70,13 @@ export function useOwnerAction(setup: Setup) {
     if (!("dao" in prepared) || !prepared.dao) throw new Error("The server did not prepare a DAO signature");
     setDigest(prepared.digest);
     setStep("filing");
-    if (ownWallet && prepared.dao.proposal) await sendAsMember(prepared.dao.proposal);
+    // A member who may also vote files and approves it in one confirmation; the vote passes at once.
+    const filing = viewer?.canVote && prepared.dao.proposalAndVote ? prepared.dao.proposalAndVote : prepared.dao.proposal;
+    if (ownWallet && filing) {
+      const outcome = (await sendAsMember(filing)) as { status?: { Failure?: unknown } } | undefined;
+      // Reverted as one, so nothing was filed: most likely another proposal took the id the vote named.
+      if (outcome?.status?.Failure) throw new Error(`The transaction failed, so nothing was filed. Try again. ${JSON.stringify(outcome.status.Failure)}`);
+    }
     else {
       if (ownWallet) await ensureDao(setup.dao.id);
       await dao.send(prepared.dao.transaction);
@@ -138,7 +144,7 @@ export function useOwnerAction(setup: Setup) {
     idle: null,
     preparing: "Preparing…",
     signing: "Approve in your wallet…",
-    filing: viewer?.canPropose ? "Confirm the proposal in your wallet…" : "File the proposal in Trezu…",
+    filing: viewer?.canPropose ? `Confirm the proposal${viewer.canVote ? " and your vote" : ""} in your wallet…` : "File the proposal in Trezu…",
     voting: `Waiting for ${setup.dao?.id ?? "the DAO"} to approve · ${left === null ? "" : `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")} left`}`,
     settling: "Settling on chain…",
   }[step];

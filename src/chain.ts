@@ -59,6 +59,15 @@ export async function daoPolicy(accountId: string) {
   }
 }
 
+/** The id the DAO's next proposal will get; null if unreadable, so filing falls back to a plain proposal. */
+export async function nextProposalId(accountId: string) {
+  try {
+    return (await near.view<number>(accountId, "get_last_proposal_id")) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function isDao(accountId: string) {
   return (await daoPolicy(accountId)) !== null;
 }

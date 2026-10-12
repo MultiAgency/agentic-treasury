@@ -17,6 +17,7 @@ const MEMBER = new Set([
   "unresolved",
   "held",
   "autopilot/get",
+  "autopilot/evidence",
   "inbox/list",
   "ledger",
   "ledgerCsv",

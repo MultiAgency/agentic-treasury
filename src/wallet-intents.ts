@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeF
 import { basename, dirname, join } from "node:path";
 import { type OwnerWallet, type SubmitIntentRequest } from "@near-intents-agent-api/sdk";
 import { api, checkedStatus } from "./api.js";
-import { completeSigning, type DaoSigning, daoOwner, findSignature, latestBlock, proposalTransaction, signingRequest, signTransaction } from "./dao-owner.js";
+import { completeSigning, type DaoSigning, daoOwner, findSignature, latestBlock, proposalAndVote, proposalTransaction, signingRequest, signTransaction } from "./dao-owner.js";
 import { ENV_FILE, saveEnv } from "./env.js";
 import { agentId, executes } from "./agent.js";
 import {
@@ -15,7 +15,7 @@ import {
   stageGrantToken,
 } from "./intents.js";
 import type { AgentKind } from "./policy.js";
-import { daoPolicy } from "./chain.js";
+import { daoPolicy, nextProposalId } from "./chain.js";
 import { mandateDigest } from "./mandate.js";
 import { settle } from "./ops.js";
 import { checkPaymentApproval, type PaymentApproval } from "./payment-approval.js";
@@ -159,7 +159,7 @@ export async function prepare(action: OwnerAction, signer: Signer = "wallet") {
   hold(generated.correlation_id, { type: generated.type, expiresAt: generated.expires_at, grantToken, releases, dao, paymentApproval });
   watch();
   const daoId = process.env.TREASURY_ACCOUNT!;
-  const policy = await daoPolicy(daoId);
+  const [policy, nextId] = await Promise.all([daoPolicy(daoId), nextProposalId(daoId)]);
   const description = [
     `* Proposal Action: ${generated.preview.summary}`,
     `* Agent: ${process.env.AGENT_ID ?? "a new agent"}`,
@@ -174,6 +174,8 @@ export async function prepare(action: OwnerAction, signer: Signer = "wallet") {
       transaction: signTransaction(dao.hash),
       // For a member filing it from their own wallet: the same request, described.
       proposal: policy ? proposalTransaction(daoId, dao.hash, description, policy.proposal_bond) : null,
+      // For a member who may also vote: filed and approved in one confirmation.
+      proposalAndVote: policy && nextId !== null ? proposalAndVote(daoId, dao.hash, description, policy.proposal_bond, nextId) : null,
     },
   };
 }

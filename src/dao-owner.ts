@@ -122,6 +122,24 @@ export function proposalTransaction(dao: string, hash: string, description: stri
   };
 }
 
+/**
+ * The same proposal, filed and approved in one transaction by a member who may also vote: `id` is the
+ * one the DAO will give it, its `last_proposal_id` at filing. Both calls run in one receipt, so if `id`
+ * is stale the vote fails and nothing is filed. With a one-vote threshold the proposal executes at once.
+ */
+export function proposalAndVote(dao: string, hash: string, description: string, bond: string, id: number) {
+  const filing = proposalTransaction(dao, hash, description, bond);
+  const { kind } = filing.actions[0]!.params.args.proposal;
+  return {
+    receiverId: dao,
+    actions: [
+      ...filing.actions,
+      // The DAO checks `proposal` against the stored kind, so a vote can't land on another proposal.
+      { type: "FunctionCall" as const, params: { methodName: "act_proposal", args: { id, action: "VoteApprove", proposal: kind }, gas: "75000000000000", deposit: "0" } },
+    ],
+  };
+}
+
 type Transactions = { transactions?: { receipts?: { execution_outcome?: { outcome?: { status?: { SuccessValue?: string } } } }[] }[] };
 
 /**

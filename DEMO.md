@@ -13,14 +13,48 @@ anyone can see how the DAO governs its agents, but only members see the money.
 Keep confidential details out of the talk: no targets, limits, payees or amounts. The public page is the line: it
 shows only what the DAO's contract shows on chain.
 
+## What is verified
+
+This walkthrough describes the deployed build: dao `aa6ec064` and invoices `a3aa194a`, source
+`~/agencies/proto-releases/20261012T2135Z-candidate/source.tgz` (sha256 `2859f81a…`, src digest `ce4a4f11…`).
+That build is commit `fe3330c` plus an unused `src/restart-check.ts`; HEAD and the working tree are newer.
+
+| Claim | How it is known | When |
+|---|---|---|
+| Both hosts healthy; signed-out callers refused every agent read; cross-site writes refused | `pnpm smoke`, live, read-only | 2026-10-12 22:13Z |
+| One executor per agent | Railway: one live deployment each, older ones removed | 2026-10-12 22:13Z |
+| State survives a restart and a redeploy | Signed-in smoke snapshot before and after | 2026-10-12 20:50–21:37Z |
+| Autopilot runs on schedule on this build | First tick's evidence: scheduled, build digests match | 2026-10-12 21:37Z |
+| Invoice → DAO approval → payment, paid | op_RCW0gaWGDo_… (1 USDC, 21:46Z): submitted, inferred, by the deployed `invoices` service; approval prepared on an unidentified host, not this laptop's stores; proposal 50 filed and voted in two transactions; executed by the provider: SUCCESS | 2026-10-12 21:48Z |
+| Same flow, not paid | op_9rM_JoIh… (1 USDC, 22:16Z): submitted, inferred, by the deployed `invoices` service; approval prepared and signed by the user's local approve-only server running the one-click code, uncommitted at the time (proposal 51); executed by the provider: FAILED, reason redacted (an empty wallet afterwards suggests insufficient funds, unproven) | 2026-10-12 22:17Z |
+| Signed-in views (member, operator, payee) | Not re-checked on this build | — |
+| Typecheck, offline tests, web build | Local; tests use mocks, not the provider or chain | per release |
+
+Offline tests prove the code's own logic against mocked providers. They don't prove what the Agent API, OutLayer or
+the DAO contract do; only a live check does.
+
 ## Before the demo
 
 1. Check both services from outside. It changes nothing:
    ```
    DASHBOARD_URL=https://proto.multiagency.ai INVOICES_URL=https://invoices.multiagency.ai pnpm smoke
    ```
-2. Sign in once as a member to confirm the session works and the treasury agent's card shows Active, with autopilot on.
-3. Have a payee account ready in a wallet if you'll submit an invoice live.
+2. Sign in once to confirm the session works and the treasury agent's card shows Active, with autopilot on.
+3. If you'll pay an invoice live, check that the payout agent's confidential USDC balance covers it. The deployed
+   build doesn't check: an unfunded payment is held, voted on, and only then fails at the provider.
+4. Have a payee account ready in a wallet if you'll submit an invoice live.
+
+## Who sees what
+
+| Persona | Gets in by | Sees | Can do |
+|---|---|---|---|
+| Visitor (signed out) | — | The DAO's roles and proposals, from chain | Nothing |
+| Member | Being in one of the DAO's groups | Both agents: books, policy, autopilot, held payments | File owner actions as DAO proposals; vote in Trezu if the DAO lets them |
+| Operator | Being named in `dashboard.json` | Everything a member sees | Money and configuration actions; each call is recorded before it runs |
+| Payee | Signing in on the invoice page with an account the DAO agreed to pay | Their own invoices and their status | Submit invoices |
+
+Today the DAO has one member, `multiagentic.near`, who is also the only operator. Signing in with it shows the
+operator view; showing a member-only view needs a second account in the DAO.
 
 ## 1. As a visitor: what a confidential treasury shows
 
@@ -64,10 +98,33 @@ and votes, and the agent pays confidentially.
 3. On the home page, "What am I voting on?" shows it with its hash verified. Vote in Trezu.
 4. The payment settles in the payout agent's Activity a minute or two later.
 
-Do steps 2–3 back to back. The signing window is about 5 minutes, and a payment approved long after it was prepared
-can fail at the provider. In the 2026-10-12 rehearsal, a payment approved after an hour failed and one approved after
-4 minutes succeeded. If one was left waiting, prepare it again rather than approving the old one: it keeps the same
-payment identity, so it can't be paid twice.
+**The approval window is about 5 minutes.** Releasing a payment prepares a signature request, and the API's signing
+window closes about five minutes later; the proposal's description says when. Vote in Trezu right after filing.
+In the 2026-10-12 rehearsal, a payment approved after an hour failed and one approved after 4 minutes succeeded.
+
+**Recovery.** Before creating a replacement payment or invoice, the original must have a definitive unpaid outcome,
+reconciled with the API: FAILED, or refused before anything was sent. A fresh submission is a new payment, so it
+could pay twice if the original later succeeds.
+- **A vote missed the window:** release the same held payment again rather than voting on the old proposal. That
+  prepares a new approval for the same payment, so the payment itself isn't duplicated. The old proposal can be left
+  to expire.
+- **The payout agent refused an invoice** (for example, a payee the DAO no longer agrees to pay): it is resolved as
+  refused, and nothing was sent. The payee may submit a new one.
+- **A payment failed at the provider after the vote:** confirm the status is FAILED (`pnpm reconcile` on the payout
+  agent's executor), fix the cause, then the payee submits a new invoice. Example: op_9rM_JoIh…, 2026-10-12 22:17Z.
+  The provider reported FAILED with the reason redacted. The wallet was empty when checked afterwards, which
+  supports, but doesn't prove, insufficient funds.
+- **Unknown outcome:** a payment whose outcome the server couldn't prove shows as unknown, and the payout agent sends
+  nothing more until an operator runs `pnpm reconcile`. Never resubmit an unknown payment; wait for reconciliation
+  to make it definitive.
+
+**Next release (not deployed): balance check.** A payment or invoice is refused with `insufficient_balance` when the
+payout wallet's confidential balance at that moment is below its amount, so it never goes to a vote. The refusal is
+final and nothing was sent: funding the wallet doesn't revive that invoice. Fund the wallet, then have the payee
+submit a new invoice. It's a limited check:
+- It doesn't count other held payments against the balance, so two payments that each fit can together exceed it.
+- It isn't repeated at approval, so a payment can still fail after the vote if the balance drops in between.
+- It doesn't guarantee settlement after approval.
 
 ## What keeps it safe
 
@@ -79,3 +136,22 @@ payment identity, so it can't be paid twice.
 - Sign-in is bound to each site's host: a signature made for another site can't be used.
 - State lives on each service's volume and survives a restart. To check, run `pnpm smoke` with `SMOKE_COOKIE_FILE`
   (and `SMOKE_INVOICES_COOKIE_FILE` for a payee) and `SMOKE_SNAPSHOT` before and after (see `src/smoke.ts`).
+
+## What it doesn't guarantee
+
+Say "autonomous rebalancing with application checks and provider-enforced limits", not "the agent can never exceed
+its signed policy". At the custody level:
+- What a swap buys is checked only by this server, not by the provider.
+- The provider's cumulative per-asset limits are best-effort under concurrent sends.
+- The provider's USD-budget atomicity hasn't been independently verified.
+
+The plan is in `docs/enforcement.md`.
+
+Two known correctness gaps have regression tests marked todo, so the suite doesn't fail on them:
+- **A send that crashes between its write-ahead record and its claim** (`test/journal.test.ts`). A process dying
+  mid-send (a deploy, restart or crash) leaves the action unresolved even though nothing reached the provider. That
+  agent then sends nothing until an operator runs `pnpm reconcile`. In the demo, this only happens if a service
+  restarts during a payment or an autopilot trade.
+- **Two processes preparing owner actions on one instance** (`test/owner-intents-race.test.ts`). A command-line owner
+  action run in the same container as the server can make one of them lose its held request. Its proposal then can't
+  be completed and has to be prepared again. The dashboard alone doesn't trigger it.

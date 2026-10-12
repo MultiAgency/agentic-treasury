@@ -14,6 +14,7 @@ import {
   useOwnerAction,
 } from "./owner";
 import { useAgent } from "./shell";
+import { useViewer } from "./viewer";
 import { connect, useWallet } from "./wallet";
 import { Badge, Button, Card, ConfirmButton, input, Section, Spinner, statusTone } from "./ui";
 
@@ -289,9 +290,12 @@ function Held({ data, setup }: { data: Overview; setup: Setup }) {
   const held = useQuery({ queryKey: ["held"], queryFn: () => client.held(), refetchInterval: 15_000 });
   const action = useOwnerAction(setup);
   const canSign = useCanSign(setup);
+  const viewer = useViewer();
   const [voting, setVoting] = useState<string>();
   if (!held.data?.length) return null;
   const viaDao = ownerSigner(setup) === "dao";
+  // A member who may propose and vote files and approves in one wallet confirmation.
+  const oneClick = viewer?.canPropose && viewer.canVote;
 
   const vote = async (item: (typeof held.data)[number], verdict: "approve" | "reject") => {
     setVoting(item.correlationId);
@@ -304,7 +308,9 @@ function Held({ data, setup }: { data: Overview; setup: Setup }) {
       title="Waiting for approval"
       description={
         viaDao
-          ? "A payment stays approvable for 24 hours. Approve files one proposal, and the API's signing window closes about five minutes later, so vote in Trezu right away."
+          ? oneClick
+            ? "A payment stays approvable for 24 hours. Approve files the proposal and your vote in one wallet confirmation."
+            : "A payment stays approvable for 24 hours. Approve files one proposal, and the API's signing window closes about five minutes later, so vote in Trezu right away."
           : "A payment stays approvable for 24 hours and waits for your signature."
       }
     >
