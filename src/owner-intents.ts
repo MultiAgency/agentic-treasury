@@ -34,7 +34,7 @@ export type OwnerAction =
   /** Releases (or rejects) one held money action: `correlationId` is that execution's. */
   | { type: "approval_vote"; approvalId: string; verdict: "approve" | "reject"; correlationId: string };
 
-export type Signer = "wallet" | "dao";
+type Signer = "wallet" | "dao";
 
 type Prepared = { stage?: "prepared" | "submitted" | "settled"; result?: { status: string; failureCode?: string | null }; ownerSucceeded?: boolean; type: string; expiresAt: string; grantToken?: string; releases?: string; dao?: DaoSigning; paymentApproval?: PaymentApproval;
   /** The owner's signature as submitted, kept to send again if the API never received it. */
@@ -326,8 +326,7 @@ export function status(correlationId: string) {
   if (saved?.stage === "submitted") return { stage: "submitting" as const };
   const outcome = outcomes.get(correlationId);
   if (outcome) return outcome;
-  const waiting = saved;
-  if (waiting?.dao) return { stage: "voting" as const, expiresAt: waiting.expiresAt };
+  if (saved?.dao) return { stage: "voting" as const, expiresAt: saved.expiresAt };
   return { stage: "unknown" as const };
 }
 

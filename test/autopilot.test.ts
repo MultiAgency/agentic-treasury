@@ -262,7 +262,7 @@ test("the source digest identifies a tree: same files, same digest; one changed 
 test("a damaged inbox line is skipped, so the scheduler's once-a-minute read never throws", () => {
   const entry = { id: "e1", at: new Date().toISOString(), level: "run", text: "book on target" };
   mkdirSync(".inbox", { recursive: true });
-  // A crash mid-append leaves a partial last line; the next append lands on the same line.
+  // A crash mid-append leaves a partial last line.
   writeFileSync(join(".inbox", `${process.env.AGENT_ID}.jsonl`), `${JSON.stringify(entry)}\n{"id":"e2","at":"2026-`);
   assert.deepEqual(readInbox().map((e) => e.id), ["e1"]);
 });

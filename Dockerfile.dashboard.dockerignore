@@ -11,9 +11,7 @@
 .agents
 .playwright-mcp
 node_modules
-contracts
 research
-feedback
 test
 .inbox
 .strategy

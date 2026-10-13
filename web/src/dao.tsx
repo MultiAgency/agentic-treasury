@@ -1,7 +1,8 @@
 import { ArrowRight, CheckCircle, Robot, WarningOctagon } from "@phosphor-icons/react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import type { Decoded } from "../../src/gateway/proposals.js";
-import { ago, clientFor, fromUnits, gw, minutesSeconds, useCountdown, usd } from "./lib";
+import { type Attention, attentionOf } from "./attention";
+import { ago, bookValue, clientFor, gw, minutesSeconds, useCountdown, usd } from "./lib";
 import { type Gateway, ViewerBadge } from "./session";
 import { Badge, Card, Section, Spinner, type Tone } from "./ui";
 
@@ -9,7 +10,6 @@ import { Badge, Card, Section, Spinner, type Tone } from "./ui";
  * The hosted dashboard's home: what the council is being asked to sign, and the agents the DAO owns.
  * Agent data comes through the gateway, by the same calls each agent's own dashboard makes.
  */
-
 
 const TYPE_WORDS: Record<string, string> = {
   agent_create: "Create the agent",
@@ -154,39 +154,9 @@ const agentQuery = (name: string) => ({
 });
 type AgentState = Awaited<ReturnType<ReturnType<typeof agentQuery>["queryFn"]>>;
 
-/** Payouts are confidential USDC (src/authorize.ts), which an empty wallet's book doesn't list. */
-const USDC = "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
-function amountOf(raw: string, asset: string, d: AgentState) {
-  const holding = d.overview.book.find((h) => h.asset === asset);
-  if (holding) return `${fromUnits(raw, holding.decimals)} ${holding.symbol}`;
-  return asset === USDC ? `${fromUnits(raw, 6)} USDC` : `${raw} ${asset}`;
-}
+type Item = Attention & { agent: string };
 
-const GRANT_WARNING_DAYS = 7;
-type Item = { agent: string; tone: Tone; text: string; href: string; action: string };
-
-/** Everything across the DAO's agents that is waiting on a person, most urgent first. */
-function itemsOf(name: string, d: AgentState): Item[] {
-  const base = `/a/${name}`;
-  const items: Item[] = [];
-  if (d.unresolved.length)
-    items.push({ agent: name, tone: "destructive", href: `${base}/activity`, action: "Reconcile",
-      text: `${d.unresolved.length} money action${d.unresolved.length === 1 ? " has" : "s have"} no proven outcome: the agent sends nothing until reconciled` });
-  if (d.overview.policy.policy?.frozen)
-    items.push({ agent: name, tone: "destructive", href: `${base}/policy`, action: "Review", text: "The policy is frozen: the agent can't send" });
-  const grant = d.setup.grant;
-  if (!grant) items.push({ agent: name, tone: "destructive", href: `${base}/policy`, action: "Issue", text: "No live grant: the agent can't send" });
-  else if (Date.parse(grant.expiresAt) - Date.now() < GRANT_WARNING_DAYS * 86_400_000)
-    items.push({ agent: name, tone: "warning", href: `${base}/policy`, action: "Renew", text: `Its grant expires ${ago(grant.expiresAt)}` });
-  for (const h of d.held) {
-    const r = h.request as { amount?: string; asset?: string; recipient?: string };
-    items.push({ agent: name, tone: "warning", href: `${base}/policy`, action: "Approve",
-      text: `${r.amount && r.asset ? amountOf(r.amount, r.asset, d) : "A payment"} to ${r.recipient ?? "a payee"} waits for approval (requested ${ago(h.at)})` });
-  }
-  for (const e of d.inbox.filter((e) => !e.dismissed && e.level !== "run"))
-    items.push({ agent: name, tone: e.level === "warn" ? "warning" : "info", href: `${base}/automations`, action: "Open", text: e.text });
-  return items;
-}
+const itemsOf = (name: string, d: AgentState): Item[] => attentionOf(d).map((item) => ({ ...item, agent: name }));
 
 function NeedsAttention({ agents }: { agents: string[] }) {
   const results = useQueries({ queries: agents.map(agentQuery) });
@@ -217,7 +187,7 @@ function NeedsAttention({ agents }: { agents: string[] }) {
                   <Badge tone={item.tone}>{item.agent}</Badge>
                   <span className="min-w-0">{item.text}</span>
                 </span>
-                <a href={item.href} className="flex items-center gap-1 text-sm font-medium hover:underline">
+                <a href={`/a/${item.agent}${item.to}`} className="flex items-center gap-1 text-sm font-medium hover:underline">
                   {item.action} <ArrowRight size={14} />
                 </a>
               </li>
@@ -232,7 +202,7 @@ function NeedsAttention({ agents }: { agents: string[] }) {
 function AgentCard({ name }: { name: string }) {
   const data = useQuery(agentQuery(name));
   const d = data.data;
-  const value = d?.overview.book.reduce((sum, h) => sum + h.usd, 0) ?? 0;
+  const value = d ? bookValue(d.overview) : 0;
   return (
     <a href={`/a/${name}/`} className="group">
       <Card className="h-full">
@@ -250,7 +220,7 @@ function AgentCard({ name }: { name: string }) {
             <span className="font-heading text-2xl font-semibold tabular-nums">{usd(value)}</span>
             <div className="flex flex-wrap gap-2">
               <Badge tone={d.overview.policy.policy?.frozen ? "destructive" : "success"}>{d.overview.policy.policy?.frozen ? "Frozen" : "Active"}</Badge>
-              {d.held.length > 0 && <Badge tone="warning">{d.held.length} awaiting approval</Badge>}
+              {d.held.length > 0 && <Badge tone="warning">{d.held.length} held for approval</Badge>}
               {d.unresolved.length > 0 && <Badge tone="destructive">{d.unresolved.length} unresolved</Badge>}
               <Badge tone={d.autopilot.on ? "info" : "neutral"}>{d.autopilot.on ? `Autopilot to $${d.autopilot.maxUsd}` : "Autopilot off"}</Badge>
             </div>

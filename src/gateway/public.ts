@@ -47,7 +47,7 @@ function actionOf(dao: string, p: DaoProposal): Pick<PublicProposal, "action" | 
 export function publicView(dao: string, policy: DaoPolicy, proposals: DaoProposal[]): PublicView {
   return {
     dao,
-    roles: policy.roles.flatMap((r) => (typeof r.kind === "object" ? [{ name: r.name, members: r.kind.Group }] : [])),
+    roles: policy.roles.flatMap((r) => (typeof r.kind === "object" && "Group" in r.kind ? [{ name: r.name, members: r.kind.Group }] : [])),
     proposals: proposals
       .map((p) => ({
         id: p.id,

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { agentId } from "./env.js";
-import { agreed, file, mine, validate } from "./invoices.js";
+import { agreed, file, mine, type Status, validate } from "./invoices.js";
 import { BadRequest, readJson, SECURITY_HEADERS, sendFailure, sendJson as send } from "./http.js";
 import { chainKeyLookup, challengeAnswer, clientAddress, hourlyLimit, parseSignIn, sessions, verifySignIn } from "./signin.js";
 
@@ -114,6 +114,20 @@ const escape = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)}
 const WALLET_MANIFEST = "https://cdn.jsdelivr.net/gh/fastnear/near-connect@d277b41263a8ea0a6892236b22824d46c2c3c377/repository/manifest.json";
 
 /** The one page: sign in as the payee, enter an amount and what it's for, submit, and follow your invoices. */
+/** What the page says for each invoice status, and its tone: one entry per `Status`, checked here. */
+const WORDS: Record<Status, [string, "" | "ok" | "warn"]> = {
+  needs_agreement: ["This account isn't on the agreed list. A new agreement has to be approved first.", "warn"],
+  refused: ["Refused: the invoice is outside what this treasury may pay (for example over its limits).", "warn"],
+  busy: ["Too many invoices are waiting right now. Try again later.", "warn"],
+  waiting: ["Waiting for approval. The treasury has 24 hours to approve it.", ""],
+  paying: ["The payment is processing. Settlement is not yet confirmed.", ""],
+  prepared: ["Recorded, not submitted. Retry this invoice to continue.", ""],
+  unknown: ["The payment outcome is unknown. It needs reconciliation; do not create a replacement invoice.", "warn"],
+  needs_review: ["This invoice needs review. An existing payment may still be pending; do not file it again as a new invoice.", "warn"],
+  paid: ["Paid.", "ok"],
+  failed: ["The payment didn't go through.", "warn"],
+};
+
 function page() {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -150,18 +164,7 @@ import { NearConnector } from "https://cdn.jsdelivr.net/npm/@fastnear/near-conne
 const connector = new NearConnector({ network: "mainnet", features: { signMessage: true },
   manifest: "${WALLET_MANIFEST}" });
 const $ = (id) => document.getElementById(id);
-const WORDS = {
-  needs_agreement: ["This account isn't on the agreed list. A new agreement has to be approved first.", "warn"],
-  refused: ["Refused: the invoice is outside what this treasury may pay (for example over its limits).", "warn"],
-  busy: ["Too many invoices are waiting right now. Try again later.", "warn"],
-  waiting: ["Waiting for approval. The treasury has 24 hours to approve it.", ""],
-  paying: ["The payment is processing. Settlement is not yet confirmed.", ""],
-  prepared: ["Recorded, not submitted. Retry this invoice to continue.", ""],
-  unknown: ["The payment outcome is unknown. It needs reconciliation; do not create a replacement invoice.", "warn"],
-  needs_review: ["This invoice needs review. An existing payment may still be pending; do not file it again as a new invoice.", "warn"],
-  paid: ["Paid.", "ok"],
-  failed: ["The payment didn't go through.", "warn"],
-};
+const WORDS = ${JSON.stringify(WORDS)};
 const fromBase64 = (v) => Uint8Array.from(atob(v), (c) => c.charCodeAt(0));
 function fail(message) { $("error").textContent = message; $("error").hidden = false; }
 async function call(method, path, payload) {

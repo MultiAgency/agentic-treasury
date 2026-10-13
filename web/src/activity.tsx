@@ -1,7 +1,7 @@
 import { DownloadSimple } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ago, amount, client, describeRequest, fromUnits, queries, useAttempt } from "./lib";
+import { ago, amountOf, client, describeRequest, fromUnits, queries, swaps, useAttempt } from "./lib";
 import { useIsOperator } from "./viewer";
 import { useAgent } from "./shell";
 import { Badge, Button, Card, ConfirmButton, ErrorBox, Section, Spinner, statusTone } from "./ui";
@@ -81,7 +81,7 @@ export function InvoiceReview() {
 
 /** Every action the agent sent, newest first; `limit` shows only the latest few, with a link to the rest. */
 export function Activity({ limit }: { limit?: number }) {
-  const { data: book } = useAgent();
+  const { data: overview } = useAgent();
   const { data = [] } = useQuery({ queryKey: ["activity"], queryFn: () => client.activity() });
 
   return (
@@ -98,14 +98,14 @@ export function Activity({ limit }: { limit?: number }) {
       }
     >
       {data.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No actions yet. Preview a rebalance to get started.</p>
+        <p className="text-sm text-muted-foreground">No actions yet.{swaps(overview) && " Preview a rebalance to get started."}</p>
       ) : (
         <ol className="flex flex-col">
           {data.slice(0, limit).map((op) => (
             <li key={`${op.at}-${op.kind}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b py-3 text-sm last:border-0">
               <span className="whitespace-nowrap text-muted-foreground sm:w-32">{ago(op.at)}</span>
               <span className="w-20 font-medium capitalize">{op.kind}</span>
-              <span className="order-last basis-full tabular-nums sm:order-none sm:basis-0 sm:flex-1">{describeRequest(op.request, book.book)}</span>
+              <span className="order-last basis-full tabular-nums sm:order-none sm:basis-0 sm:flex-1">{describeRequest(op.request, overview.book)}</span>
               <span className="ml-auto">
                 {op.refused ? (
                   // A probe exists to be refused; any other refusal means the policy stopped the agent.
@@ -143,13 +143,9 @@ async function downloadLedger() {
  * A difference is unexplained: it can reflect outside credits or incomplete records.
  */
 export function Books() {
-  const { data: book } = useAgent();
+  const { data } = useAgent();
   const books = useQuery({ queryKey: ["books"], queryFn: () => client.reconcileBooks() });
-  const bySymbol = new Map(book.book.map((h) => [h.asset, h]));
-  const value = (raw: string, asset: string) => {
-    const h = bySymbol.get(asset);
-    return h ? amount(raw, h) : raw;
-  };
+  const value = (raw: string, asset: string) => amountOf(raw, asset, data.book);
 
   return (
     <Section

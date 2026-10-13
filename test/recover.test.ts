@@ -5,7 +5,7 @@ import { AgentApiError } from "@near-intents-agent-api/sdk";
 import { api } from "../src/api.js";
 import { acquireMoneyLock, UnresolvedOperations } from "../src/lock.js";
 import { opsLog, readOps } from "../src/ops.js";
-import { recover } from "../src/recover.js";
+import { recover, unresolved } from "../src/recover.js";
 import { freshDirectory } from "./fixtures/harness.js";
 
 // Offline: the API's status reads and the grant's sends are replaced per test.
@@ -49,7 +49,7 @@ test("one still moving stays unresolved, its latest status recorded", async () =
   grant(null);
   statuses("PROCESSING");
   const [r] = await recover();
-  assert.equal(r?.outcome, "pending");
+  assert.equal(r?.outcome, "open");
   assert.equal(readOps()[0]?.status, "PROCESSING");
   await blocked();
 });
@@ -98,4 +98,15 @@ for (const status of ["UNCERTAIN", "NEEDS_REVIEW"]) test(status + " stays blocke
   assert.equal((await recover())[0]?.outcome, "unknown");
   assert.deepEqual(sent, []);
   await blocked();
+});
+
+test("a held payout is polled but is not unresolved: it doesn't block new sends", async () => {
+  const held = JSON.stringify({ at: ago(60_000), idempotencyKey: "payout:held", kind: "payout", method: "transfer", request: { asset: "a", amount: "1", recipient: "r" } });
+  log(held, JSON.stringify({ idempotencyKey: "payout:held", correlation_id: "op_held", status: "PENDING_APPROVAL" }));
+  grant(null);
+  statuses("PENDING_APPROVAL");
+  assert.deepEqual(unresolved(), []);
+  const [r] = await recover();
+  assert.equal(r?.outcome, "open");
+  await unblocked();
 });

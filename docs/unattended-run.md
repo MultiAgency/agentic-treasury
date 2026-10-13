@@ -23,9 +23,15 @@ schedule, or manual recovery? It says nothing about custody guarantees or econom
   - A start without an end is reported as incomplete (interrupted, or outcome unknown), never as success
     or failure.
   - A line that doesn't parse, such as a torn final line, is counted as unreadable, not trusted.
+  - Every log here appends through one function (`src/synced.ts`). After a torn final line, the next
+    record starts its own line, so a crash mid-append loses only the torn line (offline-tested,
+    `test/synced.test.ts`).
 - **Interventions:** the gateway records every operator call beyond a member's reads in
   `.evidence/interventions.jsonl` (account, agent, procedure, time) before forwarding it. If the record
   can't be written, the call isn't run. Calls made on a host directly (CLI, shell) are not in this record.
+  An unreadable line in the record is counted and fails the "no operator interventions" criterion, since
+  it may have been a call. Builds up to c25b61b skipped such lines instead; `pnpm run-report` refuses a
+  gateway that doesn't count them.
 - **Reading the records:** `autopilot/evidence` on the treasury agent server, and `/gw/interventions`
   (operator-only). In the build under observation (fe3330c), `autopilot/evidence` is operator-only too, so
   the gateway records each read of it in the intervention record; the report lists those reads separately as

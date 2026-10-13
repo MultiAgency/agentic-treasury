@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { client, type Overview, useAttempt } from "./lib";
-import { type Destination, type Setup, useCanSign, useOwnerAction } from "./owner";
+import { type Destination, type Setup, useOwnerAction, useSigner } from "./owner";
 import { Badge, input, StatusBadge } from "./ui";
 
 /** What the agent's transfers share: where it may send, and how a payout is sent and reported. */
@@ -23,7 +23,7 @@ function cooldownLeft(data: Overview) {
 /** Owner-signed edits to the destination list, shared by returns and payees. */
 export function useDestinations(data: Overview, setup: Setup) {
   const action = useOwnerAction(setup);
-  const isOwner = useCanSign(setup);
+  const isOwner = useSigner(setup).canSign;
   const current = destinationsOf(data);
   const cooldown = cooldownLeft(data);
   return {
@@ -60,7 +60,7 @@ export function PayoutResult({ result }: { result?: Awaited<ReturnType<typeof cl
     </Badge>
   ) : result.status === "PENDING_APPROVAL" ? (
     <Link to="/policy">
-      <Badge tone="info">Waiting for the owner's approval · approve under Policy</Badge>
+      <Badge tone="info">Held for the owner's approval · approve under Policy</Badge>
     </Link>
   ) : (
     <StatusBadge status={result.status} failureCode={result.failureCode} />

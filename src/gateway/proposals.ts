@@ -53,7 +53,7 @@ export function readDelegate(signedDelegate: Uint8Array) {
   return { sender: delegateAction.senderId, receiver: delegateAction.receiverId, methods, hash };
 }
 
-export type Check =
+type Check =
   /** The hash is recomputed from the readable payload: this is exactly what the vote signs. */
   | { kind: "verified"; standard: "nep413"; message: unknown }
   /** The hash is recomputed from the delegate bytes; receiver and methods are read, the policy blob is encrypted. */

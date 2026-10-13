@@ -1,8 +1,9 @@
 import { UsersThree, Wallet as WalletIcon } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useState } from "react";
-import { client, errorMessage, short } from "./lib";
-import { ensureDao, ownerName, ownerSigner, type Setup, type Signer, useCanSign, useOwnerAction } from "./owner";
+import { errorMessage, short, useAttempt } from "./lib";
+import { ensureDao, ownerName, ownerSigner, type Setup, type Signer, useOwnerAction, useSigner } from "./owner";
+import { linkTrezuDao } from "./treasury";
 import { Button, Card, ErrorBox, input, Section, Spinner, Step } from "./ui";
 import { connect, dao, send, useWallet } from "./wallet";
 
@@ -26,7 +27,7 @@ export function Onboarding({ setup }: { setup: Setup }) {
   const wallet = useWallet();
   const daoWallet = dao.use();
   const action = useOwnerAction(setup);
-  const canSign = useCanSign(setup);
+  const { canSign } = useSigner(setup);
   const [choice, setChoice] = useState<Signer | null>(setup.dao ? "dao" : null);
   const [funding, setFunding] = useState<string>();
   const [role, setRole] = useState<"treasury" | "payout">("treasury");
@@ -49,14 +50,11 @@ export function Onboarding({ setup }: { setup: Setup }) {
     return () => clearInterval(timer);
   }, [funding, setup.dao?.funded, queryClient]);
 
-  async function linkDao() {
-    await dao.connect();
-    const id = (await dao.connector.getConnectedWallet()).accounts[0]?.accountId;
-    if (!id) throw new Error("Trezu returned no DAO account");
-    await client.treasury.link({ accountId: id });
+  const linking = useAttempt();
+  const linkDao = () => linking.attempt(async () => {
+    await linkTrezuDao();
     setChoice("dao");
-    await queryClient.invalidateQueries();
-  }
+  });
 
   const fundOwner = (daoId: string, owner: string, via: "dao" | "wallet") => async () => {
     const transfer = { receiverId: owner, actions: [{ type: "Transfer" as const, params: { deposit: "50000000000000000000000" } }] };
@@ -97,10 +95,11 @@ export function Onboarding({ setup }: { setup: Setup }) {
               <Button variant={choice === "dao" ? "outline" : "default"} disabled={wallet.status === "connecting"} onClick={() => { setChoice("wallet"); connect().catch(() => {}); }}>
                 <WalletIcon size={18} /> My wallet
               </Button>
-              <Button variant="outline" disabled={daoWallet.status === "connecting"} onClick={() => linkDao().catch(() => {})}>
+              <Button variant="outline" disabled={daoWallet.status === "connecting"} onClick={linkDao}>
                 {daoWallet.status === "connecting" ? <Spinner /> : <UsersThree size={18} />} A DAO, through Trezu
               </Button>
             </div>
+            <ErrorBox error={linking.error} />
           </Step>
           {isDao && setup.dao && (
             <Step

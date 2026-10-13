@@ -1,11 +1,16 @@
-import { format } from "./holdings.js";
+import { format, holdings } from "./holdings.js";
 import { steward } from "./llm.js";
 import { executePlan, type PlannedAction } from "./plans.js";
 
+const book = await holdings();
+const amountOf = (raw: string, asset: string) => {
+  const h = book.find((h) => h.asset === asset);
+  return h ? format(raw, h) : `${raw} ${asset}`;
+};
 const describe = (a: PlannedAction) =>
   a.type === "swap"
-    ? `swap ${a.amount} ${a.from} → ${a.to}, floor ${a.minAmountOut} (${a.costBps} bps)`
-    : `shield ${format(a.amount, { decimals: 6, symbol: "USDC" })}`;
+    ? `swap ${amountOf(a.amount, a.from)} → ${book.find((h) => h.asset === a.to)?.symbol ?? a.to}, floor ${amountOf(a.minAmountOut, a.to)} (${a.costBps} bps)`
+    : `shield ${amountOf(a.amount, a.asset)}`;
 
 // `pnpm steward ["instruction"]` proposes a plan; `pnpm steward --execute <plan id>` executes it as proposed.
 const args = process.argv.slice(2);
@@ -15,7 +20,8 @@ if (planId) {
   for await (const event of executePlan(planId)) {
     if (event.type === "rejected") console.log(`Not executed. Preview again:\n- ${event.problems.join("\n- ")}`);
     else {
-      if (event.shield) console.log(`step ${event.index + 1}: shield ${event.shield.amount} first → ${event.shield.status}`);
+      if (event.shield && event.action.type === "swap")
+        console.log(`step ${event.index + 1}: shield ${amountOf(event.shield.amount, event.action.from)} first → ${event.shield.status}`);
       console.log(`step ${event.index + 1}: ${describe(event.action)} → ${event.status} ${event.correlationId} ${event.failureCode ?? ""}`);
     }
   }

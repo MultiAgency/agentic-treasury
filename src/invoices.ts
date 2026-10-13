@@ -9,23 +9,22 @@ import { isResolved, record } from "./ops.js";
 import { getInvoice, invoiceId, legacyInvoices, listInvoices, markInvoiceUnknown, noteRevision, prepareInvoice,
   type InvoiceInput, type StoredInvoice } from "./invoice-store.js";
 
-export type Invoice = InvoiceInput;
 export type Status = "needs_agreement" | "refused" | "busy" | "prepared" | "waiting" | "paying" | "paid" | "failed" | "unknown" | "needs_review";
 
 const MAX_WAITING = 10;
 const ACCOUNT = /^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
-const USDC = 6;
+const USDC_DECIMALS = 6;
 
 /** "250" or "250.5" USDC → raw units; null unless it is a positive amount with at most 6 decimals. */
 export function usdcUnits(amount: string) {
   const match = /^(\d{1,12})(?:\.(\d{1,6}))?$/.exec(amount.trim());
   if (!match) return null;
-  const raw = BigInt(match[1]!) * 10n ** BigInt(USDC) + BigInt((match[2] ?? "").padEnd(USDC, "0"));
+  const raw = BigInt(match[1]!) * 10n ** BigInt(USDC_DECIMALS) + BigInt((match[2] ?? "").padEnd(USDC_DECIMALS, "0"));
   return raw > 0n ? raw.toString() : null;
 }
 
 /** The invoice as filed, or why it can't be: every field is checked here, whatever proposed it. */
-export function validate(input: { payee?: unknown; amount?: unknown; note?: unknown; submission?: unknown }): Invoice | { invalid: string } {
+export function validate(input: { payee?: unknown; amount?: unknown; note?: unknown; submission?: unknown }): InvoiceInput | { invalid: string } {
   const payee = typeof input.payee === "string" ? input.payee.trim().toLowerCase() : "";
   if (!ACCOUNT.test(payee)) return { invalid: "payee: a NEAR account such as alice.near" };
   const amount = typeof input.amount === "string" ? usdcUnits(input.amount) : null;
@@ -65,10 +64,10 @@ const serially = <T>(work: () => Promise<T>) => {
   return run;
 };
 
-export type Filing = { id: string; status: Status; revisionConflict?: boolean };
+type Filing = { id: string; status: Status; revisionConflict?: boolean };
 
 /** A changed revision never changes the original payment or authorizes another attempt. */
-export const file = (invoice: Invoice, authenticatedPayee: string): Promise<Filing> => serially(async () => {
+export const file = (invoice: InvoiceInput, authenticatedPayee: string): Promise<Filing> => serially(async () => {
   if (invoice.payee !== authenticatedPayee) throw new Error("Cannot file an invoice for another account");
   // Revalidate the internal raw-unit input as well as the HTTP form. No arbitrary action payload.
   if (!/^[0-9]{1,18}$/.test(invoice.amount) || BigInt(invoice.amount) <= 0n ||

@@ -51,7 +51,7 @@ function facts(purpose: Purpose, change: Record<string, unknown> = {}): never {
 }
 const actionFor = (purpose: Purpose) => (purpose === "treasury" || purpose === "autopilot" ? swap() : pay());
 const PURPOSES: Purpose[] = ["treasury", "autopilot", "payout", "invoice", "approval"];
-const code = (purpose: Purpose, action: Action, change: Record<string, unknown> = {}) => authorize(purpose, action, facts(purpose, change))?.code ?? "ok";
+const code = (purpose: Purpose, action: Action, change: Record<string, unknown> = {}) => authorize(action, { purpose, facts: facts(purpose, change) })?.code ?? "ok";
 
 test("each purpose's baseline is authorized", () => {
   for (const purpose of PURPOSES) assert.equal(code(purpose, actionFor(purpose)), "ok", purpose);

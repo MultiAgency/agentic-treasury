@@ -2,7 +2,7 @@ import { CheckCircle, XCircle } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { ago, describeRequest, type Overview, queries } from "./lib";
-import { ownerSigner, type Setup, useCanSign, useOwnerAction } from "./owner";
+import { type Setup, useOwnerAction, useSigner } from "./owner";
 import { Button, Card, ErrorBox, Section, Spinner } from "./ui";
 import { useViewer } from "./viewer";
 
@@ -13,11 +13,10 @@ const APPROVAL_WINDOW_MS = 24 * 60 * 60_000;
 export function Held({ data, setup }: { data: Overview; setup: Setup }) {
   const held = useQuery(queries.held);
   const action = useOwnerAction(setup);
-  const canSign = useCanSign(setup);
+  const { viaDao, canSign } = useSigner(setup);
   const viewer = useViewer();
   const [voting, setVoting] = useState<string>();
   if (!held.data?.length) return null;
-  const viaDao = ownerSigner(setup) === "dao";
   // A member who may propose and vote files and approves in one wallet confirmation.
   const oneClick = viewer?.canPropose && viewer.canVote;
 
@@ -29,7 +28,7 @@ export function Held({ data, setup }: { data: Overview; setup: Setup }) {
 
   return (
     <Section
-      title="Waiting for approval"
+      title="Held payouts"
       description={
         viaDao
           ? oneClick

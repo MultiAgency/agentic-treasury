@@ -74,7 +74,7 @@ export function promoteGrantToken(token: string) {
   saveEnv({ AGENT_GRANT_TOKEN: token, ...(staged && { AGENT_GRANT_TOKEN_PENDING: "" }) });
 }
 
-export type Grant = Awaited<ReturnType<typeof api.listGrants>>[number];
+type Grant = Awaited<ReturnType<typeof api.listGrants>>[number];
 
 /** Neither revoked nor expired at `now`. */
 export const isLive = (grant: Pick<Grant, "revoked_at" | "expires_at">, now = Date.now()) =>

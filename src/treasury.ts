@@ -23,7 +23,7 @@ export type Leg = { from: Holding; to: Holding; usd: number; amount: bigint };
  * A dry quote: `costBps` is what the swap is expected to lose to fees and price impact; `worstCostBps`
  * what it loses if it returns only its guaranteed floor. The strategy's cost cap applies to the worst case.
  */
-export type Quote = { amountOut: string; minAmountOut: string; costBps: number; worstCostBps: number };
+type Quote = { amountOut: string; minAmountOut: string; costBps: number; worstCostBps: number };
 
 type RebalanceEvent =
   | { type: "plan"; total: number; book: Holding[]; legs: Leg[]; budget: string | null | undefined; strategy: Strategy }
@@ -126,10 +126,11 @@ type SweepEvent =
   | { type: "plan"; exposed: Holding[] }
   | { type: "shield"; asset: string; status: string; correlationId: string; failureCode: string | null | undefined };
 
-export async function* sweep({ execute }: { execute: boolean }): AsyncGenerator<SweepEvent> {
+/** `autopilot`: the autopilot sweeps, so each shield is authorized as the autopilot's, under the strategy the owner's grant approves. */
+export async function* sweep({ execute, autopilot = false }: { execute: boolean; autopilot?: boolean }): AsyncGenerator<SweepEvent> {
   const lock = execute ? await acquireMoneyLock() : undefined;
   try {
-    yield* sweepRun(lock);
+    yield* sweepRun(lock, autopilot ? { planned: null, autopilot: true, now: () => new Date() } : undefined);
   } finally {
     await lock?.release();
   }
@@ -139,13 +140,13 @@ export async function* sweep({ execute }: { execute: boolean }): AsyncGenerator<
  * Shields every public balance. The agent keeps nothing public, since its account is linked to its
  * owner on chain; a public balance appears only when funds arrive outside a confidential deposit.
  */
-async function* sweepRun(lock: MoneyLock | undefined): AsyncGenerator<SweepEvent> {
+async function* sweepRun(lock: MoneyLock | undefined, sending: Sending | undefined): AsyncGenerator<SweepEvent> {
   const exposed = (await holdings()).filter((h) => h.public > 0n);
   yield { type: "plan", exposed };
   if (!lock) return;
 
   for (const h of exposed) {
-    const settled = await dispatch(lock, "sweep", { method: "shield", request: { asset: h.asset, amount: h.public.toString() } });
+    const settled = await dispatch(lock, "sweep", { method: "shield", request: { asset: h.asset, amount: h.public.toString() } }, sending);
     yield {
       type: "shield",
       asset: h.asset,

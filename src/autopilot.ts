@@ -28,8 +28,6 @@ import { rebalance, sweep } from "./treasury.js";
 /** `everyMin` and `maxUsd` (whole dollars) are part of the strategy, inside its digest; on/off is not: turning off is always safe. */
 type Settings = { on: boolean } & Strategy["autopilot"];
 
-export const MIN_EVERY_MIN = 5;
-
 export function settings(): Settings {
   return { on: process.env.AUTOPILOT === "on", ...loadStrategy().autopilot };
 }
@@ -48,7 +46,11 @@ export function status() {
   return { ...s, lastRun: last, nextRun: next };
 }
 
-/** Whether this server's live grant is the owner's approval of the strategy in force. */
+/**
+ * Whether this server's live grant is the owner's approval of the strategy in force. `authorize` refuses
+ * every autopilot send without it; checked first so that such a tick waits for the owner instead of
+ * recording refusals.
+ */
 async function mandateApproved() {
   const grant = liveGrant(await api.listGrants(agentId()), process.env.AGENT_GRANT_TOKEN);
   return grant !== undefined && grantApproves(grant.label, loadStrategy());
@@ -117,7 +119,7 @@ async function run(found: Found): Promise<string> {
     // Every send, a sweep's shield included, needs the owner's grant for the strategy in force.
     const approved = await mandateApproved();
     if (!approved) report.push("sweep left for the owner: the owner's grant doesn't approve this strategy");
-    else for await (const event of sweep({ execute: true })) {
+    else for await (const event of sweep({ execute: true, autopilot: true })) {
       if (event.type !== "shield") continue;
       report.push(`shielded ${event.asset}: ${event.status}`);
       found.shields.push({ asset: event.asset, status: event.status, correlationId: event.correlationId });

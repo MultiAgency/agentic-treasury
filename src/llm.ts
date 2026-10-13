@@ -36,7 +36,7 @@ const SwapInput = z.object({
 });
 
 /** Turns a model-chosen swap into a leg the shared quote/execute path understands. */
-async function legFor({ from, to, amount }: z.infer<typeof SwapInput>): Promise<Leg> {
+async function modelLeg({ from, to, amount }: z.infer<typeof SwapInput>): Promise<Leg> {
   if (from === to) throw new Error("from and to must differ");
   const book = await holdings();
   const holding = (symbol: Symbol) => book.find((h) => h.asset === ASSETS[symbol])!;
@@ -59,6 +59,12 @@ const refusal = (error: unknown) => {
   if (error instanceof AgentApiError) return `REFUSED ${error.status} ${error.code}${error.detail ? `: ${error.detail}` : ""}`;
   throw error;
 };
+
+/** A model-chosen swap with its dry quote, or the refusal to answer the model with. */
+async function quoteSwap(input: z.infer<typeof SwapInput>) {
+  const leg = await modelLeg(input);
+  return (await buyRefusal(leg)) ?? (await quoteLeg(leg).then((quote) => ({ leg, quote }), refusal));
+}
 
 type Tool = { spec: ChatCompletionFunctionTool; run: (args: unknown) => Promise<string> };
 
@@ -101,11 +107,9 @@ function tools(plan: PlannedAction[], strategy: Strategy): Tool[] {
       `Quote a swap without executing it. Returns the expected output, the floor, and the cost in basis points of the input value (swaps that could cost more than ${maxCostBps} bps at their floor are refused).`,
       SwapInput,
       async (input) => {
-        const leg = await legFor(input);
-        const denied = await buyRefusal(leg);
-        if (denied) return denied;
-        const quote = await quoteLeg(leg).catch(refusal);
-        if (typeof quote === "string") return quote;
+        const quoted = await quoteSwap(input);
+        if (typeof quoted === "string") return quoted;
+        const { leg, quote } = quoted;
         return `${format(leg.amount, leg.from)} (~$${leg.usd.toFixed(2)}) → ${format(quote.amountOut, leg.to)}, floor ${format(quote.minAmountOut, leg.to)}, cost ${quote.costBps} bps, at worst ${quote.worstCostBps} bps`;
       },
     ),
@@ -114,11 +118,9 @@ function tools(plan: PlannedAction[], strategy: Strategy): Tool[] {
       "Propose a swap of one treasury asset for another. It is quoted now and added to the plan with the quote's floor; the owner executes the plan later, held to that floor. Every swap spends the USD budget by its input value.",
       SwapInput,
       async (input) => {
-        const leg = await legFor(input);
-        const denied = await buyRefusal(leg);
-        if (denied) return denied;
-        const quote = await quoteLeg(leg).catch(refusal);
-        if (typeof quote === "string") return quote;
+        const quoted = await quoteSwap(input);
+        if (typeof quoted === "string") return quoted;
+        const { leg, quote } = quoted;
         if (quote.worstCostBps > maxCostBps)
           return `NOT PROPOSED: at its floor it costs ${quote.worstCostBps} bps, above ${maxCostBps} bps`;
         plan.push({ type: "swap", from: leg.from.asset, to: leg.to.asset, amount: leg.amount.toString(), ...quote });

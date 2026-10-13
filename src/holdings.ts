@@ -13,6 +13,10 @@ export type Holding = {
   usd: number;
 };
 
+/** An asset's raw balance in one balance view: zero when the view doesn't list it. */
+export const rawBalance = (view: { balances: { asset_id: string; balance_raw: string }[] }, asset: string) =>
+  BigInt(view.balances.find((b) => b.asset_id === asset)?.balance_raw ?? "0");
+
 /** Something the agent holds outside the treasury's assets; null fields where the API has no token data. */
 type Unmanaged = { asset: string; symbol: string; decimals: number | null; amount: bigint; usd: number | null };
 
@@ -27,18 +31,16 @@ export async function allHoldings(): Promise<{ managed: Holding[]; unmanaged: Un
     api.getBalances(agentId(), { source: "public" }),
     api.getBalances(agentId(), { source: "confidential" }),
   ]);
-  const raw = (view: typeof open, asset: string) =>
-    BigInt(view.balances.find((b) => b.asset_id === asset)?.balance_raw ?? "0");
   const managed = Object.values(ASSETS).map((asset) => {
     const token = tokens.find((t) => t.asset_id === asset);
     if (!token?.price) throw new Error(`No price for ${asset}`);
-    const balance = { public: raw(open, asset), confidential: raw(shielded, asset) };
+    const balance = { public: rawBalance(open, asset), confidential: rawBalance(shielded, asset) };
     return { asset, symbol: token.symbol, decimals: token.decimals, price: token.price, ...balance, usd: usdValue(balance.public + balance.confidential, token.decimals, token.price) };
   });
   const treasury = new Set<string>(Object.values(ASSETS));
   const others = new Set([...open.balances, ...shielded.balances].map((b) => b.asset_id).filter((asset) => !treasury.has(asset)));
   const unmanaged = [...others].flatMap((asset) => {
-    const amount = raw(open, asset) + raw(shielded, asset);
+    const amount = rawBalance(open, asset) + rawBalance(shielded, asset);
     if (amount === 0n) return [];
     const token = tokens.find((t) => t.asset_id === asset);
     const usd = token?.price ? usdValue(amount, token.decimals, token.price) : null;

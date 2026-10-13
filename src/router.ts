@@ -7,7 +7,7 @@ import { held } from "./payouts.js";
 import { api } from "./api.js";
 import { accountExists, daoPayees, describeTreasury, fundingTransaction, isDao } from "./chain.js";
 import { daoOwner, ownerFunded } from "./dao-owner.js";
-import { MIN_EVERY_MIN, saveSettings, status as autopilotStatus, tick } from "./autopilot.js";
+import { saveSettings, status as autopilotStatus, tick } from "./autopilot.js";
 import { ticks } from "./evidence.js";
 import { agentId, executes, saveEnv } from "./env.js";
 import { dismiss, readInbox } from "./inbox.js";
@@ -20,6 +20,7 @@ import { steward } from "./llm.js";
 import { executePlan } from "./plans.js";
 import { ASSETS } from "./policy.js";
 import { loadStrategy } from "./strategy.js";
+import { MIN_EVERY_MIN } from "./strategy-digest.js";
 import { rebalance, sweep, targets } from "./treasury.js";
 import { daoRequests, prepare, status, submit } from "./owner-intents.js";
 import { cancelPreparedInvoice, listInvoices } from "./invoice-store.js";
@@ -147,7 +148,17 @@ export const router = {
     const id = agentId();
     const [{ managed: book, unmanaged }, policy, grants] = await Promise.all([allHoldings(), api.getPolicy(id), api.listGrants(id)]);
     const digest = policy.policy ? mandateDigest(policy.policy) : null;
-    return { agentId: id, book, unmanaged, target: targets(loadStrategy()), policy, digest, grants: grants.filter((g) => !g.revoked_at) };
+    const strategy = loadStrategy();
+    return {
+      agentId: id,
+      book,
+      unmanaged,
+      target: targets(strategy),
+      rebalance: { minLegUsd: strategy.minLegUsd, maxCostBps: strategy.maxCostBps },
+      policy,
+      digest,
+      grants: grants.filter((g) => !g.revoked_at),
+    };
   }),
   /** Every revision of the owner's mandate, newest first, each with the digest anyone can recompute. */
   policyHistory: os.handler(async () => {

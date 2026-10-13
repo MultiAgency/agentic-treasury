@@ -2,6 +2,7 @@ import type { StatusResponse } from "@near-intents-agent-api/sdk";
 import { agentId } from "./env.js";
 import { api } from "./api.js";
 import { fastnearPost, transactionsApi } from "./chain.js";
+import { rawBalance } from "./holdings.js";
 import { readOps } from "./ops.js";
 
 /**
@@ -181,7 +182,7 @@ function confidentialFlows(rows: Row[]) {
   return book;
 }
 
-export type Reconciliation = {
+type Reconciliation = {
   asset: string;
   symbol: string;
   /** Public balance: the API's figure against the chain's transfers. Any drift is an error. */
@@ -205,10 +206,9 @@ export async function reconcileBooks(id = agentId()): Promise<Reconciliation[]> 
   for (const t of await publicTransfers(account))
     if (t.asset_id.startsWith("nep245:intents.near:")) add(chain, t.asset_id.slice("nep245:intents.near:".length), t.amount, 1n);
   const recorded = confidentialFlows(rows);
-  const balance = (view: typeof open, asset: string) => BigInt(view.balances.find((b) => b.asset_id === asset)?.balance_raw ?? "0");
   const assets = new Set([...open.balances, ...shielded.balances].map((b) => b.asset_id).concat([...chain.keys(), ...recorded.keys()]));
   return [...assets].sort().map((asset) => {
-    const [pub, conf] = [balance(open, asset), balance(shielded, asset)];
+    const [pub, conf] = [rawBalance(open, asset), rawBalance(shielded, asset)];
     const [onChain, expected] = [chain.get(asset) ?? 0n, recorded.get(asset) ?? 0n];
     return {
       asset,

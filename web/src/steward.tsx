@@ -1,6 +1,7 @@
 import { Robot, ShieldCheck } from "@phosphor-icons/react";
 import { useState } from "react";
-import { client, useRun } from "./lib";
+import { amountOf, client, useRun } from "./lib";
+import { useAgent } from "./shell";
 import { Badge, Button, Card, CardHeader, ConfirmButton, Empty, ErrorBox, NotExecuted, Spinner, StatusBadge, statusTone } from "./ui";
 
 /** A tool result that starts like this was stopped by the policy or the cost cap, or not proposed. */
@@ -8,6 +9,8 @@ const resultTone = (result: string) =>
   /^(REFUSED|ERROR)/.test(result) ? "destructive" : /^(NOT PROPOSED|ALREADY)/.test(result) ? "warning" : /^PROPOSED/.test(result) ? "info" : "neutral";
 
 export function Steward() {
+  const { data } = useAgent();
+  const symbol = (asset: string) => data.book.find((h) => h.asset === asset)?.symbol ?? asset;
   const proposal = useRun(client.steward.propose);
   const execution = useRun(client.executePlan);
   const [instruction, setInstruction] = useState("");
@@ -89,8 +92,8 @@ export function Steward() {
                 <div key={i} className="flex flex-wrap items-center gap-2 font-mono">
                   {i + 1}.{" "}
                   {action.type === "swap"
-                    ? `swap ${action.amount} ${action.from.slice(0, 16)} → ${action.to.slice(0, 16)} · floor ${action.minAmountOut} · ${action.costBps} bps`
-                    : `shield ${action.amount} ${action.asset.slice(0, 16)}`}
+                    ? `swap ${amountOf(action.amount, action.from, data.book)} → ${symbol(action.to)} · floor ${amountOf(action.minAmountOut, action.to, data.book)} · ${action.costBps} bps`
+                    : `shield ${amountOf(action.amount, action.asset, data.book)}`}
                   {done?.type === "action" && done.shield && (
                     <Badge tone={statusTone(done.shield.status)}>shield {done.shield.status.toLowerCase()}</Badge>
                   )}

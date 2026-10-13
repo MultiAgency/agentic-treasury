@@ -9,6 +9,14 @@ import { connect, dao, type Transaction, send, useWallet } from "./wallet";
 
 export type Treasury = NonNullable<Awaited<ReturnType<typeof client.treasury.get>>>;
 
+/** Connects a DAO in Trezu and links it as the treasury. */
+export async function linkTrezuDao() {
+  await dao.connect();
+  const id = (await dao.connector.getConnectedWallet()).accounts[0]?.accountId;
+  if (!id) throw new Error("Trezu returned no DAO account");
+  await client.treasury.link({ accountId: id });
+}
+
 function LinkTreasury() {
   const wallet = useWallet();
   const daoWallet = dao.use();
@@ -34,14 +42,7 @@ function LinkTreasury() {
         <Button
           variant="outline"
           disabled={link.busy || daoWallet.status === "connecting"}
-          onClick={() =>
-            link.attempt(async () => {
-              await dao.connect();
-              const id = (await dao.connector.getConnectedWallet()).accounts[0]?.accountId;
-              if (!id) throw new Error("Trezu returned no DAO account");
-              await client.treasury.link({ accountId: id });
-            })
-          }
+          onClick={() => link.attempt(linkTrezuDao)}
         >
           {daoWallet.status === "connecting" ? <Spinner /> : <UsersThree size={18} />} Connect a DAO with Trezu
         </Button>

@@ -26,7 +26,10 @@ const [evidence, ledger, interventions] = await Promise.all([
   rpc<Row[]>("ledger"),
   fetch(new URL(`/gw/interventions?since=${encodeURIComponent(SINCE)}`, BASE), { headers: { cookie: COOKIE } }).then(async (res) => {
     if (!res.ok) throw new Error(`interventions: ${res.status} ${await res.text()}`);
-    return (await res.json()) as Intervention[];
+    const record = (await res.json()) as { calls: Intervention[]; corrupt: number[] };
+    // A gateway that answers a bare list skips unreadable lines, so it can't show there were no calls.
+    if (!Array.isArray(record.corrupt)) throw new Error("interventions: this gateway doesn't count unreadable lines; deploy a build that does");
+    return record;
   }),
 ]);
 const report = unattendedReport({ since: SINCE, until: UNTIL, evidence, interventions, ledger });

@@ -96,7 +96,9 @@ lease does not enforce that across machines. Other instances use `EXECUTOR=off`.
 
 Each instance of the server runs one agent. To run a second beside the first, give it its own
 settings file: `ENV_FILE=.env.payout PORT=8790 pnpm server`. It shares the API keys in `.env` but keeps
-its own agent, grant and treasury, and each agent has its own action log in `.ops/`.
+its own agent, grant and treasury, and each agent has its own action log in `.ops/`. The payout agent's
+executor, which also serves the invoice page, starts with `ENV_FILE=.env.payout pnpm invoices`; any other
+instance of an agent runs `EXECUTOR=off` ([operations](docs/operations.md#payout-executor)).
 
 ## Invoices
 

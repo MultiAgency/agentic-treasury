@@ -28,8 +28,8 @@ const row = (min: number, correlationId: string, amountIn = "1"): Row => ({
   assetOut: "b", amountOut: "1", recipient: null, correlationId, intentHash: null, approvalId: null, kind: null, planId: null,
   policyRevision: null, policyDigest: null, usdIn: null,
 });
-const report = (ticks: Tick[], { ledger = [] as Row[], interventions = [] as Intervention[], corrupt = [] as number[], until = at(180) } = {}) =>
-  unattendedReport({ since: at(0), until, evidence: { ticks, corrupt }, interventions, ledger, now: at(181) });
+const report = (ticks: Tick[], { ledger = [] as Row[], interventions = [] as Intervention[], unreadable = [] as number[], corrupt = [] as number[], until = at(180) } = {}) =>
+  unattendedReport({ since: at(0), until, evidence: { ticks, corrupt }, interventions: { calls: interventions, corrupt: unreadable }, ledger, now: at(181) });
 const criterion = (text: string, name: string) => text.split("\n").find((l) => l.startsWith(`- ${name}`)) ?? assert.fail(`no criterion "${name}"`);
 
 test("a clean day: every criterion holds, a no-op counts as scheduled work, and the swap is matched to its tick", () => {
@@ -91,6 +91,12 @@ test("unresolved operations are an observation; interventions are their own reco
   const recovered = report([tick(1), tick(61), tick(121)], { interventions: [{ at: at(30), account: "ops.near", agent: "treasury", path: "recover" }] });
   assert.match(criterion(recovered, "No operator interventions in the gateway's record"), /\*\*no\*\* \(1 recorded calls/);
   assert.match(recovered, /- [^\n]*ops\.near treasury recover/);
+});
+
+test("an unreadable intervention line may have been a call, so the record can't show there were none", () => {
+  const text = report([tick(1), tick(61), tick(121)], { unreadable: [3] });
+  assert.match(criterion(text, "No operator interventions in the gateway's record"), /\*\*no\*\* \(0 recorded calls, 1 unreadable lines/);
+  assert.match(text, /Unreadable intervention lines \(each may have been a call\):\n- line 3/);
 });
 
 test("outcomes are told apart: a failed sweep shield fails; a refusal is a working control", () => {

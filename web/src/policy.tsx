@@ -2,8 +2,8 @@ import { PencilSimple } from "@phosphor-icons/react";
 import { useState } from "react";
 import { Grants, Mandate } from "./grants";
 import { Held } from "./held";
-import { amount, usd } from "./lib";
-import { OwnerControls, ownerName, useCanSign } from "./owner";
+import { amountOf, usd } from "./lib";
+import { OwnerControls, ownerName, useSigner } from "./owner";
 import { BUDGET, type Window, WINDOWS } from "./policy-draft";
 import { Editor } from "./policy-editor";
 import { useAgent } from "./shell";
@@ -12,23 +12,19 @@ import { Badge, Button, Section, statusTone } from "./ui";
 /** The policy envelope the owner signed, the owner's controls over it, and what waits for the owner. */
 export function Policy() {
   const { data, setup } = useAgent();
-  const canSign = useCanSign(setup);
+  const { canSign } = useSigner(setup);
   const [editing, setEditing] = useState(false);
   const { policy } = data.policy;
   if (!policy) return <p className="text-sm text-muted-foreground">No policy yet.</p>;
-  const bySymbol = new Map(data.book.map((h) => [h.asset, h]));
   const caps = (window: Window) =>
     Object.entries(policy.limits?.[window] ?? {})
-      .map(([asset, raw]) => {
-        const h = bySymbol.get(asset);
-        return h ? amount(raw, h) : `${raw} ${asset}`;
-      })
+      .map(([asset, raw]) => amountOf(raw, asset, data.book))
       .join(" · ") || "None";
   const budget = BUDGET.flatMap(([key, label]) => (policy.budget[key] ? [`${usd(policy.budget[key])} ${label}`] : [])).join(" · ");
   const rows: [string, string][] = [
     ["Owner", ownerName(setup)],
     ["Actions", policy.actions.join(", ") || "None"],
-    ["Assets", policy.assets === "any" ? "Any" : policy.assets.map((a) => bySymbol.get(a)?.symbol ?? a).join(", ")],
+    ["Assets", policy.assets === "any" ? "Any" : policy.assets.map((a) => data.book.find((h) => h.asset === a)?.symbol ?? a).join(", ")],
     ...WINDOWS.map(([window, label]): [string, string] => [`Caps ${label.toLowerCase()}`, caps(window)]),
     ["USD budget", budget || "None"],
     ["Rate", policy.max_actions_per_hour ? `${policy.max_actions_per_hour} actions an hour` : "No cap"],

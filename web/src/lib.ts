@@ -3,6 +3,7 @@ import { RPCLink } from "@orpc/client/fetch";
 import type { RouterClient } from "@orpc/server";
 import { queryOptions, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { ASSETS } from "../../src/policy.js";
 import type { Router } from "../../src/router.js";
 
 /**
@@ -40,19 +41,24 @@ export const swaps = (data: Overview) => Boolean(data.policy.policy?.actions.inc
 export const units = (raw: bigint | string, decimals: number) => Number(raw) / 10 ** decimals;
 
 /** The book's value at the API's prices. */
-export const bookValue = (data: Overview) => data.book.reduce((sum, h) => sum + h.usd, 0);
+export const bookValue = (data: Pick<Overview, "book">) => data.book.reduce((sum, h) => sum + h.usd, 0);
+
+/** Payouts are confidential USDC (src/authorize.ts), which an empty wallet's book doesn't list. */
+const USDC = { asset: ASSETS.USDC, decimals: 6, symbol: "USDC" };
+
+/** A raw amount of `asset` in words at the book's decimals, or in raw units when the book doesn't list it. */
+export function amountOf(raw: string, asset: string, book: Holding[]) {
+  const h = book.find((b) => b.asset === asset) ?? (asset === USDC.asset ? USDC : undefined);
+  return h ? amount(raw, h) : `${raw} ${asset.replace(/^nep141:/, "")}`;
+}
 
 /** A money action's request in words: what moves, how much, and to whom. */
 export function describeRequest(request: Record<string, unknown>, book: Holding[]) {
   const r = request as Partial<Record<"origin_asset" | "destination_asset" | "asset" | "amount" | "recipient", string>>;
-  const value = (raw: string, asset: string) => {
-    const h = book.find((b) => b.asset === asset);
-    return h ? amount(raw, h) : `${raw} ${asset.replace(/^nep141:/, "")}`;
-  };
   return r.origin_asset && r.destination_asset && r.amount
-    ? `${value(r.amount, r.origin_asset)} → ${book.find((b) => b.asset === r.destination_asset)?.symbol ?? r.destination_asset}`
+    ? `${amountOf(r.amount, r.origin_asset, book)} → ${book.find((b) => b.asset === r.destination_asset)?.symbol ?? r.destination_asset}`
     : r.asset && r.amount
-      ? `${value(r.amount, r.asset)}${r.recipient ? ` to ${r.recipient}` : ""}`
+      ? `${amountOf(r.amount, r.asset, book)}${r.recipient ? ` to ${r.recipient}` : ""}`
       : JSON.stringify(request);
 }
 

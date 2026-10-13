@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -150,7 +150,17 @@ test("the intervention record is for operators only", async () => {
   assert.equal((await interventions("member.near")).status, 403);
   const answer = await interventions("ops.near");
   assert.equal(answer.status, 200);
-  assert.ok(((await answer.json()) as { path: string }[]).some((i) => i.path === "autopilot/tick"));
+  assert.ok(((await answer.json()) as { calls: { path: string }[] }).calls.some((i) => i.path === "autopilot/tick"));
+});
+
+test("a torn line in the intervention record is counted, and the call recorded after it still reads", async () => {
+  const path = join(dir, ".evidence", "interventions.jsonl");
+  appendFileSync(path, '{"at":"2026-'); // a crash mid-append
+  const torn = readFileSync(path, "utf8").split("\n").length;
+  assert.equal((await call("autopilot/tick", "ops.near")).status, 200);
+  const { calls, corrupt } = (await (await interventions("ops.near")).json()) as { calls: { path: string }[]; corrupt: number[] };
+  assert.deepEqual(corrupt, [torn]);
+  assert.equal(calls.at(-1)?.path, "autopilot/tick");
 });
 
 test("an operator call that can't be recorded is not run", async () => {

@@ -6,6 +6,7 @@ import { childEnv, hostOf, loadConfig } from "../src/gateway/config.js";
 import { BadRequest } from "../src/http.js";
 import { CHALLENGE_TTL_MS, issueChallenge, type KeyLookup, parseSignIn, SESSION_TTL_MS, sessionAccount, sessions, sessionToken, verifySignIn } from "../src/signin.js";
 import { accessOf } from "../src/gateway/roles.js";
+import { council } from "../src/chain.js";
 
 const HOST = "dao.test";
 
@@ -116,6 +117,27 @@ test("members come from the DAO's groups, operators from the configuration, ever
   assert.deepEqual(accessOf("dave.near", policy, []), { role: "member", canPropose: true, canVote: false });
   assert.deepEqual(accessOf("ops.near", policy, ["ops.near"]), { role: "operator", canPropose: false, canVote: false });
   assert.equal(accessOf("mallory.near", policy, []), null);
+});
+
+/**
+ * Every permission form Sputnik grants a FunctionCall vote with (`<kind>:<action>`, `<kind>:*`, `*:<action>`, `*:*`;
+ * sputnik-dao-contract 5434a59, sputnikdao2/src/policy.rs `can_execute_action`): the gateway's vote and the
+ * treasury page's approvers agree on each, and a vote on another kind grants neither.
+ */
+test("a FunctionCall vote is read the way the DAO contract grants it, in the gateway and the approvers alike", () => {
+  for (const [permission, votes] of [["call:VoteApprove", true], ["call:*", true], ["*:VoteApprove", true], ["*:*", true],
+    ["transfer:VoteApprove", false], ["call:VoteReject", false]] as const) {
+    const dao = { ...policy, roles: [{ name: "voters", kind: { Group: ["v.near"] }, permissions: [permission], vote_policy: {} }] };
+    assert.equal(accessOf("v.near", dao, [])?.canVote, votes, permission);
+    assert.deepEqual(council(dao).approvers.map((a) => a.role), votes ? ["voters"] : [], permission);
+  }
+});
+
+test("a token-weighted role names no accounts: sign-in and the council read past it", () => {
+  const dao = { ...policy, roles: [{ name: "holders", kind: { Member: "1" }, permissions: ["*:*"], vote_policy: {} }, ...policy.roles] };
+  assert.deepEqual(accessOf("alice.near", dao, []), { role: "member", canPropose: true, canVote: true });
+  assert.equal(accessOf("mallory.near", dao, []), null);
+  assert.deepEqual(council(dao).members, ["alice.near", "carol.near", "dave.near"]);
 });
 
 test("members read and file proposals; money and settings are for operators", () => {

@@ -54,8 +54,8 @@ export async function checkPaymentApproval(input: Pick<PaymentApproval, "approva
       throw new AuthorizationHeld("provider approval terms don't match its request hash");
 
     if (!view) throw new AuthorizationHeld("policy unavailable");
-    const refusal = authorize("approval", { method: "transfer", request: { recipient: to, asset: token, amount, confidential: true } },
-      { now: Date.now(), agentId: id, view, grant: undefined });
+    const refusal = authorize({ method: "transfer", request: { recipient: to, asset: token, amount, confidential: true } },
+      { purpose: "approval", facts: { now: Date.now(), agentId: id, view, grant: undefined } });
     if (refusal) throw new AuthorizationHeld(`${refusal.code}: ${refusal.message}`);
     const policy = view.policy!;
 

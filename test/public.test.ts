@@ -25,6 +25,8 @@ const policy: DaoPolicy = {
   proposal_bond: "0",
   roles: [
     { name: "all", kind: "Everyone", permissions: [], vote_policy: {} },
+    // Token-weighted: it names no accounts, so it lists no members.
+    { name: "holders", kind: { Member: "1" }, permissions: ["*:AddProposal"], vote_policy: {} },
     { name: "Approver", kind: { Group: ["multiagentic.near"] }, permissions: ["*:VoteApprove"], vote_policy: {} },
   ],
   default_vote_policy: { threshold: [1, 2] },

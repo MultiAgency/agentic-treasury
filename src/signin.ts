@@ -60,7 +60,7 @@ export function issueChallenge(host: string, now = Date.now()) {
  * they fill in themselves (the page that asked) and don't report back: the page sends what it might
  * have been, in `callbackUrls`, and `callbackUrl` when it knows.
  */
-export type SignIn = {
+type SignIn = {
   accountId: string;
   publicKey: string;
   signature: string;
@@ -74,9 +74,12 @@ export type KeyLookup = (accountId: string, publicKey: string) => Promise<"FullA
 
 const near = new Near(mainnet);
 
-/** The key as NEAR mainnet has it now (`view_access_key`). */
+/**
+ * The key as NEAR mainnet has it now (`view_access_key`). near-kit answers null for any RPC error too
+ * (near-kit/dist/core/near.js getAccessKey), so an outage refuses the sign-in as an unknown key.
+ */
 export const chainKeyLookup: KeyLookup = async (accountId, publicKey) => {
-  const key = await near.getAccessKey(accountId, publicKey).catch(() => null);
+  const key = await near.getAccessKey(accountId, publicKey);
   if (!key) return null;
   return key.permission === "FullAccess" ? "FullAccess" : "FunctionCall";
 };

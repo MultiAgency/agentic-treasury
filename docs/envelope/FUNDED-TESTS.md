@@ -1,15 +1,14 @@
-# Funded-test manifest — NOT AUTHORIZED
+# Funded tests: manifest and results
 
-Historical experiment manifest and results. The completed, fixed-funding runners and their tests
-are archived under `.evidence/prototype-cleanup-20261013/` at their original relative paths.
-The `pnpm envelope` and `pnpm envelope:concurrency` commands below describe that run; they are no
-longer product commands. Restore the archived files in a disposable checkout only when reproducing
-an explicitly authorized funded experiment. Future verification follows [ACCEPTANCE.md](ACCEPTANCE.md).
+The manifest and results of the funded runs of 2026-10-13 for the provider integration tests in
+[ACCEPTANCE.md](ACCEPTANCE.md). Both runs had the user's explicit authorization. No production
+treasury or payout agent is a fixture.
 
-
-A concrete plan for the provider integration tests in [ACCEPTANCE.md](ACCEPTANCE.md). Nothing here runs
-without the user's explicit authorization, and nothing runs before the unattended observation run ends
-(2026-10-13T21:37:54Z). No production treasury or payout agent is a fixture.
+The fixed-funding runners are not product commands and are not in the tree. They are committed at
+`c25b61b` (`src/envelope-phase1.ts`, `scripts/envelope-concurrency.ts`, `test/envelope-phase1.test.ts`): to
+reproduce a run, check that commit out in a disposable worktree, and only for an explicitly authorized
+funded experiment. "Phase" below means a
+batch of funded tests, not a delivery phase of [signed-envelope.md](../signed-envelope.md).
 
 ## Scope
 
@@ -55,11 +54,11 @@ Asset ids from `src/policy.ts`. USDC has 6 decimals.
 The actions, `confidential` and destination list reproduce the treasury's live configuration, so E10
 tests it without touching the treasury. No transfer is made, so the copied destinations receive nothing.
 
-Tooling: `ENV_FILE=.env.e2e pnpm envelope --write-policy <file>` writes this policy with the treasury's
-applied destinations and prints their revision; `ENV_FILE=.env.e2e pnpm update-policy --policy <file>`
-signs it. `ENV_FILE=.env.e2e pnpm envelope --preflight` reads only; `--run` performs steps 2–4
-through `dispatch`, refuses any agent but the `.env.e2e` one, and allows exactly three requests. It
-writes evidence to `proto-releases/<timestamp>-envelope-phase1/`.
+Tooling (archived runner `src/envelope-phase1.ts`): `--write-policy <file>` wrote this policy with the
+treasury's applied destinations and printed their revision; `ENV_FILE=.env.e2e pnpm update-policy --policy <file>`
+signed it. `--preflight` reads only; `--run` performs steps 2–4 through `dispatch`, refuses any agent
+but the `.env.e2e` one, and allows exactly three requests. It writes evidence to
+`proto-releases/<timestamp>-envelope-phase1/`.
 
 ## Setup transactions (not test cases)
 
@@ -166,10 +165,10 @@ behaviour under concurrency (E2–E4). Gas and storage ceilings were not checked
 
 Run with the user's authorization on the same test agent. Policy revision 3 set `daily_usd` to 3, all else
 unchanged; $1.999536 was already spent, leaving $1.000464. Five swaps of $0.40 wNEAR → USDC were sent at
-the same instant directly to the API with the test grant, bypassing our money lock. Reproduce with
-`ENV_FILE=.env.e2e pnpm envelope:concurrency` (`scripts/envelope-concurrency.ts`; `ENVELOPE_N`, `ENVELOPE_USD_EACH`).
-It is guarded to the test agent, refuses when the remaining budget would fit all N, and lives outside
-`src/` because it uses the grant directly, which `test/send-path.test.ts` forbids there. Evidence: `proto-releases/20261013T033230Z-envelope-concurrency/result.json`.
+the same instant directly to the API with the test grant, bypassing our money lock, by the archived
+`scripts/envelope-concurrency.ts` (`ENVELOPE_N`, `ENVELOPE_USD_EACH`). It is guarded to the test agent and
+refuses when the remaining budget would fit all N. It uses the grant directly, which
+`test/send-path.test.ts` forbids in `src/`. Evidence: `proto-releases/20261013T033230Z-envelope-concurrency/result.json`.
 
 - One accepted and settled (`op_13BiIirYsg208ObtehlBZqEwvW52gthNOoW0EZEvlRo`); one `wallet_busy`; three
   `spend_budget_exceeded`.

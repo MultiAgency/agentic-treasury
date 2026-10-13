@@ -228,7 +228,7 @@ export async function* executePlan(id: string, now = () => new Date(), { autopil
       return;
     }
 
-    const sending = (leg: PlannedAction): Sending => ({ plan, leg, autopilot, now });
+    const sending = (leg: PlannedAction): Sending => ({ planned: { plan, leg }, autopilot, now });
     for (const [index, action] of plan.actions.entries()) {
       const current = await observe();
       const problems = feasibility(plan.actions.slice(index), current.snapshot.balances);

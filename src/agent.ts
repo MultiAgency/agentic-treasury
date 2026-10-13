@@ -4,11 +4,12 @@ import { agentId, executes } from "./env.js";
 import { assertCanDispatch, assertMoneyLock, type MoneyLock, withMoneyLock } from "./lock.js";
 import { mandateDigest } from "./mandate.js";
 import { AuthorizationHeld, claimSubmission, isHeld, provenRefusal, readOps, record } from "./ops.js";
-import { authorize, type Facts, type Purpose } from "./authorize.js";
+import { authorize, type Case, type Purpose } from "./authorize.js";
 import type { Plan, PlannedAction } from "./plans.js";
 import { loadStrategy } from "./strategy.js";
 import { invoiceOperations, markInvoiceUnknown } from "./invoice-store.js";
 import { liveGrant } from "./grants.js";
+import { rawBalance } from "./holdings.js";
 import { usdValue } from "./value.js";
 
 /** Every money action runs under the agent's grant, never the owner's key. */
@@ -55,8 +56,11 @@ export async function send(action: Action, idempotencyKey: string, lock: MoneyLo
   }
 }
 
-/** A saved plan's send: the leg being sent, whether the autopilot sends it, and the plan's clock. */
-export type Sending = { plan: Plan; leg: PlannedAction; autopilot: boolean; now: () => Date };
+/**
+ * A strategy send: a saved plan's leg being sent (`null` for a sweep, which has no plan), whether the
+ * autopilot sends it, and the clock it is judged by.
+ */
+export type Sending = { planned: { plan: Plan; leg: PlannedAction } | null; autopilot: boolean; now: () => Date };
 
 /**
  * Sends one money action under the money lock and follows it to a stable status. The request is
@@ -96,7 +100,7 @@ export async function dispatch(lock: MoneyLock, kind: string, action: Action, se
     policyRevision: revision,
     policyDigest: policy ? mandateDigest(policy) : null,
     usdIn,
-    ...(sending && { planId: sending.plan.id }),
+    ...(sending?.planned && { planId: sending.planned.plan.id }),
   });
   // The provider enforces most of the policy itself; `authorize` refuses what it can't tell apart or
   // doesn't check (what a swap buys, a grant's purpose, a public or duplicate payout, a changed plan).
@@ -110,13 +114,13 @@ export async function dispatch(lock: MoneyLock, kind: string, action: Action, se
   const common = { now: (sending?.now() ?? new Date()).getTime(), agentId: agentId(), view, grant };
   const held = readOps().filter(isHeld);
   const reserved = held.filter((op) => op.request.asset === asset).reduce((sum, op) => sum + BigInt(String(op.request.amount)), 0n);
-  const available = (BigInt(shielded?.balances.find((b) => b.asset_id === asset)?.balance_raw ?? "0") - reserved).toString();
-  const facts: Facts[Purpose] = purpose === "treasury" || purpose === "autopilot"
-    ? { ...common, plan: sending ? { plan: sending.plan, leg: sending.leg } : null, strategy: loadStrategy(), tokens }
+  const available = ((shielded ? rawBalance(shielded, asset) : 0n) - reserved).toString();
+  const judged: Case = purpose === "treasury" || purpose === "autopilot"
+    ? { purpose, facts: { ...common, plan: sending?.planned ?? null, strategy: loadStrategy(), tokens } }
     : purpose === "payout"
-      ? { ...common, available, heldPayouts: held.map(({ request: r }) => ({ recipient: String(r.recipient), asset: String(r.asset), amount: String(r.amount) })) }
-      : { ...common, available };
-  const refusal = authorize(purpose, action, facts as never);
+      ? { purpose, facts: { ...common, available, heldPayouts: held.map(({ request: r }) => ({ recipient: String(r.recipient), asset: String(r.asset), amount: String(r.amount) })) } }
+      : { purpose, facts: { ...common, available } };
+  const refusal = authorize(action, judged);
   if (refusal) {
     record({ idempotencyKey, refused: refusal.code });
     throw new LocalRefusal(refusal.code, refusal.message);

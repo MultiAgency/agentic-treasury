@@ -60,7 +60,7 @@ type RefusalOutcome =
   | { outcome: "inconclusive"; code: string }
   | { outcome: "unknown"; detail: string; status?: string; correlationId?: string }
   | { outcome: "passed"; status: string; correlationId: string; failureCode: string | null | undefined };
-export type RefusalEvent = { name: string; budget: string | null | undefined } & RefusalOutcome;
+type RefusalEvent = { name: string; budget: string | null | undefined } & RefusalOutcome;
 
 export async function* refusals({ live = false } = {}): AsyncGenerator<RefusalEvent> {
   if (!live) throw new Error("Live refusal probes are disabled. Use offline fault tests or recorded evidence; explicitly opt in with pnpm refusals --live to send real requests.");

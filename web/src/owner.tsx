@@ -139,11 +139,20 @@ export function useOwnerAction(setup: Setup) {
   return { run, busy: step !== "idle", label, error, digest };
 }
 
-/** Whether this page can sign as the agent's owner: the DAO through Trezu, or the owner's own wallet. */
-export function useCanSign(setup: Setup) {
+/**
+ * Who signs as the agent's owner from this page: the DAO through Trezu, or the owner's own wallet, which
+ * must be connected first and must be the owner's account.
+ */
+export function useSigner(setup: Setup) {
   const wallet = useWallet();
-  if (ownerSigner(setup) === "dao") return true;
-  return Boolean(setup.owner && setup.owner.type === "near" && wallet.accountId === setup.owner.account_id);
+  const viaDao = ownerSigner(setup) === "dao";
+  const canSign = viaDao || (setup.owner?.type === "near" && wallet.accountId === setup.owner.account_id);
+  return {
+    viaDao,
+    canSign,
+    needsWallet: !viaDao && wallet.status !== "connected",
+    connectedNotOwner: !viaDao && wallet.status === "connected" && !canSign,
+  };
 }
 
 export function ownerName(setup: Setup) {
@@ -176,16 +185,14 @@ export function WalletButton() {
 export function OwnerControls({ setup, frozen }: { setup: Setup; frozen: boolean }) {
   const wallet = useWallet();
   const action = useOwnerAction(setup);
-  const canSign = useCanSign(setup);
-  const viaDao = ownerSigner(setup) === "dao";
+  const { viaDao, needsWallet, connectedNotOwner } = useSigner(setup);
   const type = frozen ? "agent_unfreeze" : "agent_freeze";
   const verb = frozen ? "unfreeze" : "freeze";
 
   const onClick = async () => {
-    if (!viaDao && wallet.status !== "connected") await connect().catch(() => {});
+    if (needsWallet) await connect().catch(() => {});
     else await action.run({ type });
   };
-  const connectedNotOwner = !viaDao && wallet.status === "connected" && !canSign;
 
   return (
     <div className="flex flex-col items-end gap-2">

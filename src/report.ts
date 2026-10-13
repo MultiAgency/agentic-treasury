@@ -13,8 +13,11 @@ type ReportInput = {
   until: string;
   /** The scheduler's evidence: ticks with their ends, and the line numbers that didn't parse. */
   evidence: { ticks: Tick[]; corrupt: number[] };
-  /** Operator calls the gateway recorded. Calls made on a host directly (CLI, shell) are not in it. */
-  interventions: Intervention[];
+  /**
+   * Operator calls the gateway recorded, and the line numbers that didn't parse. Calls made on a host
+   * directly (CLI, shell) are not in it.
+   */
+  interventions: { calls: Intervention[]; corrupt: number[] };
   /** The books: every execution in the API's history. */
   ledger: Row[];
   now?: string;
@@ -43,11 +46,11 @@ export function outcomeOf(t: Tick): Outcome {
  * incidents behind each failed criterion. It states what the evidence shows and no more: operation
  * only, no custody or economic claims.
  */
-export function unattendedReport({ since, until, evidence, interventions: allInterventions, ledger, now = new Date().toISOString() }: ReportInput) {
+export function unattendedReport({ since, until, evidence, interventions: record, ledger, now = new Date().toISOString() }: ReportInput) {
   const ticks = evidence.ticks.filter((t) => t.at >= since && t.at <= until).sort((a, b) => a.at.localeCompare(b.at));
   const rows = ledger.filter((r) => r.at >= since && r.at <= until && MONEY.has(r.type));
   // Operator-only calls that only read (the evidence itself) are listed, not counted as interventions.
-  const recorded = allInterventions.filter((i) => i.at >= since && i.at <= until);
+  const recorded = record.calls.filter((i) => i.at >= since && i.at <= until);
   const reads = recorded.filter((i) => OPERATOR_READS.has(i.path));
   const interventions = recorded.filter((i) => !OPERATOR_READS.has(i.path));
   const outcome = new Map(ticks.map((t) => [t, outcomeOf(t)]));
@@ -130,7 +133,7 @@ export function unattendedReport({ since, until, evidence, interventions: allInt
     `- Every started tick recorded its end: ${ok(count("incomplete") === 0)} (${count("incomplete")} incomplete)`,
     `- No duplicate execution: ${duplicateVerdict} (${duplicateExecutions.length} confirmed: one plan leg executed twice; ${lookalikes.length} suspected: same terms, no tick recorded one; ${unattributed.length} executions no tick recorded)`,
     `- No duplicate references: ${ok(references.length === 0)} (${references.length})`,
-    `- No operator interventions in the gateway's record: ${ok(interventions.length === 0 && operatorTicks.length === 0)} (${interventions.length} recorded calls, ${operatorTicks.length} operator ticks; calls made on a host directly are not recorded)`,
+    `- No operator interventions in the gateway's record: ${ok(interventions.length === 0 && record.corrupt.length === 0 && operatorTicks.length === 0)} (${interventions.length} recorded calls, ${record.corrupt.length} unreadable lines, ${operatorTicks.length} operator ticks; calls made on a host directly are not recorded)`,
     `- No failed executions or errors: ${ok(count("failed") === 0)} (${count("failed")} ticks)`,
     `- Every tick read its book and mandate: ${ok(unread.length === 0)} (${unread.length} ticks)`,
     `- Evidence file intact: ${ok(evidence.corrupt.length === 0)} (${evidence.corrupt.length} unreadable lines)`,
@@ -166,6 +169,7 @@ export function unattendedReport({ since, until, evidence, interventions: allInt
     ...list("Executions no tick recorded:", unattributed.map((r) => `${r.at} ${r.type} ${r.status} ${r.correlationId}`)),
     ...list("Duplicate references:", references),
     ...list("Operator interventions (dashboard calls beyond reads):", interventions.map((i) => `${i.at} ${i.account} ${i.agent} ${i.path}`)),
+    ...list("Unreadable intervention lines (each may have been a call):", record.corrupt.map((n) => `line ${n}`)),
     ...list("Operator-triggered ticks:", operatorTicks.map((t) => t.at)),
     ...list("Operator reads (recorded by the gateway, not interventions):", reads.map((i) => `${i.at} ${i.account} ${i.agent} ${i.path}`)),
     ...list("Refusals (the control was invoked; whether it refused correctly is not judged here):", ticks.filter((t) => t.end && (t.end.refusal || t.end.rejected.length > 0)).map((t) => `${t.at}: ${t.end!.refusal ?? t.end!.rejected.join("; ")}`)),

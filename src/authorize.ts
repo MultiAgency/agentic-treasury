@@ -49,6 +49,9 @@ export type Facts = {
   approval: Common;
 };
 
+/** A purpose with the facts it is judged on. */
+export type Case = { [P in Purpose]: { purpose: P; facts: Facts[P] } }[Purpose];
+
 const refuse = (code: string, message: string): Refusal => ({ code, message });
 
 /** Payees the owner agreed to: confidential transfer destinations of an `only` policy. Any other mode agrees to no one. */
@@ -58,7 +61,7 @@ export function agreedPayees(policy: Policy) {
 }
 
 /** Which grant labels may send for each purpose. Approval votes need no grant. */
-export function grantAllows(purpose: Purpose, label: string, strategy?: Strategy) {
+function grantAllows(purpose: Purpose, label: string, strategy?: Strategy) {
   switch (purpose) {
     case "treasury": return label === "treasury" || label.startsWith("treasury:");
     case "autopilot": return label.startsWith("treasury:") && grantApproves(label, strategy!);
@@ -67,8 +70,9 @@ export function grantAllows(purpose: Purpose, label: string, strategy?: Strategy
   }
 }
 
-export function authorize<P extends Purpose>(purpose: P, action: Action, facts: Facts[P]): Refusal | null {
-  const { view, grant, now } = facts;
+export function authorize(action: Action, c: Case): Refusal | null {
+  const { purpose } = c;
+  const { view, grant, now } = c.facts;
 
   const policy = view.policy;
   if (!policy || view.status !== "APPLIED" || !view.provider_policy_synced || policy.frozen)
@@ -78,7 +82,7 @@ export function authorize<P extends Purpose>(purpose: P, action: Action, facts: 
     // Without one this instance holds no token, and the send would fail locally after it was recorded.
     if (!grant || grant.revoked_at || Date.parse(grant.expires_at) <= now)
       return refuse("grant_missing", "No live grant is held for this agent");
-    const strategy = "strategy" in facts ? (facts as TreasuryFacts).strategy : undefined;
+    const strategy = c.purpose === "treasury" || c.purpose === "autopilot" ? c.facts.strategy : undefined;
     if (!grantAllows(purpose, grant.label, strategy))
       return refuse("grant_purpose_denied", `A "${grant.label}" grant does not allow ${purpose} sends`);
   }
@@ -103,21 +107,21 @@ export function authorize<P extends Purpose>(purpose: P, action: Action, facts: 
       return refuse("owner_approval_required", "Invoices and approvals need a confidential policy holding every payment for the owner");
     // The provider holds a payment for the owner's vote without checking the balance, and fails it
     // only after the vote: an unfunded payout is refused before anyone is asked to approve it.
-    if ((purpose === "payout" || purpose === "invoice") && BigInt(action.request.amount) > BigInt((facts as Funds).available))
-      return refuse("insufficient_balance", `Only ${(facts as Funds).available} of ${action.request.asset} isn't already held for approval, less than ${action.request.amount}: fund the wallet first`);
-    if (purpose === "payout") {
+    if ((c.purpose === "payout" || c.purpose === "invoice") && BigInt(action.request.amount) > BigInt(c.facts.available))
+      return refuse("insufficient_balance", `Only ${c.facts.available} of ${action.request.asset} isn't already held for approval, less than ${action.request.amount}: fund the wallet first`);
+    if (c.purpose === "payout") {
       const { recipient, asset: token, amount: units } = action.request;
-      if ((facts as Facts["payout"]).heldPayouts.some((h) => h.recipient === recipient && h.asset === token && h.amount === units))
+      if (c.facts.heldPayouts.some((h) => h.recipient === recipient && h.asset === token && h.amount === units))
         return refuse("duplicate_held_payout", "A payout with the same recipient, asset and amount is already waiting for approval");
     }
   }
 
-  if (purpose === "treasury" || purpose === "autopilot") {
-    const { plan: sending, strategy, tokens } = facts as TreasuryFacts;
+  if (c.purpose === "treasury" || c.purpose === "autopilot") {
+    const { plan: sending, strategy, tokens } = c.facts;
     if (sending) {
       const { plan, leg } = sending;
       if (!Number.isFinite(Date.parse(plan.expiresAt)) || now >= Date.parse(plan.expiresAt)) return refuse("plan_expired", "The plan expired");
-      if (plan.agentId !== facts.agentId) return refuse("plan_agent_changed", "The plan was made for another agent");
+      if (plan.agentId !== c.facts.agentId) return refuse("plan_agent_changed", "The plan was made for another agent");
       if (strategyDigest(strategy) !== plan.strategyDigest) return refuse("strategy_changed", "The owner's strategy changed since the plan");
       if (view.revision !== plan.policyRevision || mandateDigest(policy) !== plan.policyDigest)
         return refuse("plan_policy_changed", "The policy changed since the plan");

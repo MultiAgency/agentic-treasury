@@ -6,6 +6,8 @@ import { useAgent } from "./shell";
 import { Badge, Button, Card, CardHeader, ConfirmButton, Dot, Empty, ErrorBox, input, Note, NotExecuted, Section, Spinner, StatusBadge, statusTone } from "./ui";
 
 function Rebalance() {
+  const { data } = useAgent();
+  const split = data.book.map((h) => `${Math.round((data.target[h.asset] ?? 0) * 100)}% ${h.symbol}`).join(" / ");
   const preview = useRun(client.rebalance);
   const execution = useRun(client.executePlan);
   const busy = preview.state === "running" || execution.state === "running";
@@ -19,7 +21,7 @@ function Rebalance() {
       <CardHeader
         icon={<ArrowsLeftRight size={20} weight="bold" />}
         title="Rebalance"
-        description="Swap toward a 50 / 25 / 25 split. Legs under $2 are left alone; legs costing over 150 bps are skipped."
+        description={`Swap toward ${split}. Legs under ${usd(data.rebalance.minLegUsd)} are left alone; legs that could cost over ${data.rebalance.maxCostBps} bps are skipped.`}
       />
 
       <div className="flex min-h-40 flex-1 flex-col gap-3">

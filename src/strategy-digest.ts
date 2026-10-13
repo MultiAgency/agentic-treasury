@@ -16,6 +16,9 @@ import { ASSETS } from "./policy.js";
 
 const asset = z.enum(Object.values(ASSETS) as [string, ...string[]]);
 
+/** The shortest autopilot interval, in minutes. */
+export const MIN_EVERY_MIN = 5;
+
 export const Strategy = z.object({
   /** Each asset's share of the book's USD value, in basis points; they add up to 10 000. */
   targetBps: z
@@ -30,7 +33,7 @@ export const Strategy = z.object({
   maxCostBps: z.number().int().min(1).max(1_000),
   autopilot: z.object({
     /** Minutes between the agent's own runs. */
-    everyMin: z.number().int().min(5),
+    everyMin: z.number().int().min(MIN_EVERY_MIN),
     /** The largest rebalance, in USD, the agent executes without the owner; 0 leaves every swap to the owner. */
     maxUsd: z.number().int().min(0),
   }),

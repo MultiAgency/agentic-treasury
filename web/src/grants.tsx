@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { ago, client, type Overview } from "./lib";
-import { ownerName, ownerSigner, type Setup, useCanSign, useOwnerAction } from "./owner";
+import { ownerName, type Setup, useOwnerAction, useSigner } from "./owner";
 import { Badge, Button, Card, ConfirmButton, CopyButton, ErrorBox, Section, Spinner } from "./ui";
 import { connect, useWallet } from "./wallet";
 
@@ -12,15 +12,11 @@ import { connect, useWallet } from "./wallet";
 export function Grants({ data, setup }: { data: Overview; setup: Setup }) {
   const wallet = useWallet();
   const action = useOwnerAction(setup);
-  const canSign = useCanSign(setup);
+  const { viaDao, canSign, needsWallet, connectedNotOwner } = useSigner(setup);
   const [revoking, setRevoking] = useState<string>();
   const [issuing, setIssuing] = useState(false);
   const live = data.grants.filter((g) => new Date(g.expires_at) > new Date());
   if (live.length === 0) return null;
-  const viaDao = ownerSigner(setup) === "dao";
-  // As with freezing: a wallet owner connects first, and only the owner's account can sign.
-  const needsWallet = !viaDao && wallet.status !== "connected";
-  const connectedNotOwner = !viaDao && wallet.status === "connected" && !canSign;
 
   const revoke = async (grantId: string) => {
     setRevoking(grantId);

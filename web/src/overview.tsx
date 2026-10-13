@@ -2,6 +2,7 @@ import { ArrowRight, CheckCircle, WarningCircle, X } from "@phosphor-icons/react
 import { useQuery } from "@tanstack/react-query";
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { Activity } from "./activity";
+import { attentionOf } from "./attention";
 import { ASSET_COLOR, ago, amount, bookValue, client, type Holding, type Overview as Book, queries, swaps, units, usd, useAttempt } from "./lib";
 import { useAgent } from "./shell";
 import { destinationsOf } from "./payout";
@@ -59,79 +60,47 @@ function drift(data: Book) {
   return Math.max(...data.book.map((h) => Math.abs(h.usd / total - (data.target[h.asset] ?? 0))));
 }
 
+type Item = { to?: LinkProps["to"]; text: string; dismiss?: () => void };
+
 /** Everything that stops the agent working, or that the owner should decide on, each with where to act. */
-function useAttention(dismissing: ReturnType<typeof useAttempt>) {
+function useAttention(dismissing: ReturnType<typeof useAttempt>): Item[] {
   const { setup, data, treasury } = useAgent();
+  const held = useQuery(queries.held).data ?? [];
+  const inbox = useQuery(queries.inbox).data ?? [];
+  const unresolved = useQuery(queries.unresolved).data ?? [];
+  const items: Item[] = attentionOf({ setup, overview: data, held, unresolved, inbox }).map(({ to, text, inboxId }) => ({
+    to,
+    text,
+    dismiss: inboxId ? () => dismissing.attempt(() => client.inbox.dismiss({ id: inboxId })) : undefined,
+  }));
+
   const policy = data.policy.policy;
   const agreed = new Set(destinationsOf(data).map((d) => d.address));
   const candidates = (treasury?.payees ?? []).filter((p) => !agreed.has(p.address));
-  const gap = drift(data);
   const exposed = data.book.filter((h) => BigInt(h.public) > 0n);
-  const held = useQuery(queries.held).data ?? [];
-  const grantMs = setup.grant ? new Date(setup.grant.expiresAt).getTime() - Date.now() : Infinity;
-  const inbox = useQuery(queries.inbox);
-  const open = (inbox.data ?? []).filter((e) => e.level !== "run" && !e.dismissed);
-  const unresolved = useQuery(queries.unresolved).data ?? [];
-  const oldest = unresolved.map((op) => op.at).sort()[0];
-  const items: { when: unknown; to?: LinkProps["to"]; text: string; dismiss?: () => void }[] = [
-    // What the autopilot raised while no one was watching, until the owner dismisses it.
-    ...open.map((e) => ({
-      when: true,
-      to: "/automations" as const,
-      text: `${e.text} (${ago(e.at)})`,
-      dismiss: () => dismissing.attempt(() => client.inbox.dismiss({ id: e.id })),
-    })),
-    {
-      when: unresolved.length,
-      to: "/activity",
-      // Every item's text is built, shown or not: format a date only when there is one.
-      text: oldest
-        ? `${unresolved.length} money action${unresolved.length === 1 ? " has" : "s have"} no known outcome, the oldest from ${ago(oldest)}. Nothing new moves until ${unresolved.length === 1 ? "it is" : "they are"} resolved.`
-        : "",
-    },
-    { when: policy?.frozen, to: "/policy", text: "The agent is frozen. Nothing moves until the owner unfreezes it." },
-    {
-      when: held.length,
+  const gap = drift(data);
+  if (data.policy.status !== "APPLIED")
+    items.push({ to: "/policy", text: `Policy revision ${data.policy.revision} is ${data.policy.status.toLowerCase()}, not yet in force.` });
+  if (bookValue(data) === 0) items.push({ to: "/treasury", text: "The book is empty. Fund it to give the agent something to manage." });
+  if (!treasury) items.push({ to: "/treasury", text: "No treasury linked. Link the account this agent works for." });
+  if (candidates.length)
+    items.push({ to: "/payees", text: `${treasury?.accountId} approved ${candidates.length} payee${candidates.length === 1 ? "" : "s"} not yet in the agreement.` });
+  if (exposed.length)
+    items.push({ to: "/automations", text: `${exposed.map((h) => amount(h.public, h)).join(", ")} sit${exposed.length === 1 ? "s" : ""} in the public balance, visible to anyone. Sweep shields it.` });
+  for (const u of data.unmanaged) {
+    // Without token data the API gives no decimals, so the amount stays in raw units.
+    const quantity = u.decimals === null ? `${u.amount} raw units of ${u.symbol}` : amount(u.amount, { decimals: u.decimals, symbol: u.symbol });
+    const holding = u.usd === null ? quantity : `${quantity} (${usd(u.usd)})`;
+    const sellable = policy && (policy.assets === "any" || policy.assets.includes(u.asset));
+    items.push({
       to: "/policy",
-      text: `${held.length} payment${held.length === 1 ? " waits" : "s wait"} for the owner's approval.`,
-    },
-    {
-      when: data.policy.status !== "APPLIED",
-      to: "/policy",
-      text: `Policy revision ${data.policy.revision} is ${data.policy.status.toLowerCase()}, not yet in force.`,
-    },
-    {
-      when: grantMs < 2 * 86_400_000,
-      text: setup.grant ? `The agent's grant expires ${ago(setup.grant.expiresAt)}. The owner signs a new one when it does.` : "",
-    },
-    { when: bookValue(data) === 0, to: "/treasury", text: "The book is empty. Fund it to give the agent something to manage." },
-    { when: !treasury, to: "/treasury", text: "No treasury linked. Link the account this agent works for." },
-    {
-      when: candidates.length,
-      to: "/payees",
-      text: `${treasury?.accountId} approved ${candidates.length} payee${candidates.length === 1 ? "" : "s"} not yet in the agreement.`,
-    },
-    {
-      when: exposed.length,
-      to: "/automations",
-      text: `${exposed.map((h) => amount(h.public, h)).join(", ")} sit${exposed.length === 1 ? "s" : ""} in the public balance, visible to anyone. Sweep shields it.`,
-    },
-    ...data.unmanaged.map((u) => {
-      // Without token data the API gives no decimals, so the amount stays in raw units.
-      const quantity = u.decimals === null ? `${u.amount} raw units of ${u.symbol}` : amount(u.amount, { decimals: u.decimals, symbol: u.symbol });
-      const held = u.usd === null ? quantity : `${quantity} (${usd(u.usd)})`;
-      const sellable = policy && (policy.assets === "any" || policy.assets.includes(u.asset));
-      return {
-        when: true,
-        to: "/policy" as const,
-        text: sellable
-          ? `The agent holds ${held}, outside the assets its strategies manage. Nothing will rebalance it.`
-          : `The agent holds ${held}, outside the policy's assets: it can't sell it until the owner lists it.`,
-      };
-    }),
-    { when: swaps(data) && gap > 0.05, to: "/automations", text: `The book is ${(gap * 100).toFixed(1)} points off target. Preview a rebalance.` },
-  ];
-  return items.filter((item) => item.when);
+      text: sellable
+        ? `The agent holds ${holding}, outside the assets its strategies manage. Nothing will rebalance it.`
+        : `The agent holds ${holding}, outside the policy's assets: it can't sell it until the owner lists it.`,
+    });
+  }
+  if (swaps(data) && gap > 0.05) items.push({ to: "/automations", text: `The book is ${(gap * 100).toFixed(1)} points off target. Preview a rebalance.` });
+  return items;
 }
 
 function Attention() {

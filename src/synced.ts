@@ -1,10 +1,17 @@
-import { closeSync, fsyncSync, openSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, fstatSync, fsyncSync, openSync, readSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
 
-/** Appends one JSON line and syncs it to disk before returning; throws if it can't. */
+/**
+ * Appends one JSON line and syncs it to disk before returning; throws if it can't. After a crash
+ * mid-append the file ends without a newline: this line then starts its own, so only the torn line
+ * is lost, never the complete one written after it.
+ */
 export function appendSynced(path: string, line: object) {
-  const fd = openSync(path, "a");
+  const fd = openSync(path, "a+");
   try {
-    writeSync(fd, `${JSON.stringify(line)}\n`);
+    const { size } = fstatSync(fd);
+    const last = Buffer.alloc(1);
+    const torn = size > 0 && readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 0x0a;
+    writeSync(fd, `${torn ? "\n" : ""}${JSON.stringify(line)}\n`);
     fsyncSync(fd);
   } finally {
     closeSync(fd);

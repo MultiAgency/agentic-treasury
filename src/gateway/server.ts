@@ -32,12 +32,19 @@ if (SECRET.length < 32) throw new Error("Set SESSION_SECRET to a random value of
 const session = sessions({ cookie: "dao_session", secret: SECRET, secure: true });
 
 const INTERVENTIONS = join(".evidence", "interventions.jsonl");
-/** Recorded operator calls since `since`, oldest first; a line cut short is skipped. */
+/**
+ * Recorded operator calls since `since`, oldest first, and the line numbers that don't parse. An
+ * unreadable line may have been a call, so it is counted, not skipped: the report can't claim none.
+ */
 function interventions(since: string) {
-  if (!existsSync(INTERVENTIONS)) return [];
-  return readFileSync(INTERVENTIONS, "utf8").split("\n").flatMap((text) => {
-    try { return text.trim() ? [JSON.parse(text) as { at: string; account: string; agent: string; path: string }] : []; } catch { return []; }
-  }).filter((i) => i.at >= since);
+  const calls: { at: string; account: string; agent: string; path: string }[] = [];
+  const corrupt: number[] = [];
+  const text = existsSync(INTERVENTIONS) ? readFileSync(INTERVENTIONS, "utf8") : "";
+  for (const [index, line] of text.split("\n").entries()) {
+    if (!line.trim()) continue;
+    try { calls.push(JSON.parse(line)); } catch { corrupt.push(index + 1); }
+  }
+  return { calls: calls.filter((i) => i.at >= since), corrupt };
 }
 
 /** The signed-in account and what it may do, or null. */

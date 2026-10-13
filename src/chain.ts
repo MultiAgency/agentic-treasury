@@ -51,9 +51,27 @@ const contractOf = (asset: string) => asset.replace(/^nep141:/, "");
 export type DaoPolicy = {
   /** Attached to every add_proposal, exactly (yoctoNEAR). */
   proposal_bond: string;
-  roles: { name: string; kind: { Group: string[] } | string; permissions: string[]; vote_policy: Record<string, { threshold: unknown }> }[];
+  roles: DaoRole[];
   default_vote_policy: { threshold: unknown };
 };
+/** A role's kind is `Everyone`, a named `Group`, or token holders with at least a `Member` balance. */
+type DaoRole = {
+  name: string;
+  kind: { Group: string[] } | { Member: string } | string;
+  permissions: string[];
+  vote_policy: Record<string, { threshold: unknown }>;
+};
+
+/** The accounts a role names: a Group lists them; Everyone and token-weighted Member roles name none. */
+export const groupOf = (role: DaoRole) => (typeof role.kind === "object" && "Group" in role.kind ? role.kind.Group : []);
+
+/**
+ * Whether `permissions` grant `action` on `kind` proposals, as the DAO contract reads them:
+ * `<kind>:<action>`, `<kind>:*`, `*:<action>` or `*:*` (sputnikdao2/src/policy.rs `can_execute_action`).
+ */
+export const permits = (permissions: string[], kind: string, action: string) =>
+  permissions.some((p) => p === `${kind}:${action}` || p === `${kind}:*` || p === `*:${action}` || p === "*:*");
+
 type DaoProposal = {
   id: number;
   proposer: string;
@@ -98,14 +116,17 @@ export async function describeTreasury(accountId: string) {
     near.getBalance(accountId),
     near.view<string>(contractOf(ASSETS.USDC), "ft_balance_of", { account_id: accountId }),
   ]);
-  const dao = policy && {
-    members: [...new Set(policy.roles.flatMap((r) => (typeof r.kind === "object" ? r.kind.Group : [])))],
-    // Who approves a FunctionCall proposal (how funding is filed) and how many votes it needs.
+  return { accountId, dao: policy && council(policy), balances: { near: near_, usdc: usdc ?? "0" } };
+}
+
+/** A DAO's members, and who approves a FunctionCall proposal (how funding is filed) with how many votes. */
+export function council(policy: DaoPolicy) {
+  return {
+    members: [...new Set(policy.roles.flatMap(groupOf))],
     approvers: policy.roles
-      .filter((r) => r.permissions.some((p) => p === "call:VoteApprove" || p === "*:VoteApprove" || p === "*:*"))
+      .filter((r) => permits(r.permissions, "call", "VoteApprove"))
       .map((r) => ({ role: r.name, threshold: threshold(r.vote_policy.call?.threshold ?? policy.default_vote_policy.threshold) })),
   };
-  return { accountId, dao, balances: { near: near_, usdc: usdc ?? "0" } };
 }
 
 /**

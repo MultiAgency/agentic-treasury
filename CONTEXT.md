@@ -25,9 +25,9 @@ agent is **approve-only**: it reads and approves as the owner, and never sends.
 _Avoid_: primary, leader
 
 **Member** / **Operator**:
-Who may use the hosted dashboard. A member is in one of the DAO's roles: reads everything and may file
-owner actions as proposals. An operator is also named in the dashboard's configuration and may move
-money and change settings.
+Who may use the hosted dashboard. A member is named in one of the DAO's group roles (a token-weighted
+role names no one): reads everything and may file owner actions as proposals. An operator is also named
+in the dashboard's configuration and may move money and change settings.
 
 ## Mandate
 
