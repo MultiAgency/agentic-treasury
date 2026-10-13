@@ -75,7 +75,7 @@ export function Onboarding({ setup }: { setup: Setup }) {
       title="Set up the agent"
       description={
         isDao
-          ? `${setup.dao?.id} owns the agent: each owner step is one proposal its members approve in Trezu.`
+          ? `${setup.dao?.id} owns the agent: each owner step is one proposal its members approve in Trezu. The API keeps each signing request open for 5 to 10 minutes, so have the council ready to vote; a proposal that passes later can't be used and must be filed again.`
           : "Your wallet signs twice: once to create the agent with its policy, once to let this server act for it."
       }
     >

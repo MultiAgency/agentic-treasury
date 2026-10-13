@@ -1,37 +1,79 @@
-# Agentic Treasury Management
+# Treasury
 
 A treasury agent rebalances the DAO's treasury toward its target on its own: it reads balances,
 quotes every swap, and executes only inside the per-asset caps and USD budget the DAO signed. Idle
 funds stay in the confidential balance. Mainnet: `agentic.sputnik-dao.near`'s treasury agent.
 
-## How it maps to the brief
+## How each requirement is counted
 
-| Brief | Here | How it is known |
-|---|---|---|
-| Scheduled rebalancing to targets within per-asset caps | The autopilot (`src/autopilot.ts`) plans from balances (`src/treasury.ts`), runs only while its grant's label carries the digest of the strategy the DAO approved | Mainnet: `op_YQnAILxJ…` executed alone, 2026-10-12 16:17Z (docs/mainnet-log.md) |
-| Quote every route before executing | Each leg is dry-quoted and dropped above the strategy's cost cap; plans expire after 5 minutes and run at most once (`src/plans.ts`) | Mainnet: two quoted legs, `op_K4w1dsSM…`, `op_XNaqLYyK…`, 2026-10-12 20:36Z |
-| Budget headroom ticks down | Overview's "Monthly budget left" reads the provider's usage | Mainnet: dashboard, from the policy's `usage.budget` |
-| A breach is refused | The Agent API refuses over-budget spends | Mainnet: `spend_budget_exceeded`, $4.69 against $4.33 left, 2026-10-12 13:57Z and 14:06Z; nothing moved |
-| Idle stables swept confidential | The autopilot shields every public balance before rebalancing | Offline: `test/sweep.test.ts`. A shield under the same destination list worked on a test agent (`op_mPNFaz-SI04…`, 2026-10-13); the treasury agent itself has never shielded |
-| Budget charged atomically with dispatch | Provider-enforced | Per provider docs; not independently verified ([enforcement](enforcement.md)) |
+Every requirement is one of its brief's use cases or outcomes in the Agent Connect experiment catalog, in
+the catalog's words where they fit, split where the catalog mixes two kinds:
 
-## Differences from the brief
+- A **capability** is what the agent does (rebalances, pays an invoice).
+- A **guarantee** is what it can't do (pay an unagreed payee, exceed the budget), and says who stops a
+  misbehaving agent: **the signed policy** (the provider refuses under the policy the owner signed, or the
+  chain does, as with a DAO's vote), **our server** (only this repo's code holds it, so a user has to
+  trust it), **not possible** (nobody can enforce it here), or **nothing yet**.
 
-- **Three quoted swaps.** Three assets need at most two swaps to rebalance, so the demo shows two.
-- **Unshield for payouts.** Not needed: payouts are confidential transfers from the payout agent,
-  which the treasury agent funds without a vote (`op_Y5KTotI2…`, 2026-10-11). Funds don't go public, as long as the payee can receive confidentially
-  ([enforcement](enforcement.md#what-a-stronger-claim-needs)).
-- **No address whitelist.** The brief expects whitelist mode to conflict with shielding. Here the
-  treasury agent's `only` list (the DAO and the payout agent) didn't stop a shield on a test agent
-  with the same list; no `policy_confidential_whitelist_conflict` exists in any public source.
+Every row says how it's known: **held on mainnet** (a guarantee) or **working on mainnet** (a capability),
+a dated observation with real funds, on this area's own agent or on another (the other area's, or an
+isolated test agent), and the row says which; **tested offline**; or **not yet**. The provider and its
+custody are still trusted; [enforcement](enforcement.md) sets out how far, and what isn't established.
 
-Where this lives in the code: [architecture](architecture.md).
+Each card shows two counts for its running brief, guarantees first: how many guarantees the signed
+policy enforces, and how many requirements are on mainnet (on this agent, on another). Roadmap briefs
+aren't counted. The signed-out page and the dashboard show the same rows (`web/src/beats.ts`): a row
+changes here first, then there.
+
+## 02 Agentic Treasury Management
+
+| Type | Requirement | Who stops it | How it's known | Evidence |
+|---|---|---|---|---|
+| Capability | Rebalances to target allocations on a schedule | — | Working on mainnet | The autopilot executed a rebalance alone, its plan bound to the strategy digest, 2026-10-12 16:17Z (`test/autopilot.test.ts`, `test/rebalance.test.ts`) |
+| Guarantee | Can't exceed per-asset limits | The signed policy | Held on mainnet | The policy caps every asset per transaction, hour, day and month. A transfer over the hourly cap refused with `policy_denied` on the treasury agent, 2026-10-11; the monthly cap also refused on an isolated test agent, 2026-10-13 |
+| Capability | Quotes every route before executing | — | Working on mainnet | Two quoted legs executed on the treasury agent, 2026-10-12 20:36Z (`test/rebalance.test.ts`, `test/plans.test.ts`) |
+| Capability | Shows budget headroom ticking down with each dispatch | — | Tested offline | The Overview shows the provider's usage for the window with least left (`test/budget-window.test.ts`); no dated observation on the treasury agent |
+| Guarantee | A rebalance over the budget is refused before anything moves | The signed policy | Held on mainnet | Refused with `spend_budget_exceeded`, nothing moved, on the treasury agent, 2026-10-12 13:57Z and 14:06Z |
+| Guarantee | Can't spend more than the USD budget, even with simultaneous requests | The signed policy | Held on mainnet, on another agent | Five simultaneous swaps on an isolated test agent: one settled, the rest refused, no overshoot, 2026-10-13 (one trial) |
+| Capability | Sweeps idle stables into the confidential balance | — | Tested offline | Our autopilot shields public balances each tick (`test/autopilot.test.ts`). Never run on the treasury agent: deposits land confidential, and the only shield was a one-off script on an isolated test agent |
+| Guarantee | The resting position can't be traced on chain | Our server | Not yet | Our deposits and swaps ask for the confidential balance, but the policy allows public swaps and unshield, so this rests on our requests (`docs/enforcement.md`). Funds still can't leave: the destination list is empty |
+
+## 09 Adaptive DCA (roadmap)
+
+| Type | Requirement | Who stops it | How it's known | Evidence |
+|---|---|---|---|---|
+| Capability | Daily buys of listed tokens, sized between a floor and a cap by a signal | — | Not yet | Not built: the strategy is a target allocation |
+| Capability | Pauses on a cold streak or regime change | — | Not yet | Not built |
+| Guarantee | A token outside the list can't be bought | Our server | Tested offline | The provider checks only the asset a swap spends; our server refuses buying an unlisted one (`test/authorize.test.ts`). A swap into an unlisted asset succeeded through the API directly, 2026-10-10 |
+| Guarantee | A buy can't exceed the per-cycle cap | The signed policy | Not yet | The policy's per-transaction and hourly caps would stop it; DCA isn't built |
+
+## 18 House Money (roadmap)
+
+| Type | Requirement | Who stops it | How it's known | Evidence |
+|---|---|---|---|---|
+| Capability | The principal moves to a safe account once gains cover it, exactly once | — | Not yet | Not built: the treasury agent's policy lets no funds leave |
+| Guarantee | Drawdowns can't touch the banked principal | Nothing yet | Not yet | Not built |
+| Guarantee | Nothing comes back from the safe account | Nothing yet | Not yet | Not built |
+
+## 08 Bitcoin treasury (roadmap)
+
+| Type | Requirement | Who stops it | How it's known | Evidence |
+|---|---|---|---|---|
+| Capability | Inbound BTC lands in a public checking balance from any sender | — | Not yet | Not built: no BTC asset, and deposits land confidential |
+| Capability | One-time deposit addresses with refund destinations, reconciled from provider records | — | Not yet | Partly built: one-time deposit addresses and reconciliation from the provider's history exist; no refund destinations |
+| Capability | A scheduled sweep to the confidential treasury, within a cap and a delay | — | Not yet | Partly built: every tick shields public balances; no separate treasury and no delay |
+| Guarantee | An oversized sweep is refused at the per-transaction cap | The signed policy | Not yet | The policy caps each transaction; not shown for a sweep |
+| Capability | The owner can cancel a sweep during the veto window | — | Not yet | Not built: needs the provider's timelock tested on mainnet first |
 
 ## Gaps
 
+- Not listed above: the catalog's "unshielding exactly what a payout needs". Payouts are confidential
+  transfers between confidential balances, so the treasury keeps no public reserve; a payee who can't
+  receive confidentially would need a public payout, not built ([enforcement](enforcement.md)).
 - What a swap buys is checked by this server, not by the provider; strict cumulative per-asset
   limits and USD-budget atomicity are unproven ([enforcement](enforcement.md)).
-- The autopilot hasn't run unattended for days; its warnings stay in the dashboard.
+- The autopilot hasn't run unattended for days. Outside the dashboard, its warnings reach the owner
+  only through the optional Telegram notices (README **Notifications**).
 
 ## Next (planned, not built)
 
@@ -40,6 +82,3 @@ Where this lives in the code: [architecture](architecture.md).
   veto on every autopilot swap. Needs its own money-path design first: today a queued execution
   counts as unresolved and blocks new sends, and provider timelocks are held because their
   release-time checks aren't established ([architecture](architecture.md#how-the-money-path-stays-safe-on-one-host)).
-- **Asset pinning, shown.** The policy lists the assets the agent spends; this server also refuses a
-  swap into an unlisted one (`asset_out_not_allowed`, `src/authorize.ts`), which the provider doesn't
-  check. Add it to the dashboard's evidence once refused on mainnet.

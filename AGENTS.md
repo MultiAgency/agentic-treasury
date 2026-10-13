@@ -8,15 +8,15 @@ Vocabulary is in `CONTEXT.md`: use its terms in code, tests, docs and conversati
 policy, grant, purpose, authorization, operation, unresolved, held payout, refusal). Read it first.
 
 ## Where things are
-- `README.md` — what runs, how to start it, the two prototypes, and **Not done yet**.
-- `docs/facilitator.md`, `docs/treasury.md` — each prototype: its brief, what's built, how each claim is
+- `README.md` — what runs, how to start it, the two areas (Payables, Treasury), and **Not done yet**.
+- `docs/facilitator.md`, `docs/treasury.md` — each area: its briefs, each requirement's stage, how each claim is
   known, what isn't covered.
 - `docs/architecture.md` — which files are shared core, facilitator or treasury; the one send site; how
   the money path stays safe on one host (journal, reconciliation, checks before each send, invoices).
 - `docs/operations.md` — deployment, executor migration, state preservation, the unattended-run report.
 - `docs/enforcement.md` — what the signed policy guarantees today, how each part is known, and what a
   stronger claim needs (threat model, obligations, open cases, provider questions).
-- `docs/mainnet-log.md` — every dated mainnet run, with op ids and proposal numbers.
+- `docs/mainnet-log.md` — every dated mainnet run, with proposal numbers; op ids and tx hashes are in the private release record.
 - `DEMO.md` — the hosted walkthrough (kept out of the app so copy edits don't redeploy `dao`).
 
 ## The money path
@@ -42,7 +42,7 @@ Files: `src/agent.ts` (dispatch), `authorize.ts`, `lock.ts`, `ops.ts`, `plans.ts
   approve-only) and https://invoices.multiagency.ai (payout executor). Railway, one replica each,
   state on the `/data` volume.
 - Deploys, restarts and dashboard money actions are the user's. Prepare and verify; let them ship.
-- The signed-out public page shows the two prototypes and how each claim is known, never the evidence,
+- The signed-out public page shows the two areas and each requirement's stage, never the evidence,
   and reads nothing from the server: no balances, amounts, payees, policies, invoices, roster or
   proposals. `test/public.test.ts` pins `web/src/public.tsx`.
 - `pnpm test:live` moves or touches real funds: run only when asked, never scheduled. `pnpm smoke` is the read-only check of both hosts.
@@ -50,7 +50,8 @@ Files: `src/agent.ts` (dispatch), `authorize.ts`, `lock.ts`, `ops.ts`, `plans.ts
 
 ## Calibrated claims
 Every sentence in README, DEMO.md and docs states exactly what was shown, and how:
-- Mainnet facts cite evidence: op id, proposal number, tx hash, deployment id, date (UTC).
+- Mainnet facts cite evidence: date (UTC), proposal number, deployment id. Op ids, tx hashes, amounts,
+  payees and the DAO's caps and budget stay in the private release record, never in tracked docs.
 - Distinguish *offline-tested*, *mainnet-observed*, *per provider docs/source (pinned commit)*, and
   *unverified*. A deployed provider version is never assumed from its source.
 - A newly found gap goes into **Not done yet** or `docs/enforcement.md` in the same change.
@@ -71,4 +72,4 @@ Every sentence in README, DEMO.md and docs states exactly what was shown, and ho
 - `CONTEXT.md` updated when a concept is added or renamed.
 - README/DEMO/docs claims match the change (see Calibrated claims).
 - State-format changes ship with a migration that requires a stopped executor and preserves
-  `.ops/`, `.invoices/`, `.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`, `.agreements/`.
+  `.ops/`, `.invoices/`, `.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`, `.agreements/`, `.notify/`.

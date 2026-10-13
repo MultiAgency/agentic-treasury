@@ -4,7 +4,7 @@ These instructions describe the repository configuration. Deploys, restarts and 
 performed by the owner. For the product and recorded results, see [README](../README.md).
 
 Preserve the complete state when moving an executor: `.ops/`, `.invoices/` (including SQLite journals),
-`.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`, `.agreements/`, any legacy `.intake/` files, and its
+`.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`, `.agreements/`, `.notify/` (which alerts were sent: losing it re-sends them), any legacy `.intake/` files, and its
 settings file. Stop writers before copying state; never start the destination before stopping the
 source. The lease coordinates processes on one host only.
 
@@ -13,6 +13,9 @@ source. The lease coordinates processes on one host only.
 **Deploy the dashboard on Railway** (service `dao`: `Dockerfile.dashboard`, one replica, a volume at
 `/data`). One container runs the public gateway (`src/gateway/server.ts`) and, on loopback beside it,
 each agent server listed in `deploy/dashboard.json`. An agent with `"executor": false` runs approve-only.
+Each agent names its `owner` (a Sputnik DAO, whose members sign in, or a wallet account, which signs in
+itself) and its `operators`. The gateway closes an agent whose own server reports a different owner, so
+a wrong `owner` locks the agent rather than opening it.
 All state lives on the volume in `/data/state`; the app stays in `/app`.
 
 1. Create the service and attach a volume at `/data`. Point it at its Dockerfile with the variable

@@ -68,11 +68,19 @@ function walletSession(connector: NearConnector, walletId?: string) {
 }
 
 /**
+ * HOT's near-connect wallet list, read live as the page loads. It declares delegate actions for more
+ * wallets than FastNear's (HOT, Ledger and NEAR Mobile besides Meteor and Intear), and it lists Trezu.
+ * Not pinned: each wallet's own code loads from addresses that change anyway (a branch, the wallet's
+ * site), so a pinned list would freeze little.
+ */
+const HOT_WALLETS = "https://raw.githubusercontent.com/hot-dao/near-selector/refs/heads/main/repository/manifest.json";
+
+/**
  * The owner's wallet. Owner actions need both NEAR signatures (NEP-413 messages for grants,
  * NEP-366 delegate actions for creating and freezing), so only wallets offering both are listed.
  */
 const owner = walletSession(
-  new NearConnector({ network: "mainnet", features: { signMessage: true, signDelegateActions: true } }),
+  new NearConnector({ network: "mainnet", manifest: HOT_WALLETS, features: { signMessage: true, signDelegateActions: true } }),
 );
 
 /** Keeps each connection's session apart from the owner's in the same browser. */
@@ -84,13 +92,12 @@ const namespaced = (prefix: string): DataStorage => ({
 
 /**
  * A DAO acting through Trezu, a second connection beside the owner's: it signs as the DAO by
- * filing each transaction as a proposal its members vote on. Trezu is listed in the upstream
- * near-connect registry, not FastNear's.
+ * filing each transaction as a proposal its members vote on.
  */
 export const dao = walletSession(
   new NearConnector({
     network: "mainnet",
-    manifest: "https://raw.githubusercontent.com/hot-dao/near-selector/refs/heads/main/repository/manifest.json",
+    manifest: HOT_WALLETS,
     storage: namespaced("dao"),
   }),
   "trezu-wallet",

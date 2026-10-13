@@ -24,6 +24,7 @@ const MEMBER = new Set([
   "reconcileBooks",
   "owner/status",
   "owner/pending",
+  "paymentStatus",
   "owner/prepare",
   "agreements/list",
   // Recording terms beside an agreement a member files as a proposal; nothing is agreed without the vote.

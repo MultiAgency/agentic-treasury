@@ -58,19 +58,29 @@ export function amountOf(raw: string, asset: string, book: Holding[]) {
 }
 
 /** A money action's request in words: what moves, how much, and to whom. */
-export function describeRequest(request: Record<string, unknown>, book: Holding[]) {
+export function describeRequest(request: Record<string, unknown>, book: Holding[], nameOf: (account: string) => string = (a) => a) {
   const r = request as Partial<Record<"origin_asset" | "destination_asset" | "asset" | "amount" | "recipient", string>>;
   return r.origin_asset && r.destination_asset && r.amount
     ? `${amountOf(r.amount, r.origin_asset, book)} → ${book.find((b) => b.asset === r.destination_asset)?.symbol ?? r.destination_asset}`
     : r.asset && r.amount
-      ? `${amountOf(r.amount, r.asset, book)}${r.recipient ? ` to ${r.recipient}` : ""}`
+      ? `${amountOf(r.amount, r.asset, book)}${r.recipient ? ` to ${nameOf(r.recipient)}` : ""}`
       : JSON.stringify(request);
 }
 
 /** An account or id short enough for a badge: its head and tail, when it is longer than `max`. */
 export const short = (id: string, max = 20) => (id.length > max ? `${id.slice(0, 8)}…${id.slice(-6)}` : id);
 
-export const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/**
+ * An error in words. A throttle, quota or schedule refusal carries the provider's `availableAt` (src/router.ts
+ * `toClientError`), so it also says when to try again.
+ */
+export const errorMessage = (e: unknown) => {
+  if (!(e instanceof Error)) return String(e);
+  const at = (e as { data?: { availableAt?: unknown } }).data?.availableAt;
+  if (typeof at !== "string" || Number.isNaN(Date.parse(at))) return e.message;
+  const when = new Date(at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return `${e.message.replace(/\.?\s*$/, ".")} Try again at ${when}.`;
+};
 
 export const amount = (raw: bigint | string, h: Pick<Holding, "decimals" | "symbol">) => {
   const n = units(raw, h.decimals);

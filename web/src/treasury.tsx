@@ -104,7 +104,7 @@ function Fund({ treasury }: { treasury: Treasury }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <h3 className="text-lg font-medium">Fund the agent</h3>
+      <h3 className="text-lg font-medium">Money in: from {treasury.accountId} to this agent</h3>
       <p className="text-sm text-muted-foreground">
         {signer.isDao
           ? "Files one proposal in Trezu: the DAO pays a fresh deposit address once its members approve."
@@ -160,7 +160,7 @@ function ConfidentialFund({ treasury, wallet }: { treasury: Treasury; wallet: st
   const payment = `https://trezu.app/${treasury.accountId}/payments?address=${encodeURIComponent(recipient)}`;
   return (
     <div className="flex flex-col gap-3">
-      <h3 className="text-lg font-medium">Fund the agent</h3>
+      <h3 className="text-lg font-medium">Money in: from {treasury.accountId} to this agent</h3>
       <p className="text-sm text-muted-foreground">
         Create a payment in Trezu from the confidential balance, to the near.com network. It never touches the public
         chain and lands in the agent's private balance once the DAO approves.
@@ -236,14 +236,17 @@ function Return({ treasury, data, setup }: { treasury: Treasury; data: Overview;
   );
 }
 
-/** A deposit address for NEAR-native USDC; anyone can fund the account, no signature needed. */
-function Deposit() {
+/** A deposit address for NEAR-native USDC; anyone can fund the account, no signature needed, empty or already funded. */
+function Deposit({ empty }: { empty: boolean }) {
   const [deposit, setDeposit] = useState<Awaited<ReturnType<typeof client.deposit>>>();
   const { busy, error, attempt } = useAttempt();
   const request = () => attempt(async () => setDeposit(await client.deposit()));
 
   return (
-    <Section title="Fund the account" description="The book is empty. Send USDC on NEAR to a one-time deposit address.">
+    <Section
+      title="Fund the account"
+      description={`${empty ? "The book is empty. " : ""}Send USDC on NEAR to a one-time deposit address; it lands in the confidential balance.`}
+    >
       <Card>
         {deposit ? (
           <div className="flex flex-col gap-4 text-sm">
@@ -338,7 +341,7 @@ export function TreasurySection() {
               <Fund treasury={treasury} />
             )}
           </div>
-          <Details summary="Return funds to the treasury" className="border-t pt-4">
+          <Details summary={`Money out: return funds to ${treasury.accountId}`} className="border-t pt-4">
             <Return treasury={treasury} data={data} setup={setup} />
           </Details>
           <Details summary="Treasury settings">
@@ -358,7 +361,7 @@ export function TreasurySection() {
         </Card>
       )}
     </Section>
-    {!treasury && empty && <Deposit />}
+    {!treasury && <Deposit empty={empty} />}
     </>
   );
 }

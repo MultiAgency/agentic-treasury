@@ -1,9 +1,8 @@
 # Enforcement: what the signed policy guarantees today
 
 What this prototype can claim about staying inside the owner's policy, the evidence for each part, the
-gaps, and what a stronger claim would need. Dated runs and their op ids are in the
-[mainnet log](mainnet-log.md). Further source pins and evidence are in the release record
-(proto-releases/…/GUARANTEE.md), kept outside this repository.
+gaps, and what a stronger claim would need. Dated runs are in the [mainnet log](mainnet-log.md). Further source pins and evidence are in the release record
+(GUARANTEE.md), kept privately outside this repository.
 
 **Claim:** "The prototype performs autonomous rebalancing with application checks and provider-enforced
 limits. Output-asset enforcement is local, strict cumulative per-asset limits depend on provider
@@ -26,6 +25,15 @@ Outside the envelope:
 - The strategy (allocation target, cost cap, per-run ceiling): an application rule bound to the owner's
   approval by the grant label.
 - Holdings and their market value. Spending caps never bound exposure.
+- The treasury agent's confidentiality. Per the provider docs (skills `references/policy.md`:51 at
+  `2e68162`), `confidential: true` allows shield, unshield and the confidential form of each action; it
+  doesn't require them. So a swap sent without `confidential: true` would spend the public balance, and an
+  unshield is allowed: a misbehaving agent could move the treasury's funds into public view, though not out
+  of the agent, whose destination list is empty. The resting position stays private because this server
+  sends every swap confidential (`src/treasury.ts`, `swapRequest`) and deposits land confidential
+  (`depositAddress` in `src/agent.ts`): enforced by our server, not the policy (see the sweep row in
+  [treasury](treasury.md)). Payouts differ: each of the payout policy's destinations is confidential
+  (`src/policy.ts`), so a public transfer to a payee matches no entry. Unverified on mainnet in both cases.
 
 ## How each claim is known
 
@@ -52,16 +60,16 @@ recorded post-settlement (:386, current) and before execution (:1077, older, mat
 ## Status
 | Constraint | Status |
 |---|---|
-| Output asset | **Observed enforcement failure.** A direct-API mainnet swap into an asset outside `assets` succeeded (op_F2Yko4W0gDPrZXy0EzVYxjCk_z9q1kz3rr8bWGWJglk, 2026-10-10). The open-source policy engine checks only a swap's input (wallet_policy.rs:467–476, :1011–1014), unchanged at the head of every public provider repo on 2026-10-12. Our executor checks the output (`outputAssetRefusal`, src/policy.ts); nothing below it is shown to. |
-| Cumulative per-asset caps | **Serialized per wallet, per upstream tests; strict enforcement unproven. A monthly-cap refusal is observed:** on an isolated agent, after a settled 2 USDC swap, the identical 2 USDC request was refused with `policy_denied` and nothing dispatched; only the monthly cap (3 USDC) was exceeded (op_Uli9thHSyzCONMy1iHrB_6JHiMhQPJWeQohdiBZlrxs then the refusal, 2026-10-13T03:27Z; [mainnet log](mainnet-log.md#isolated-test-agent-shield-and-monthly-cap-2026-10-13t0327z)). Sequential, not concurrent. Upstream end-to-end tests show that of two simultaneous spends against one limit exactly one passes, that usage is written while the wallet is held, that every caller shares one usage row, and that a crash leaves an operation uncharged until a later read repairs it and charges it once (outlayer@b8c58c0 tests/wallet_concurrent_spend_e2e.sh, velocity_two_doors_e2e.sh, stuck_request_repair_e2e.sh). The API specification documents that a swap holds the wallet for its duration. Unknown: whether new admissions are blocked until a crashed operation is repaired, how the lock coordinates across service instances, and which version is deployed. The coordinator is private. |
+| Output asset | **Observed enforcement failure.** A direct-API mainnet swap into an asset outside `assets` succeeded (2026-10-10, [log](mainnet-log.md#a-swap-into-an-unlisted-asset-2026-10-10)). The open-source policy engine checks only a swap's input (wallet_policy.rs:467–476, :1011–1014), unchanged at the head of every public provider repo on 2026-10-12. Our executor checks the output (`outputAssetRefusal`, src/policy.ts); nothing below it is shown to. |
+| Cumulative per-asset caps | **Serialized per wallet, per upstream tests; strict enforcement unproven. A monthly-cap refusal is observed:** on an isolated agent, after a settled small USDC swap, the identical request was refused with `policy_denied` and nothing dispatched; only the monthly cap, set below the two swaps together, was exceeded (2026-10-13T03:27Z; [mainnet log](mainnet-log.md#isolated-test-agent-shield-and-monthly-cap-2026-10-13t0327z)). Sequential, not concurrent. Upstream end-to-end tests show that of two simultaneous spends against one limit exactly one passes, that usage is written while the wallet is held, that every caller shares one usage row, and that a crash leaves an operation uncharged until a later read repairs it and charges it once (outlayer@b8c58c0 tests/wallet_concurrent_spend_e2e.sh, velocity_two_doors_e2e.sh, stuck_request_repair_e2e.sh). The API specification documents that a swap holds the wallet for its duration. Unknown: whether new admissions are blocked until a crashed operation is repaired, how the lock coordinates across service instances, and which version is deployed. The coordinator is private. |
 | USD budget | **Held in one concurrent trial; mechanism unverified.** Five simultaneous $0.40 swaps sent directly with one grant, with room for two: one executed, one got `wallet_busy`, three got `spend_budget_exceeded`, and the budget did not overshoot (isolated agent, 2026-10-13T03:32Z; [mainnet log](mainnet-log.md#isolated-test-agent-usd-budget-under-concurrency-2026-10-13t0332z)). Admission was more conservative than the reported remaining budget. One trial, one grant, one host: not proof of atomicity across grants or instances, or after a crash. |
-| Signed policy binding | **Not independently verifiable.** The API's `policy_hash` is reproducible: sha256 of the returned policy with sorted keys (recomputed on 2026-10-13 for all 15 returned revisions: treasury 1–11, payout 1, isolated agent 1–3). The on-chain `agent_policy_hash` is not a function of the policy (treasury revisions 6 and 8 share `policy_hash` `a4e07f3…` but carry `3d90673…` and `0908ee0…` on chain, txs `6CF58cJ…` and `G1ktzFf…`), and the public `store_wallet_policy` takes no such argument. The enforced policy is stored encrypted to a custody keystore key and signed by the custody wallet key, not the owner, so it proves neither that the owner signed those terms nor that no owner authorization exists elsewhere. A NEP-413 `update_policy` message, captured unsigned on the demo host, carries the complete plaintext policy, revision, agent, owner and domain, so an owner can read what they sign for API-enforced edits; whether the provider-enforced part matches it is the open question. A NEP-366 `policy_update` (an asset change), also captured unsigned, signs only a delegate to `store_wallet_policy` carrying `encrypted_data`: the readable policy appears only in the unsigned preview, so for those edits the owner signs ciphertext. What the message's `target_id` identifies is unknown. Captures: proto-releases/20261012T2314Z-envelope-verification/captures/, outside this repository. |
+| Signed policy binding | **Not independently verifiable.** The API's `policy_hash` is reproducible: sha256 of the returned policy with sorted keys (recomputed on 2026-10-13 for all 15 returned revisions: treasury 1–11, payout 1, isolated agent 1–3). The on-chain `agent_policy_hash` is not a function of the policy (two treasury revisions share one `policy_hash` but carry different `agent_policy_hash` values on chain), and the public `store_wallet_policy` takes no such argument. The enforced policy is stored encrypted to a custody keystore key and signed by the custody wallet key, not the owner, so it proves neither that the owner signed those terms nor that no owner authorization exists elsewhere. A NEP-413 `update_policy` message, captured unsigned on the demo host, carries the complete plaintext policy, revision, agent, owner and domain, so an owner can read what they sign for API-enforced edits; whether the provider-enforced part matches it is the open question. A NEP-366 `policy_update` (an asset change), also captured unsigned, signs only a delegate to `store_wallet_policy` carrying `encrypted_data`: the readable policy appears only in the unsigned preview, so for those edits the owner signs ciphertext. What the message's `target_id` identifies is unknown. Captures are in the private release record. |
 | Execution artifact | **Coordinator trust assumption, in pinned source.** For swaps and confidential transfers (including payouts), the keystore checks only that the signed message is addressed to `intents.near` or `intents.far`, then signs it unparsed (keystore-worker/src/api.rs:5729–5786). Our approval check binds the intended payment locally (payee, amount, asset to the provider's request hash), and the owner's approval binds whether the operation runs; that the final signed artifact carries those terms depends on an honest coordinator. Deployed behaviour unknown. |
-| Operation audit proof | **Unavailable on the sampled deployment.** At 2026-10-13T04:10Z, all three sampled successful operations returned HTTP 501 `transparency_log_disabled` from the demo API. Operation IDs and captures are in the [mainnet log](mainnet-log.md#policy-signatures-and-operation-proofs-2026-10-13t0410z). Even an available event inclusion proof would not by itself establish signed spending bytes, complete history or atomic enforcement. |
+| Operation audit proof | **Unavailable on the sampled deployment.** At 2026-10-13T04:10Z, all three sampled successful operations returned HTTP 501 `transparency_log_disabled` from the demo API. The run is in the [mainnet log](mainnet-log.md#policy-signatures-and-operation-proofs-2026-10-13t0410z); operation ids and captures are in the private release record. Even an available event inclusion proof would not by itself establish signed spending bytes, complete history or atomic enforcement. |
 | Input asset, actions, frozen, per-transaction cap | Enforced in the provider's TEE, per its source. The deployed version is not established. |
 | Destinations | Enforced by the Agent API, per its docs. One mainnet refusal was observed. |
 | Deposit conversion | **Scope question, not a known spending bypass.** Public API docs explicitly say deposits need an API key, no grant or owner signature, and do not spend treasury funds. Whether the agreement restricts conversion targets, and whether that is enforced, remains open. |
-| Shield under a non-empty `only` list | **Observed working on an isolated agent.** Under a destination list copied byte-for-byte from the treasury's (revision 11), a shield of 0.5 wNEAR succeeded and charged no USD budget (op_mPNFaz-SI04vTSkwNrxk7SH3XdR23jzPMoPFHwtE1KQ, 2026-10-13T03:27Z, test agent fbb390d7…; evidence in proto-releases/20261013T032658Z-envelope-phase1/). The treasury agent itself has still never shielded. No `policy_confidential_whitelist_conflict` exists in any public source. |
+| Shield under a non-empty `only` list | **Observed working on an isolated agent.** Under a destination list copied byte-for-byte from the treasury's (revision 11), a shield of its public wNEAR succeeded and charged no USD budget (2026-10-13T03:27Z, an isolated test agent; [log](mainnet-log.md#isolated-test-agent-shield-and-monthly-cap-2026-10-13t0327z)). The treasury agent itself has still never shielded. No `policy_confidential_whitelist_conflict` exists in any public source. |
 
 ## Recovery limitation
 
@@ -184,6 +192,17 @@ that a lowered cap keeps existing usage; and the last cancellable point for a re
 on these: queued (timelocked) work reserves nothing, per the provider's examples; and policy writes are
 not serialized with spends (inferred: the owner stores policies on chain and the keystore re-reads them
 on each check). This server's floating-point `usdIn` is a record, not authoritative accounting.
+
+**A held payout is committed for dispatch before its vote.** Mainnet-observed, from our own provider
+readback (2026-10-13T04:10Z): both held payouts of 2026-10-12 recorded `dispatch_committed_at` 10 and
+56 seconds before their approval requests (21:47:00Z then 21:47:10Z; 22:16:35Z then 22:17:31Z). Per the
+Agent API's own docs, a revoke or freeze after that point does not stop the operation, so the API-side
+rules (destinations, USD budget, grant) are judged once, at admission, not again at the vote. Per OutLayer
+source (`outlayer@da5c9ff`, keystore worker), the keystore re-evaluates its own rules before signing:
+frozen, input asset and the per-transaction cap, and cumulative caps only if the private coordinator
+supplies usage. So tightening destinations or the budget after a payout is held won't stop it, while the
+per-transaction cap still binds at signing. This narrows E8; it is source-based for the keystore, and
+the deployed version is unknown.
 
 **Open cases.** Local checks that pass: an unlisted output asset refused with no send (A1) and a policy
 change between preview and execution refused (A3), both in the local regression suites; one send site (C1,

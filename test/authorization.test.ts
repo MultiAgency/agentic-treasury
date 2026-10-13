@@ -52,7 +52,7 @@ test("a payout without a live grant is refused before sending", async () => {
 });
 
 test("a payout the wallet can't cover is refused before sending, so it never goes to a vote", async () => {
-  // Mainnet, 2026-10-12: the provider held op_v5cnpSsa… for approval from an empty wallet; it failed after the DAO voted.
+  // Mainnet, 2026-10-12 (docs/mainnet-log.md, Invoices): the provider held a payout for approval from an empty wallet; it failed after the DAO voted.
   mock.method(api, "getBalances", async () => ({ balances: [] }));
   await refusedBeforeSending(usdc("1"), "insufficient_balance");
 });

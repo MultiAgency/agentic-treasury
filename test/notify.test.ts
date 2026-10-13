@@ -38,7 +38,7 @@ test("a held payment is announced once, with a link and without its amount or pa
 });
 
 test("an operation with no proven outcome and the autopilot's open entries are announced; runs and dismissed ones aren't", async () => {
-  record({ at: new Date().toISOString(), idempotencyKey: "swap:1", kind: "rebalance", method: "swap", request: { amount: "5" } });
+  record({ at: new Date(Date.now() - 10 * 60_000).toISOString(), idempotencyKey: "swap:1", kind: "rebalance", method: "swap", request: { amount: "5" } });
   post("run", "book on target");
   const warn = post("warn", "A rebalance of $6.30 is above the limit");
   const gone = post("action", "already handled");
@@ -66,4 +66,15 @@ test("without a bot token and chat id nothing starts", () => {
   const interval = mock.method(globalThis, "setInterval");
   startNotifications();
   assert.equal(interval.mock.callCount(), 0);
+});
+
+test("a money action still settling isn't announced; one without an outcome after 5 minutes is", async () => {
+  const swap = (key: string, at: Date) => record({ at: at.toISOString(), idempotencyKey: key, kind: "rebalance", method: "swap", request: { amount: "5" } });
+  swap("swap:in-flight", new Date());
+  assert.equal(await notifyOnce(send), 0, "a normal swap takes about a minute to settle");
+  swap("swap:slow", new Date(Date.now() - 4.5 * 60_000));
+  assert.equal(await notifyOnce(send), 0, "four and a half minutes is not yet five");
+  swap("swap:stuck", new Date(Date.now() - 6 * 60_000));
+  assert.equal(await notifyOnce(send), 1);
+  assert.match(sent.at(-1)!, /no proven outcome/);
 });

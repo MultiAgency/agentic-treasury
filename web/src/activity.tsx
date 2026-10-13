@@ -1,18 +1,28 @@
 import { DownloadSimple } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ago, amountOf, client, describeRequest, fromUnits, queries, swaps, useAttempt } from "./lib";
+import { ago, amountOf, client, describeRequest, fromUnits, type Overview, queries, swaps, useAttempt } from "./lib";
+import { useNameOf } from "./names";
 import { useIsOperator } from "./viewer";
+import { refusalText } from "./words";
 import { useAgent } from "./shell";
-import { Badge, Button, Card, ConfirmButton, CopyButton, Details, ErrorBox, Section, Spinner, statusTone } from "./ui";
+import { Badge, Button, Card, ConfirmButton, CopyButton, Details, ErrorBox, Loading, QueryError, Section, Spinner, statusTone } from "./ui";
 
 /**
  * Money actions without a proven outcome. Each blocks every new one, so the agent waits until they
  * are resolved. Recovery only reads statuses; ambiguous replay is blocked.
  */
 export function Unresolved() {
-  const { data = [] } = useQuery(queries.unresolved);
+  const unresolved = useQuery(queries.unresolved);
+  const data = unresolved.data ?? [];
   const { busy, message, error, attempt } = useAttempt();
+  // A failed read can't show that nothing is unresolved: say so instead of hiding the section.
+  if (unresolved.error)
+    return (
+      <Section title="Unresolved" description="Money actions whose outcome isn't known yet.">
+        <QueryError error={unresolved.error} retry={() => unresolved.refetch()} />
+      </Section>
+    );
   if (data.length === 0 && !message && !error) return null;
 
   const run = () =>
@@ -68,7 +78,7 @@ export function InvoiceReview() {
       <div className="flex flex-wrap justify-between gap-2">
         <span>{invoice.payee} · {fromUnits(invoice.amount, 6)} USDC</span>
         <Badge tone={invoice.operation.status === "SUCCESS" ? "success" : "warning"}>
-          {invoice.operation.refused ?? invoice.operation.status ?? "unknown"}
+          {invoice.operation.refused ? <span title={invoice.operation.refused}>refused · {refusalText(invoice.operation.refused)}</span> : invoice.operation.status ?? "unknown"}
         </Badge>
       </div>
       <p className="text-sm text-muted-foreground">Reserved: {fromUnits(invoice.reservation, 6)} USDC · Filed {ago(invoice.at)}</p>
@@ -86,10 +96,57 @@ export function InvoiceReview() {
   </Section>;
 }
 
+/**
+ * A probe sent on purpose to show the policy refusing it; older logs call it `verify-refusal` or, from the
+ * first manual run on 2026-10-11, `probe`. The live probes are retired, so these rows are history: kept,
+ * and listed apart from what the agent did.
+ */
+const PROBE_KINDS = new Set(["refusal", "verify-refusal", "probe"]);
+const isProbe = (op: { kind: string }) => PROBE_KINDS.has(op.kind);
+
+type ActivityRow = Awaited<ReturnType<typeof client.activity>>[number];
+
+function Row({ op, book, nameOf }: { op: ActivityRow; book: Overview["book"]; nameOf: (account: string) => string }) {
+  const probe = isProbe(op);
+  return (
+    <li className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b py-3 text-sm last:border-0">
+      <span className="whitespace-nowrap text-muted-foreground sm:w-32">{ago(op.at)}</span>
+      <span className="w-20 font-medium capitalize">{probe ? "Policy test" : op.kind}</span>
+      <span className="order-last basis-full tabular-nums sm:order-none sm:basis-0 sm:flex-1">{describeRequest(op.request, book, nameOf)}</span>
+      <span className="ml-auto">
+        {op.refused ? (
+          // A probe exists to be refused; any other refusal means the policy stopped the agent.
+          // A probe refused for want of funds never reached the policy: it proves nothing.
+          <Badge tone={!probe ? "warning" : op.refused === "insufficient_balance" ? "neutral" : "success"}>
+            <span title={op.refused}>refused · {refusalText(op.refused)}</span>
+          </Badge>
+        ) : probe ? (
+          <Badge tone="destructive">passed · {op.status?.toLowerCase() ?? "unsettled"}</Badge>
+        ) : (
+          <Badge tone={statusTone(op.status)}>{op.status?.toLowerCase() ?? "unsettled"}</Badge>
+        )}
+      </span>
+      {op.policyDigest && (
+        <Details summary={`Ran under policy revision ${op.policyRevision ?? "–"}`} className="order-last basis-full">
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="break-all font-mono text-xs text-muted-foreground">{op.policyDigest}</span>
+            <CopyButton text={op.policyDigest} />
+          </span>
+          {op.planId && <span className="font-mono text-xs text-muted-foreground">plan {op.planId}</span>}
+        </Details>
+      )}
+    </li>
+  );
+}
+
 /** Every action the agent sent, newest first; `limit` shows only the latest few, with a link to the rest. */
 export function Activity({ limit }: { limit?: number }) {
   const { data: overview } = useAgent();
-  const { data = [] } = useQuery({ queryKey: ["activity"], queryFn: () => client.activity() });
+  const activity = useQuery({ queryKey: ["activity"], queryFn: () => client.activity() });
+  const data = activity.data ?? [];
+  const nameOf = useNameOf();
+  const actions = data.filter((op) => !isProbe(op));
+  const probes = data.filter(isProbe);
 
   return (
     <Section
@@ -97,51 +154,34 @@ export function Activity({ limit }: { limit?: number }) {
       description="Every action the agent sent, from the local ops log, newest first."
       action={
         limit &&
-        data.length > limit && (
+        actions.length > limit && (
           <Link to="/activity" className="text-sm text-muted-foreground hover:text-foreground">
-            View all {data.length}
+            View all {actions.length}
           </Link>
         )
       }
     >
-      {data.length === 0 ? (
+      {activity.error ? (
+        <QueryError error={activity.error} retry={() => activity.refetch()} />
+      ) : !activity.data ? (
+        <Loading label="Loading activity…" />
+      ) : actions.length === 0 ? (
         <p className="text-sm text-muted-foreground">No actions yet.{swaps(overview) && " Preview a rebalance to get started."}</p>
       ) : (
         <ol className="flex flex-col">
-          {data.slice(0, limit).map((op) => {
-            // A probe sends on purpose to show the policy refusing it; older logs call it `verify-refusal`.
-            const probe = op.kind === "refusal" || op.kind === "verify-refusal";
-            return (
-              <li key={`${op.at}-${op.kind}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b py-3 text-sm last:border-0">
-                <span className="whitespace-nowrap text-muted-foreground sm:w-32">{ago(op.at)}</span>
-                <span className="w-20 font-medium capitalize">{probe ? "Policy test" : op.kind}</span>
-                <span className="order-last basis-full tabular-nums sm:order-none sm:basis-0 sm:flex-1">{describeRequest(op.request, overview.book)}</span>
-                <span className="ml-auto">
-                  {op.refused ? (
-                    // A probe exists to be refused; any other refusal means the policy stopped the agent.
-                    // A probe refused for want of funds never reached the policy: it proves nothing.
-                    <Badge tone={!probe ? "warning" : op.refused === "insufficient_balance" ? "neutral" : "success"}>
-                      refused · <span className="font-mono">{op.refused}</span>
-                    </Badge>
-                  ) : probe ? (
-                    <Badge tone="destructive">passed · {op.status?.toLowerCase() ?? "unsettled"}</Badge>
-                  ) : (
-                    <Badge tone={statusTone(op.status)}>{op.status?.toLowerCase() ?? "unsettled"}</Badge>
-                  )}
-                </span>
-                {op.policyDigest && (
-                  <Details summary={`Ran under policy revision ${op.policyRevision ?? "–"}`} className="order-last basis-full">
-                    <span className="flex flex-wrap items-center gap-2">
-                      <span className="break-all font-mono text-xs text-muted-foreground">{op.policyDigest}</span>
-                      <CopyButton text={op.policyDigest} />
-                    </span>
-                    {op.planId && <span className="font-mono text-xs text-muted-foreground">plan {op.planId}</span>}
-                  </Details>
-                )}
-              </li>
-            );
-          })}
+          {actions.slice(0, limit).map((op) => (
+            <Row key={`${op.at}-${op.kind}`} op={op} book={overview.book} nameOf={nameOf} />
+          ))}
         </ol>
+      )}
+      {!limit && probes.length > 0 && (
+        <Details summary={`Earlier policy tests (${probes.length}): requests sent to be refused, from retired probes`}>
+          <ol className="flex flex-col">
+            {probes.map((op) => (
+              <Row key={`${op.at}-${op.kind}`} op={op} book={overview.book} nameOf={nameOf} />
+            ))}
+          </ol>
+        </Details>
       )}
     </Section>
   );
@@ -173,9 +213,9 @@ export function Books() {
       description="Public balances checked against the chain, confidential ones against the API's recorded executions."
     >
       {books.error ? (
-        <p className="text-sm text-warning-muted-foreground">{books.error.message}</p>
+        <QueryError error={books.error} retry={() => books.refetch()} />
       ) : !books.data ? (
-        <Spinner />
+        <Loading label="Reconciling the books…" />
       ) : (
         <Card>
           <ul className="flex flex-col divide-y text-sm">

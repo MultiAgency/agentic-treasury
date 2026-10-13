@@ -6,6 +6,9 @@ import { attentionOf } from "./attention";
 import { Held } from "./held";
 import { destinationsOf } from "./payout";
 import { WhatThisShows } from "./showcase";
+import { TopUp } from "./topup";
+import { bindingBudget, PERIOD } from "./budget";
+import { useNameOf } from "./names";
 import { ASSET_COLOR, ago, amount, bookValue, client, type Holding, kindOf, type Overview as Book, queries, swaps, units, usd, useAttempt } from "./lib";
 import { useAgent } from "./shell";
 import { ErrorBox, Section } from "./ui";
@@ -31,14 +34,18 @@ function Meter({ value, className = "bg-brand" }: { value: number; className?: s
 function Figures({ data }: { data: Book }) {
   const total = bookValue(data);
   const shielded = data.book.reduce((sum, h) => sum + units(h.confidential, h.decimals) * h.price, 0);
-  const monthly = data.policy.usage.budget.monthly;
-  const limit = Number(monthly.limit_usd ?? 0);
-  const budget = (
-    <Figure label="Monthly budget left" value={usd(monthly.remaining_usd)}>
-      <Meter value={limit ? Number(monthly.spent_usd) / limit : 0} />
+  const window = bindingBudget(data);
+  const limit = Number(window?.limit_usd ?? 0);
+  const budget = window ? (
+    <Figure label={`${PERIOD[window.period]} budget left`} value={usd(window.remaining_usd)}>
+      <Meter value={limit ? Number(window.spent_usd) / limit : 0} />
       <span className="text-sm text-muted-foreground">
-        {usd(monthly.spent_usd)} of {usd(limit)} spent{monthly.resets_at && ` · resets ${ago(monthly.resets_at)}`}
+        {usd(window.spent_usd)} of {usd(limit)} spent{window.resets_at && ` · resets ${ago(window.resets_at)}`}
       </span>
+    </Figure>
+  ) : (
+    <Figure label="Budget" value="No limit">
+      <span className="text-sm text-muted-foreground">The policy sets no USD budget; its caps still apply.</span>
     </Figure>
   );
   // A payout agent holds and pays only confidential USDC: its balance is the one figure that moves.
@@ -48,6 +55,7 @@ function Figures({ data }: { data: Book }) {
       <div className="grid gap-10 sm:grid-cols-2">
         <Figure label="Balance" value={usdc ? amount(usdc.confidential, usdc) : "0 USDC"}>
           <span className="text-sm text-muted-foreground">In the confidential balance, paid out only by vote</span>
+          <TopUp />
         </Figure>
         {budget}
       </div>
@@ -85,7 +93,8 @@ function useAttention(dismissing: ReturnType<typeof useAttempt>): Item[] {
   const inbox = useQuery(queries.inbox).data ?? [];
   const unresolved = useQuery(queries.unresolved).data ?? [];
   // Held payouts head this page in their own section; the DAO home lists them as attention items.
-  const items: Item[] = attentionOf({ setup, overview: data, held, unresolved, inbox })
+  const nameOf = useNameOf();
+  const items: Item[] = attentionOf({ setup, overview: data, held, unresolved, inbox, nameOf })
     .filter(({ to }) => to !== "/")
     .map(({ to, text, inboxIds }) => ({
       to,
@@ -103,14 +112,14 @@ function useAttention(dismissing: ReturnType<typeof useAttempt>): Item[] {
   // A payout agent pays only from its confidential USDC, the balance its Overview shows.
   const payable = data.book.find((h) => h.symbol === "USDC")?.confidential ?? "0";
   if (kindOf(data) === "facilitator" ? BigInt(payable) === 0n : bookValue(data) === 0)
-    items.push({ to: "/treasury", text: kindOf(data) === "facilitator"
+    items.push({ to: "/funding", text: kindOf(data) === "facilitator"
       ? "The payout wallet's confidential USDC is empty: invoices are refused until it is funded."
       : "The book is empty. Fund it to give the agent something to manage." });
-  if (!treasury) items.push({ to: "/treasury", text: "No treasury linked. Link the account this agent works for." });
+  if (!treasury) items.push({ to: "/funding", text: "No treasury linked. Link the account this agent works for." });
   if (asked.length)
     items.push({ to: "/payees", text: `${asked.length} account${asked.length === 1 ? " asks" : "s ask"} to be paid and ${asked.length === 1 ? "isn't" : "aren't"} agreed yet.` });
   if (candidates.length)
-    items.push({ to: kindOf(data) === "treasury" ? "/treasury" : "/payees", text: `${treasury?.accountId} approved ${candidates.length} payee${candidates.length === 1 ? "" : "s"} the policy doesn't list yet.` });
+    items.push({ to: kindOf(data) === "treasury" ? "/funding" : "/payees", text: `${treasury?.accountId} approved ${candidates.length} payee${candidates.length === 1 ? "" : "s"} the policy doesn't list yet.` });
   if (exposed.length)
     items.push({ to: "/automations", text: `${exposed.map((h) => amount(h.public, h)).join(", ")} sit${exposed.length === 1 ? "s" : ""} in the public balance, visible to anyone. Sweep shields it.` });
   for (const u of data.unmanaged) {
@@ -273,9 +282,14 @@ function AutopilotRuns() {
       title="Autopilot"
       description={status.on ? `Runs every ${status.everyMin} minutes, executing rebalances up to $${status.maxUsd}.` : "Off: rebalances run only when someone runs them."}
       action={
-        <Link to="/automations" className="text-sm text-muted-foreground hover:text-foreground">
-          Automations
-        </Link>
+        <span className="flex gap-4">
+          <Link to="/follow/run" className="text-sm text-muted-foreground hover:text-foreground">
+            Follow the latest run →
+          </Link>
+          <Link to="/automations" className="text-sm text-muted-foreground hover:text-foreground">
+            Automations
+          </Link>
+        </span>
       }
     >
       {runs.length === 0 ? (

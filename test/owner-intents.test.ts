@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { completeSigning, signingRequest } from "../src/dao-owner.js";
 import { TSX } from "./fixtures/harness.js";
+import { preparedForWallet } from "./fixtures/wallet-signature.js";
 
 const FIXTURE = fileURLToPath(new URL("./fixtures/owner-intents.ts", import.meta.url));
 // A grant the Agent API generated on mainnet, and the hash the DAO's MPC key signed for it.
@@ -88,13 +89,13 @@ const SUBMIT = fileURLToPath(new URL("./fixtures/submit.ts", import.meta.url));
 function preparedGrant() {
   const dir = mkdtempSync(join(tmpdir(), "owner-submit-"));
   mkdirSync(join(dir, ".owner-intents"));
-  const grant = { type: "grant_issue", expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(), grantToken: "ngt_new" };
+  const grant = { type: "grant_issue", expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(), grantToken: "ngt_new", wallet: preparedForWallet };
   writeFileSync(join(dir, ".owner-intents", ".env.json"), JSON.stringify({ grant }));
   writeFileSync(join(dir, ".env"), "AGENT_GRANT_TOKEN=ngt_old\n");
   return dir;
 }
 
-function submitIn(dir: string, answer: "lost" | "refused" | "accepted" | "recover" | "timeout" | "uncertain" | "unreached" | "late") {
+function submitIn(dir: string, answer: "lost" | "refused" | "accepted" | "recover" | "timeout" | "uncertain" | "unreached" | "late" | "forged") {
   const creating = JSON.parse(readFileSync(join(dir, ".owner-intents", ".env.json"), "utf8")).grant.type === "agent_create";
   const result = spawnSync(TSX, [SUBMIT, answer], { cwd: dir, env: { ...process.env, ENV_FILE: "", ...(creating && { AGENT_ID: "" }) }, encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
@@ -114,6 +115,16 @@ test("a lost submission is recovered after restart by polling, without resubmitt
   assert.deepEqual(accepted.pending, ["grant"]);
   assert.match(accepted.env, /AGENT_GRANT_TOKEN=ngt_new/);
   assert.deepEqual(submitIn(dir, "accepted").outcome, accepted.outcome);
+});
+
+test("a wallet signature that isn't the owner's over the prepared intent never reaches the API", () => {
+  const dir = preparedGrant();
+  const forged = submitIn(dir, "forged");
+  assert.match(forged.outcome.error, /Not submitted: the signature doesn't verify/);
+  assert.equal(forged.outcome.sends, 0);
+  // Still waiting for a real signature, and the new grant's token not staged.
+  assert.doesNotMatch(forged.env, /ngt_new/);
+  assert.deepEqual(submitIn(dir, "accepted").outcome, { result: { status: "SUCCESS" }, sends: 1 });
 });
 
 test("a rejected submission stays poll-only rather than assuming safe replay", () => {

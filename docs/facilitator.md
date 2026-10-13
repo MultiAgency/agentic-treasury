@@ -1,51 +1,72 @@
-# Confidential Treasury Facilitator
+# Payables
 
 A DAO's payout agent takes payment requests from people outside the DAO, holds funds in its
 confidential balance, and files every payment for the DAO's vote. Requesters deal with the invoice
 page, never with members. Mainnet: `agentic.sputnik-dao.near`, its payout agent, and
 https://invoices.multiagency.ai.
 
-## How it maps to the brief
+## How each requirement is counted
 
-| Brief | Here | How it is known |
-|---|---|---|
-| Requests from anyone | The invoice page signs in any NEAR account. An agreed payee files an invoice. Anyone else files an **agreement request** the DAO sees on the payout agent's Agreement page | Offline: `test/invoice-http.test.ts` |
-| Whitelist = the DAO's agreement | Agreed payees are the confidential transfer destinations of the payout agent's `only` policy (`agreedPayees`, `src/authorize.ts`). Payees from the DAO's passed transfer proposals are offered for it (`daoPayees`, `src/chain.ts`) | Mainnet: payout agent added to the treasury agent's agreement by proposals #23–#25, 2026-10-11 |
-| New payee needs a fresh signed agreement | Agreeing is a policy update the DAO votes on; the payee then files the invoice. Nothing is paid because a vote passed | Mainnet: an unlisted payee was refused with `policy_destination_denied`, on the treasury agent, 2026-10-11 ([log](mainnet-log.md)) |
-| Invoices against agreed terms | An agreement carries terms: each invoice at most an amount, until a deadline. Either side starts it: a payee requests it, or the DAO offers it (a purchase order, a bounty or grant award). Each held payout shows whether it is within its payee's terms | Offline: `test/agreements.test.ts`. The terms are this server's, not the policy's: the vote on each payment enforces them |
-| Member quorum releases each payment | `owner_approval` holds every payout; the owner is the DAO, signing through NEAR MPC, so the DAO's own vote threshold is the quorum | Mainnet: approvals #17, #21, #26, #47; one-click #51 (README, docs/mainnet-log.md) |
-| Over-limit refused even with votes | Expected: the provider checks caps when a payment is requested, so an over-cap payment should be refused before there is anything to vote on | **Not yet shown on the payout agent** (25 USDC a payment). Related only: an over-cap transfer refused on the treasury agent, whose policy holds nothing for a vote ([log](mainnet-log.md)) |
-| Chain watchers can't rebuild the payout graph | Payments are confidential transfers; approval proposals read "Approve the pending confidential request" (#46–#53) | Mainnet: no public transactions on the payout account; the payee sees no sender, 2026-10-11 |
-| Requesters never learn the roster | Neither the invoice page nor the public page reads DAO roles | By design. A Sputnik DAO's roles, proposers and votes are public on chain, so the roster is never secret; requesters just never deal with it |
+Every requirement is one of its brief's use cases or outcomes in the Agent Connect experiment catalog, in
+the catalog's words where they fit, split where the catalog mixes two kinds:
 
-## Differences from the brief
+- A **capability** is what the agent does (rebalances, pays an invoice).
+- A **guarantee** is what it can't do (pay an unagreed payee, exceed the budget), and says who stops a
+  misbehaving agent: **the signed policy** (the provider refuses under the policy the owner signed, or the
+  chain does, as with a DAO's vote), **our server** (only this repo's code holds it, so a user has to
+  trust it), **not possible** (nobody can enforce it here), or **nothing yet**.
 
-- **Quorum.** The brief's provider-side `approval: { approvers, threshold }` doesn't exist in the
-  Agent API SDK this repo uses (`@near-intents-agent-api/sdk`); `owner_approval` plus a DAO owner
-  gives the same release-by-quorum.
-- **Grant recipients.** Grants here carry only a label and an expiry; the policy alone says where
-  funds may go, for every grant.
-- **One-time grants and bounties.** An award is an agreement the DAO offers: the winner's account,
-  an amount, a deadline. The winner signs in and files against it. Winners are hidden from chain
-  watchers, not from the DAO, which agrees their account. Each payment is its own vote, so a long
-  winners list means as many proposals; this suits small award lists, not mass payouts.
-- **Asset.** USDC, not USDT.
-- **Purchase orders.** This covers the invoicing half of the purchase-order brief: confidential
-  supplier invoices paid against terms the DAO agreed. Not covered: a separately funded agent per
-  order (containment per order), refusal at the grant, payment without a vote, and the supplier-side
-  forward to its treasury.
+Every row says how it's known: **held on mainnet** (a guarantee) or **working on mainnet** (a capability),
+a dated observation with real funds, on this area's own agent or on another (the other area's, or an
+isolated test agent), and the row says which; **tested offline**; or **not yet**. The provider and its
+custody are still trusted; [enforcement](enforcement.md) sets out how far, and what isn't established.
 
-Where this lives in the code: [architecture](architecture.md).
+Each card shows two counts for its running brief, guarantees first: how many guarantees the signed
+policy enforces, and how many requirements are on mainnet (on this agent, on another). Roadmap briefs
+aren't counted. The signed-out page and the dashboard show the same rows (`web/src/beats.ts`): a row
+changes here first, then there.
+
+## 01 Confidential Treasury Facilitator
+
+| Type | Requirement | Who stops it | How it's known | Evidence |
+|---|---|---|---|---|
+| Capability | A contractor invoices the DAO and gets paid | — | Working on mainnet | Invoices filed, voted and paid on the payout agent, 2026-10-12 (proposals #47, #50) |
+| Guarantee | No payment moves without the members' vote | The signed policy | Held on mainnet | The payout policy holds every payment for the owner, and the owner is the DAO, so only its on-chain vote releases one. Held, voted and paid on the payout agent, 2026-10-12 (proposals #47, #50) |
+| Guarantee | The contractor can't learn the council roster | Not possible on Sputnik | Tested offline | Not possible on Sputnik: a DAO's roles are public on chain. Our invoice page never reads them (`test/invoice-roster.test.ts`) |
+| Capability | A bounty program pays winners from the private balance | — | Tested offline | The DAO offers an award and the winner's invoice files under it (`test/agreements.test.ts`); payouts are confidential transfers. No award paid on mainnet yet |
+| Capability | A new payee's request is routed to a new agreement | — | Tested offline | Recorded as a request, never paid (`test/invoice-http.test.ts`); the flow hasn't run on mainnet |
+| Guarantee | No one outside the DAO's agreement is paid | The signed policy | Held on mainnet, on another agent | The destination list is the agreement, and changing it takes the DAO's signature. An unlisted account refused with `policy_destination_denied` on the treasury agent, 2026-10-11; the treasury agent's list changed only by DAO vote (proposals #23, #24, #25) |
+| Guarantee | An over-limit payment can't go through, even with votes | The signed policy | Tested offline | The policy caps each payment; per OutLayer source the keystore re-checks the per-transaction cap before signing, after the vote. Our approval re-check is tested offline (`test/authorize.test.ts`, `test/two-machine.test.ts`). A cap refusal was seen on the treasury agent, 2026-10-11, but with no vote |
+| Guarantee | Chain watchers can't reconstruct the DAO's payout graph | The signed policy | Held on mainnet | Payees are confidential destinations in the policy, so a public payout matches none. The payout agent's account has no public transactions and the payee sees no sender, 2026-10-11. Each approval's proposal and its timing are public |
+
+## 03 Purchase orders (roadmap)
+
+| Type | Requirement | Who stops it | How it's known | Evidence |
+|---|---|---|---|---|
+| Capability | Each order is its own agent and grant: created, funded, paid, expired | — | Not yet | Not built: an offer records a payee, a ceiling and a deadline, but there is no agent or grant per order |
+| Guarantee | Supplier payments can't be traced to the business | The signed policy | Tested offline | Payouts are confidential transfers under the policy (`test/authorize.test.ts`); no order paid on mainnet |
+| Capability | Inbound payments are swapped to stables and forwarded to the supplier's treasury | — | Not yet | Not built |
+| Guarantee | A tampered order (wrong supplier, changed amount, late) is refused | Nothing yet | Not yet | Not built per order: a wrong payee is refused by the destination list, but an amount over the order or a late invoice only shows a badge to voters |
+
+## 17 Campaign payouts (roadmap)
+
+| Type | Requirement | Who stops it | How it's known | Evidence |
+|---|---|---|---|---|
+| Capability | A winners list is paid in one auditable batch | — | Not yet | Not built: each award is its own invoice and vote |
+| Capability | Recurring disbursements run as scheduled, individually budgeted transfers | — | Not yet | Not built |
+| Capability | Refund waves use the same mechanics | — | Not yet | Not built |
+| Guarantee | A duplicate winner or inflated prize can't pay twice | Our server | Tested offline | The provider returns the original payment when a request repeats its key; a second request for the same payee and amount is refused by our server (`test/authorize.test.ts`) |
+| Guarantee | A payout outside the campaign's list is refused | Nothing yet | Not yet | Not built: payees are the policy's agreed list; there is no campaign list |
 
 ## Gaps
 
-- Cumulative caps used up while a payout is held aren't re-checked before the vote
-  (case E8 in [enforcement](enforcement.md#what-a-stronger-claim-needs)).
+- Agreed terms are shown to voters, not enforced: nothing refuses an invoice above its ceiling or past
+  its deadline.
 - A payee must be able to receive confidentially: the provider documents that a confidential transfer's
   recipient needs confidential intents enabled. A requester without it can be agreed but not paid; a public
   payout for them isn't built.
-- The agreement-request flow hasn't run on mainnet yet: record its proposal and op ids here once it
-  has.
+- The agreement-request flow hasn't run on mainnet yet: record its date and proposal number here once
+  it has.
 - See README **Not done yet** and [enforcement](enforcement.md).
 
 ## Next (planned, not built)

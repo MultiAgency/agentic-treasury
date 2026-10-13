@@ -16,6 +16,7 @@ import { ASSETS, payoutPolicy } from "../src/policy.js";
 import { recover } from "../src/recover.js";
 import { prepare, submit } from "../src/owner-intents.js";
 import { authorityFixture, fixtureGrant, policyView } from "./fixtures/authority.js";
+import { walletIntent, walletSignature, walletSigner } from "./fixtures/wallet-signature.js";
 
 /**
  * The deployed shape: the executor (Railway) files and holds a payout from its own data directory;
@@ -51,7 +52,7 @@ beforeEach(() => {
   mock.method(api, "getApproval", async () => ({ approval_id: "approval", wallet_id: "wallet-fixture", status: "PENDING",
     expires_at: new Date(Date.now() + 60_000).toISOString(), request_type: "confidential", request_data: terms, request_hash: requestHash }));
   mock.method(api, "generateIntent", async () => ({ type: "approval_vote", correlation_id: "vote-1", expires_at: new Date(Date.now() + 60_000).toISOString(),
-    preview: { approval: { approval_id: "approval", request_hash: requestHash, verdict: "approve" } } }));
+    preview: { approval: { approval_id: "approval", request_hash: requestHash, verdict: "approve" } }, intent: walletIntent, signer: walletSigner }));
   mock.method(api, "submitIntent", async () => { signatures++; released = true; return { status: "SUCCESS" }; });
 });
 afterEach(() => {
@@ -70,7 +71,7 @@ test("the executor holds a payout, an approve-only dashboard approves it from pr
   const checked = await checkPaymentApproval(vote);
   assert.equal(checked.binding.key, undefined, "the dashboard never saw the payment sent");
   assert.equal(checked.binding.requestHash, requestHash);
-  await submit((await prepare(vote)).correlationId, {});
+  await submit((await prepare(vote)).correlationId, await walletSignature());
   assert.equal(signatures, 1);
   assert.equal(existsSync(join(dashboard, ".invoices")), false, "the dashboard keeps no payment records");
 
@@ -199,7 +200,7 @@ test("a policy change between preparing and submitting an approval invalidates i
   onDashboard();
   const prepared = await prepare(vote);
   withPolicy(() => ({ max_actions_per_hour: 9 }));
-  await assert.rejects(submit(prepared.correlationId, {}), /binding changed/);
+  await assert.rejects(submit(prepared.correlationId, await walletSignature()), /binding changed/);
   assert.equal(signatures, 0);
 });
 

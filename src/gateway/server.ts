@@ -8,12 +8,13 @@ import { BadRequest, crossSite, readJson, SECURITY_HEADERS, sendFailure, sendJso
 import { chainKeyLookup, challengeAnswer, clientAddress, hourlyLimit, parseSignIn, sessions, verifySignIn } from "../signin.js";
 import { type AgentEntry, childEnv, hostOf, loadConfig } from "./config.js";
 import { recentSignProposals } from "./proposals.js";
-import { resolveAccess } from "./roles.js";
+import { ownerOf, resolveAccess } from "./roles.js";
 import { appendSynced } from "../synced.js";
 
 /**
  * The hosted dashboard: the one public process. It signs members in, decides per request what each
- * may do from the DAO's own policy, and forwards allowed calls to the agent servers, which keep
+ * may do from each agent's owner (a DAO's own policy, or the owner account itself), and forwards
+ * allowed calls to the agent servers, which keep
  * running on loopback exactly as they do locally, each with its own agent, grant, lock and logs. The
  * gateway itself holds no grant token.
  */
@@ -46,12 +47,22 @@ function interventions(since: string) {
   return { calls: calls.filter((i) => i.at >= since), corrupt };
 }
 
-/** The signed-in account and what it may do, or null. */
+/** The signed-in account and what it may do with each agent it may see, or null. */
 async function viewer(req: IncomingMessage) {
   const account = session.account(req);
   if (!account) return null;
-  const access = await resolveAccess(account, config.dao, config.operators);
-  return access && { account, ...access };
+  const access = await resolveAccess(account, config.agents);
+  return Object.keys(access).length ? { account, access } : null;
+}
+
+/**
+ * The agents a visitor may know of, each with its owner and whether that owner is a DAO (signing by
+ * proposal): a signed-in viewer's own, or, signed out, only the DAOs' agents. Those are public already,
+ * since every owner action is an on-chain proposal naming the agent; a wallet's agent is not.
+ */
+async function agentsView(me: Awaited<ReturnType<typeof viewer>>) {
+  const all = await Promise.all(config.agents.map(async ({ name, owner }) => ({ name, owner, dao: (await ownerOf(owner)).policy !== null })));
+  return all.filter((a) => (me ? Boolean(me.access[a.name]) : a.dao));
 }
 
 /** Forwards a call to an agent server on loopback, streaming both ways (some procedures stream events). */
@@ -92,29 +103,37 @@ createServer(async (req, res) => {
     if (pathname === "/gw/session" && req.method === "POST") {
       const account = await verifySignIn(parseSignIn(await readJson(req)), HOST, chainKeyLookup).catch((error: Error) => error);
       if (account instanceof Error) return json(res, 401, { error: account.message });
-      const access = await resolveAccess(account, config.dao, config.operators);
-      if (!access) return json(res, 403, { error: `${account} is not a member of ${config.dao}` });
-      return json(res, 200, { account, ...access }, { "set-cookie": session.open(account) });
+      const access = await resolveAccess(account, config.agents);
+      if (!Object.keys(access).length) return json(res, 403, { error: `${account} doesn't own any agent here, nor is a member of a DAO that does` });
+      return json(res, 200, { account, access }, { "set-cookie": session.open(account) });
     }
     if (pathname === "/gw/logout" && req.method === "POST")
       return json(res, 200, {}, { "set-cookie": session.close() });
 
     if (pathname === "/gw/me") {
       const me = await viewer(req);
-      return json(res, 200, { dao: config.dao, agents: config.agents.map((a) => a.name), invoices: config.invoices ?? null, viewer: me });
+      return json(res, 200, { agents: await agentsView(me), invoices: config.invoices ?? null, viewer: me });
     }
 
+    // A DAO's recent signing proposals, for a viewer who may see one of the agents it owns.
     if (pathname === "/gw/proposals") {
-      if (!(await viewer(req))) return json(res, 401, { error: "Sign in first" });
-      return json(res, 200, await recentSignProposals(config.dao, config.agents));
+      const me = await viewer(req);
+      if (!me) return json(res, 401, { error: "Sign in first" });
+      const dao = url.searchParams.get("dao") ?? "";
+      const owned = config.agents.filter((a) => a.owner === dao && me.access[a.name]);
+      if (!owned.length) return json(res, 403, { error: `No agent here you may see is owned by ${dao || "that account"}` });
+      if (!(await ownerOf(dao)).policy) return json(res, 400, { error: `${dao} is not a DAO` });
+      return json(res, 200, await recentSignProposals(dao, owned));
     }
 
-    // Operator interventions, for the unattended-run report: who called what, when.
+    // Operator interventions, for the unattended-run report: who called what, when, on the agents this viewer operates.
     if (pathname === "/gw/interventions") {
       const me = await viewer(req);
-      if (me?.role !== "operator") return json(res, me ? 403 : 401, { error: "Operators only" });
-      const since = url.searchParams.get("since") ?? "";
-      return json(res, 200, interventions(since));
+      const operated = new Set(Object.entries(me?.access ?? {}).filter(([, a]) => a.role === "operator").map(([agent]) => agent));
+      if (!operated.size) return json(res, me ? 403 : 401, { error: "Operators only" });
+      const { calls, corrupt } = interventions(url.searchParams.get("since") ?? "");
+      // An unreadable line can't be attributed to an agent, so every operator is told it exists.
+      return json(res, 200, { calls: calls.filter((c) => operated.has(c.agent)), corrupt });
     }
     // Every gateway path is listed above; anything else under /gw/ is no page either.
     if (pathname.startsWith("/gw/")) return json(res, 404, { error: "Not found" });
@@ -125,7 +144,9 @@ createServer(async (req, res) => {
       if (!agent) return json(res, 404, { error: "No such agent" });
       const me = await viewer(req);
       if (!me) return json(res, 401, { error: "Sign in first" });
-      if (!mayCall(me.role, call[2]!)) return json(res, 403, { error: "Operators only" });
+      const access = me.access[agent.name];
+      if (!access) return json(res, 403, { error: `${me.account} may not see the ${agent.name} agent` });
+      if (!mayCall(access.role, call[2]!)) return json(res, 403, { error: "Operators only" });
       // Anything beyond a member's reads is an intervention: recorded before it runs, or not run.
       if (!mayCall("member", call[2]!)) {
         try {
@@ -142,7 +163,7 @@ createServer(async (req, res) => {
   } catch (error) {
     sendFailure(res, error);
   }
-}).listen(PORT, () => console.log(`DAO dashboard for ${config.dao} on port ${PORT}, signing in to ${HOST}`));
+}).listen(PORT, () => console.log(`Dashboard for ${config.agents.map((a) => `${a.name} (${a.owner})`).join(", ")} on port ${PORT}, signing in to ${HOST}`));
 
 const children = new Set<ChildProcess>();
 

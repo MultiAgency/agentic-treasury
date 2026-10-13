@@ -35,6 +35,18 @@ export async function held() {
   return waiting;
 }
 
+/**
+ * One of this agent's payments as the provider sees it now: reads only, so an approve-only copy can
+ * follow a payment its executor sent. Anything that isn't provably this agent's transfer is refused,
+ * since every agent on the API key shares one status lookup: `readStatus` refuses another agent's
+ * operation, but only when the provider names one, and owner intents (an agent's creation) are no payment.
+ */
+export async function paymentStatus(correlationId: string, waitMs?: number) {
+  const s = await readStatus(correlationId, waitMs);
+  if (s.type !== "transfer" || s.agent_id !== agentId()) throw new Error("Not a payment of this agent");
+  return { status: s.status, failureCode: s.failure_code ?? null, createdAt: s.created_at ?? null, updatedAt: s.updated_at ?? null };
+}
+
 /** Transfers waiting for approval in the API's history, newest first, from the approval window. */
 async function heldElsewhere() {
   const since = Date.now() - APPROVAL_TTL_MS;

@@ -17,7 +17,7 @@ function paths(node: object, prefix = ""): string[] {
 
 /** What members may call: reads, plus filing owner actions as proposals. */
 const READS = ["setup", "overview", "policyHistory", "treasury/get", "activity", "unresolved", "held", "autopilot/get", "autopilot/evidence",
-  "inbox/list", "ledger", "ledgerCsv", "reconcileBooks", "owner/status", "owner/pending", "agreements/list"];
+  "inbox/list", "ledger", "ledgerCsv", "reconcileBooks", "owner/status", "owner/pending", "agreements/list", "paymentStatus"];
 /**
  * Member-callable but not read-only: `owner/prepare` creates a provider intent and holds it on the
  * server; the agreement terms are recorded beside a proposal the member files. None of it is agreed
@@ -35,9 +35,9 @@ const policy = {
 };
 
 test("the fixture accounts sign in as plain members, not operators", () => {
-  assert.equal(accessOf("viewer.near", policy, ["ops.near"])?.role, "member");
-  assert.equal(accessOf("requestor.near", policy, ["ops.near"])?.role, "member");
-  assert.equal(accessOf("outsider.near", policy, ["ops.near"]), null);
+  assert.equal(accessOf("viewer.near", { account: "fixture.sputnik-dao.near", policy, signer: "s" }, ["ops.near"])?.role, "member");
+  assert.equal(accessOf("requestor.near", { account: "fixture.sputnik-dao.near", policy, signer: "s" }, ["ops.near"])?.role, "member");
+  assert.equal(accessOf("outsider.near", { account: "fixture.sputnik-dao.near", policy, signer: "s" }, ["ops.near"]), null);
 });
 
 test("a plain member reaches exactly the reads and owner/prepare; every other procedure is operators only", () => {

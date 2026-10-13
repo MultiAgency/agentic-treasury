@@ -16,3 +16,5 @@ web/dist/
 .DS_Store
 /dashboard.json
 .evidence
+.agreements/
+.notify/

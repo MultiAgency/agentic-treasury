@@ -1,10 +1,11 @@
 import { HandCoins, PaperPlaneTilt, Plus, X } from "@phosphor-icons/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { ago, client, fromUnits, kindOf, queries, short, toUnits, useAttempt } from "./lib";
+import { ago, client, fromUnits, kindOf, queries, toUnits, useAttempt } from "./lib";
 import { AssetAmount, PayoutResult, useDestinations, usePayout } from "./payout";
 import { useAgent } from "./shell";
-import { Badge, Button, Card, Details, ErrorBox, input, Section, Spinner } from "./ui";
+import { Badge, Button, Card, Details, ErrorBox, input, Loading, QueryError, Section, Spinner } from "./ui";
+import { useNameOf } from "./names";
 import { useIsOperator } from "./viewer";
 
 /** Thirty days from now, as a date input's value: the default deadline of new terms. */
@@ -17,8 +18,9 @@ const endOf = (day: string) => new Date(`${day}T23:59:59.999Z`).toISOString();
  * already voted to pay are offered first, and a payout agent's agreements (requests from the invoice
  * page, offers such as purchase orders and awards) are answered here.
  */
-export function PayeesSection() {
+export function PayeesSection({ moneyOut = false }: { moneyOut?: boolean }) {
   const { treasury, data, setup } = useAgent();
+  const nameOf = useNameOf();
   const destinations = useDestinations(data, setup);
   const facilitator = kindOf(data) === "facilitator";
   const payees = destinations.current.filter((d) => d.address !== treasury?.accountId);
@@ -36,7 +38,7 @@ export function PayeesSection() {
     <>
       {facilitator && <Agreements listed={listed} destinations={destinations} />}
       <Section
-        title={facilitator ? "Agreed payees" : "Payees"}
+        title={facilitator ? "Agreed payees" : moneyOut ? "Money out: from this agent to a payee" : "Payees"}
         description="Who the agent may pay. The provider refuses anyone the policy doesn't list, and any payment over its caps."
       >
         <Card>
@@ -51,7 +53,7 @@ export function PayeesSection() {
             {payees.map((p) => (
               <li key={p.address} className="flex items-center justify-between gap-3 text-sm">
                 <span className="truncate font-mono" title={p.address}>
-                  {short(p.address, 24)}
+                  {nameOf(p.address)}
                 </span>
                 <span className="flex items-center gap-2">
                   {except ? (
@@ -75,7 +77,7 @@ export function PayeesSection() {
               {candidates.map((c) => (
                 <div key={c.address} className="flex items-center justify-between gap-3 text-sm">
                   <span className="min-w-0 truncate">
-                    <span className="font-mono">{short(c.address, 24)}</span> <span className="text-muted-foreground">· #{c.proposalId}</span>
+                    <span className="font-mono">{nameOf(c.address)}</span> <span className="text-muted-foreground">· #{c.proposalId}</span>
                   </span>
                   <Button variant="outline" size="sm" disabled={!editable} onClick={() => destinations.add({ address: c.address, confidential: true })}>
                     <Plus size={14} /> Add
@@ -102,7 +104,7 @@ export function PayeesSection() {
           <span className="text-sm text-muted-foreground">{destinations.action.label ?? destinations.blocked}</span>
           <ErrorBox error={destinations.action.error} />
 
-          <ManualPayment listed={listed} />
+          <ManualPayment listed={listed} open={moneyOut} />
         </Card>
       </Section>
     </>
@@ -112,12 +114,13 @@ export function PayeesSection() {
 /** On a treasury agent's Funding page: where its funds may go, only when it is that kind of agent. */
 export function TreasuryPayees() {
   const { data } = useAgent();
-  return kindOf(data) === "treasury" ? <PayeesSection /> : null;
+  return kindOf(data) === "treasury" ? <PayeesSection moneyOut /> : null;
 }
 
 /** A payment sent by hand, folded away: the provider decides, refusing anyone the policy doesn't list. */
-function ManualPayment({ listed }: { listed: Set<string> }) {
+function ManualPayment({ listed, open }: { listed: Set<string>; open?: boolean }) {
   const { data } = useAgent();
+  const nameOf = useNameOf();
   const [recipient, setRecipient] = useState("");
   const [asset, setAsset] = useState(data.book[0]?.asset ?? "");
   const [value, setValue] = useState("");
@@ -126,8 +129,18 @@ function ManualPayment({ listed }: { listed: Set<string> }) {
   const amount = holding ? toUnits(value, holding.decimals) : null;
   const destination = data.policy.policy?.destinations.list.find((d) => d.address === recipient.trim());
   return (
-    <Details summary="Send a payment by hand" className="border-t pt-4">
+    <Details summary="Send a payment by hand" open={open} className="border-t pt-4">
       <p className="text-muted-foreground">The agent sends under its grant; the provider refuses anyone the policy doesn't list.</p>
+      {listed.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-muted-foreground">To:</span>
+          {[...listed].map((address) => (
+            <Button key={address} size="sm" variant={recipient === address ? "default" : "outline"} onClick={() => setRecipient(address)}>
+              {nameOf(address)}
+            </Button>
+          ))}
+        </div>
+      )}
       <form
         className="flex flex-col gap-3"
         onSubmit={(e) => {
@@ -173,11 +186,14 @@ const STATUS_WORDS = {
  */
 function Agreements({ listed, destinations }: { listed: Set<string>; destinations: ReturnType<typeof useDestinations> }) {
   const operator = useIsOperator();
+  const nameOf = useNameOf();
   const queryClient = useQueryClient();
   const list = useQuery(queries.agreements);
   const decline = useAttempt();
   const agreeing = useAttempt();
-  const [until, setUntil] = useState(inThirtyDays());
+  // Each request's own deadline, until someone changes it: thirty days out.
+  const [untilOf, setUntilOf] = useState<Record<string, string>>({});
+  const until = (id: string) => untilOf[id] ?? inThirtyDays();
   const open = (list.data ?? []).filter((a) => a.status !== "filed" && a.status !== "declined");
   const closed = (list.data ?? []).filter((a) => a.status === "filed" || a.status === "declined");
   const blocked = destinations.action.busy || Boolean(destinations.blocked);
@@ -185,7 +201,7 @@ function Agreements({ listed, destinations }: { listed: Set<string>; destination
   // Terms first, so voters see them beside the proposal; then the policy update, unless already listed.
   const agree = (id: string, payee: string) =>
     agreeing.attempt(async () => {
-      await client.agreements.propose({ id, until: endOf(until) });
+      await client.agreements.propose({ id, until: endOf(until(id)) });
       await queryClient.invalidateQueries(queries.agreements);
       if (!listed.has(payee)) await destinations.add({ address: payee, confidential: true });
     });
@@ -197,9 +213,9 @@ function Agreements({ listed, destinations }: { listed: Set<string>; destination
     >
       <Card>
         {list.error ? (
-          <p className="text-sm text-warning-muted-foreground">{list.error.message}</p>
+          <QueryError error={list.error} retry={() => list.refetch()} />
         ) : !list.data ? (
-          <Spinner />
+          <Loading label="Loading agreements…" />
         ) : open.length === 0 ? (
           <p className="text-sm text-muted-foreground">Nothing waiting. Requests from the invoice page appear here.</p>
         ) : (
@@ -208,34 +224,36 @@ function Agreements({ listed, destinations }: { listed: Set<string>; destination
               <li key={a.id} className="flex flex-col gap-2 py-3 text-sm first:pt-0 last:pb-0">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>
-                    <span className="font-mono">{short(a.payee, 24)}</span> · {fromUnits(a.terms?.maxAmount ?? a.amount, 6)} USDC
+                    <span className="font-mono">{nameOf(a.payee)}</span> · {fromUnits(a.terms?.maxAmount ?? a.amount, 6)} USDC
                     {a.note && ` · ${a.note}`}
                   </span>
-                  <Badge tone={STATUS_WORDS[a.status][1]}>
-                    {a.origin === "owner" ? "Offered" : STATUS_WORDS[a.status][0]}
-                  </Badge>
+                  <Badge tone={STATUS_WORDS[a.status][1]}>{STATUS_WORDS[a.status][0]}</Badge>
                 </div>
                 <span className="text-muted-foreground">
                   {a.origin === "owner" ? "Offered" : "Requested"} {ago(a.at)}
                   {a.terms && ` · each invoice up to ${fromUnits(a.terms.maxAmount, 6)} USDC until ${new Date(a.terms.until).toLocaleDateString()}`}
                 </span>
                 {a.status === "requested" && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <input type="date" className={`${input} w-44`} value={until} onChange={(e) => setUntil(e.target.value)} />
-                    <Button size="sm" disabled={blocked || agreeing.busy} onClick={() => agree(a.id, a.payee)}>
-                      Agree to these terms
-                    </Button>
-                    <Button size="sm" variant="outline" disabled={!operator || decline.busy} title={operator ? undefined : "Operators only"}
-                      onClick={() => decline.attempt(async () => { await client.agreements.decline({ id: a.id }); await queryClient.invalidateQueries(queries.agreements); })}>
-                      Decline
-                    </Button>
-                  </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input type="date" className={`${input} w-44`} aria-label="Terms hold until" value={until(a.id)}
+                        onChange={(e) => setUntilOf((all) => ({ ...all, [a.id]: e.target.value }))} />
+                      <Button size="sm" disabled={blocked || agreeing.busy} onClick={() => agree(a.id, a.payee)}>
+                        Agree to these terms
+                      </Button>
+                      <Button size="sm" variant="outline" disabled={!operator || decline.busy}
+                        onClick={() => decline.attempt(async () => { await client.agreements.decline({ id: a.id }); await queryClient.invalidateQueries(queries.agreements); })}>
+                        Decline
+                      </Button>
+                    </div>
                 )}
               </li>
             ))}
           </ul>
         )}
-        <span className="text-sm text-muted-foreground">{destinations.action.label ?? destinations.blocked}</span>
+        {/* Why Agree or Decline is off, once for every request. */}
+        <span className="text-sm text-muted-foreground">
+          {[destinations.action.label ?? destinations.blocked, open.some((a) => a.status === "requested") && !operator && "Only operators can decline."].filter(Boolean).join(" ")}
+        </span>
         <ErrorBox error={destinations.action.error ?? agreeing.error ?? decline.error} />
         <Offer listed={listed} destinations={destinations} />
         {closed.length > 0 && (
@@ -243,7 +261,7 @@ function Agreements({ listed, destinations }: { listed: Set<string>; destination
             <ul className="flex flex-col gap-1">
               {closed.map((a) => (
                 <li key={a.id} className="text-muted-foreground">
-                  {short(a.payee, 24)} · {fromUnits(a.amount, 6)} USDC · {STATUS_WORDS[a.status][0]}
+                  {nameOf(a.payee)} · {fromUnits(a.amount, 6)} USDC · {STATUS_WORDS[a.status][0]}
                 </li>
               ))}
             </ul>

@@ -1,13 +1,15 @@
 import { CheckCircle, XCircle } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { ago, type client, describeRequest, fromUnits, kindOf, type Overview, queries } from "./lib";
-import { type Setup, useOwnerAction, useSigner } from "./owner";
-import { Badge, Button, Card, ErrorBox, Section, Spinner } from "./ui";
+import { ownerName, type Setup, useOwnerAction, useSigner } from "./owner";
+import { Badge, Button, Card, ErrorBox, Loading, QueryError, Section, Spinner } from "./ui";
+import { useNameOf } from "./names";
 import { useViewer } from "./viewer";
 
 /** How long the API keeps a held payment approvable (the server's APPROVAL_TTL_MS). */
-const APPROVAL_WINDOW_MS = 24 * 60 * 60_000;
+export const APPROVAL_WINDOW_MS = 24 * 60 * 60_000;
 
 type Agreement = Awaited<ReturnType<typeof client.agreements.list>>[number];
 
@@ -33,17 +35,19 @@ function TermsCheck({ request, agreements }: { request: Record<string, unknown>;
 export function Held({ data, setup }: { data: Overview; setup: Setup }) {
   const held = useQuery(queries.held);
   const action = useOwnerAction(setup);
-  const { viaDao, canSign } = useSigner(setup);
+  const { viaDao, canSign, needsWallet } = useSigner(setup);
   const viewer = useViewer();
   const [voting, setVoting] = useState<string>();
+  const nameOf = useNameOf();
   const facilitator = kindOf(data) === "facilitator";
   // Newest first from the server; oldest first here, so the latest terms come last.
   const agreements = [...(useQuery({ ...queries.agreements, enabled: facilitator }).data ?? [])].reverse();
-  if (!held.data?.length) return null;
   // A member who may propose and vote files and approves in one wallet confirmation.
   const oneClick = viewer?.canPropose && viewer.canVote;
+  // Paying by vote is the payout agent's story, so it always shows the section; elsewhere it shows only when something waits.
+  if (!facilitator && !held.error && !held.data?.length) return null;
 
-  const vote = async (item: (typeof held.data)[number], verdict: "approve" | "reject") => {
+  const vote = async (item: NonNullable<typeof held.data>[number], verdict: "approve" | "reject") => {
     setVoting(item.correlationId);
     await action.run({ type: "approval_vote", approvalId: item.approvalId, verdict, correlationId: item.correlationId });
     setVoting(undefined);
@@ -55,19 +59,34 @@ export function Held({ data, setup }: { data: Overview; setup: Setup }) {
       description={
         viaDao
           ? oneClick
-            ? "Approve files the proposal and your vote in one wallet confirmation."
-            : "Approve files one proposal. The API's signing window closes about five minutes later, so vote in Trezu right away."
-          : "Each payment waits for your signature."
+            ? "Each payment stays approvable for 24 hours. Approve files the proposal and your vote in one wallet confirmation; the signing window then closes about five minutes later."
+            : "Each payment stays approvable for 24 hours. Approve files one proposal, and the signing window closes about five minutes later, so vote in Trezu right away."
+          : "Each payment stays approvable for 24 hours and waits for your signature."
+      }
+      action={
+        // The payment timeline is the payout agent's page (OFF_NAV in shell.tsx).
+        facilitator && (
+          <Link to="/follow/payment" className="text-sm text-muted-foreground hover:text-foreground">
+            Follow a payment →
+          </Link>
+        )
       }
     >
       <Card>
+        {held.error ? (
+          <QueryError error={held.error} retry={() => held.refetch()} />
+        ) : !held.data ? (
+          <Loading label="Loading held payouts…" />
+        ) : held.data.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nothing waits for a vote.</p>
+        ) : (
         <ul className="flex flex-col divide-y">
           {held.data.map((item) => (
             <li key={item.correlationId} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
               <div className="flex flex-col gap-1 text-sm">
-                <span>{describeRequest(item.request, data.book)}</span>
+                <span>{describeRequest(item.request, data.book, nameOf)}</span>
                 <span className="text-muted-foreground">
-                  {item.kind} · requested {ago(item.at)} · expires {ago(new Date(Date.parse(item.at) + APPROVAL_WINDOW_MS).toISOString())}
+                  {item.kind} · requested {ago(item.at)} · approvable until {new Date(Date.parse(item.at) + APPROVAL_WINDOW_MS).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
                 </span>
                 {facilitator && <TermsCheck request={item.request} agreements={agreements} />}
               </div>
@@ -83,6 +102,12 @@ export function Held({ data, setup }: { data: Overview; setup: Setup }) {
             </li>
           ))}
         </ul>
+        )}
+        {!canSign && Boolean(held.data?.length) && (
+          <p className="text-sm text-muted-foreground">
+            {needsWallet ? "Connect the owner's wallet to approve or reject." : `Only ${ownerName(setup)} can approve or reject: connect that wallet.`}
+          </p>
+        )}
         <ErrorBox error={action.error} />
       </Card>
     </Section>

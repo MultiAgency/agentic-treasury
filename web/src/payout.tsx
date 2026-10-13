@@ -3,6 +3,7 @@ import { useState } from "react";
 import { client, type Overview, useAttempt } from "./lib";
 import { type Destination, type Setup, useOwnerAction, useSigner } from "./owner";
 import { Badge, input, StatusBadge } from "./ui";
+import { refusalText } from "./words";
 
 /** What the agent's transfers share: where it may send, and how a payout is sent and reported. */
 
@@ -56,7 +57,7 @@ export function PayoutResult({ result }: { result?: Awaited<ReturnType<typeof cl
   if (!result) return null;
   return result.outcome === "refused" ? (
     <Badge tone="warning">
-      Refused · <span className="font-mono">{result.code}</span>
+      <span title={result.code}>Refused · {refusalText(result.code)}</span>
     </Badge>
   ) : result.status === "PENDING_APPROVAL" ? (
     <Link to="/">

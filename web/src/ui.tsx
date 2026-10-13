@@ -197,6 +197,27 @@ export function ErrorBox({ error }: { error?: string }) {
   return <p className="rounded-xl bg-destructive-muted px-4 py-3 text-sm text-destructive-muted-foreground">{error}</p>;
 }
 
+/** A query still on its way: what is loading, so an empty list is never shown in its place. */
+export function Loading({ label }: { label: string }) {
+  return (
+    <p className="flex items-center gap-3 text-sm text-muted-foreground">
+      <Spinner /> {label}
+    </p>
+  );
+}
+
+/** A query that failed: the server's words, and a retry, so a failure never reads as "nothing here". */
+export function QueryError({ error, retry }: { error: { message: string }; retry: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-destructive-muted px-4 py-3 text-sm text-destructive-muted-foreground">
+      <span>{error.message}</span>
+      <Button variant="ghost" size="sm" onClick={retry}>
+        Retry
+      </Button>
+    </div>
+  );
+}
+
 /** An operation's settled status, with the provider's failure code when it has one. */
 export function StatusBadge({ status, failureCode, children }: { status: string; failureCode?: string | null; children?: ReactNode }) {
   return (
@@ -229,9 +250,9 @@ export function CopyButton({ text }: { text: string }) {
 }
 
 /** Detail most readers skip, such as identifiers and rare controls, folded under a one-line summary. */
-export function Details({ summary, className = "", children }: { summary: string; className?: string; children: ReactNode }) {
+export function Details({ summary, open, className = "", children }: { summary: string; open?: boolean; className?: string; children: ReactNode }) {
   return (
-    <details className={`text-sm ${className}`}>
+    <details open={open} className={`text-sm ${className}`}>
       <summary className="cursor-pointer text-muted-foreground">{summary}</summary>
       <div className="mt-2 flex flex-col gap-2">{children}</div>
     </details>

@@ -1,31 +1,38 @@
 import { LockSimple } from "@phosphor-icons/react";
-import { PrototypeCard } from "./showcase";
+import { KnownLegend, ProvenOnMainnet, PrototypeCard } from "./showcase";
 import { SignIn } from "./session";
 
 /**
- * The page for anyone not signed in: what the two prototypes are and how each claim is known, and
- * sign-in. It reads nothing from the server: no balances, payments or agents, and no roster or
+ * The page for anyone not signed in: the two areas, each agent's capabilities and guarantees and how each is known,
+ * and sign-in. It reads nothing from the server: no balances, payments or agents, and no roster or
  * proposals either; members see proposals after signing in.
  */
-export function PublicHome({ dao, invoices }: { dao: string; invoices: string | null }) {
+export function PublicHome({ daos, invoices }: { daos: string[]; invoices: string | null }) {
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-10 p-4 sm:p-8">
-      <header className="flex flex-col gap-2">
-        <h1 className="font-heading text-3xl font-semibold">Agents that move money under a policy their owner signed</h1>
-        <p className="flex items-start gap-2 text-sm text-muted-foreground">
-          <LockSimple size={16} className="mt-0.5 shrink-0" />
-          <span>Two prototypes on NEAR mainnet, owned by {dao}. Balances, payments and rules are for members only.</span>
+    <div className="mx-auto grid max-w-6xl gap-x-12 gap-y-14 p-4 sm:p-8 lg:grid-cols-[1fr_22rem] lg:py-16">
+      <header className="flex flex-col gap-6">
+        <h1 className="max-w-[18ch] font-heading text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
+          Agents that move money under a policy their owner signed
+        </h1>
+        <p className="flex max-w-prose items-start gap-2 text-muted-foreground">
+          <LockSimple size={18} className="mt-1 shrink-0" />
+          <span>Two agents on NEAR mainnet{daos.length > 0 && `, owned by ${daos.join(" and ")}`}. Each card lists its agent's capabilities and guarantees, who enforces each guarantee, and what has run on mainnet, then its roadmap. Balances, payments and rules are for members only.</span>
         </p>
+        <KnownLegend />
       </header>
 
-      {/* Claims and how each is known, never their evidence. */}
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="lg:pt-2">
+        <SignIn daos={daos} />
+      </div>
+
+      {/* Requirements and their phases, never the evidence. */}
+      <div className="grid gap-6 lg:col-span-2 lg:grid-cols-2">
         <PrototypeCard kind="facilitator" invoices={invoices} />
         <PrototypeCard kind="treasury" />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <SignIn dao={dao} />
+      <div className="lg:col-span-2">
+        <ProvenOnMainnet />
       </div>
     </div>
   );

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { delegateWaiting } from "../src/owner-intents.js";
+import { daoRequests, delegateWaiting, reconcileOwnerIntents } from "../src/owner-intents.js";
 
 /**
  * One owner key, one nonce sequence: a NEAR delegate action executing raises the key's nonce, so a
@@ -36,4 +36,26 @@ test("submitted, settled, expired, signature-only and other owners' intents don'
   });
   writeFileSync(join(".owner-intents", ".env.dao.expired.jsonl"), "{}\n");
   assert.equal(delegateWaiting(OWNER), undefined);
+});
+
+test("a DAO-signed approval names the payment it released, also once settled", () => {
+  file(".env.json", { "vote-1": { ...delegate(OWNER, { type: "approval_vote", stage: "settled" }),
+    paymentApproval: { approvalId: "a", correlationId: "op_payment", verdict: "approve", requestHash: "r" } } });
+  const [request] = daoRequests();
+  assert.equal(request?.state, "done");
+  assert.deepEqual(request?.payment, { correlationId: "op_payment", verdict: "approve" });
+});
+
+test("an approval whose signing window closed still names its payment, read back from the archive", async () => {
+  const past = new Date(Date.now() - 1).toISOString();
+  file(".env.json", { "vote-2": { ...delegate(OWNER, { type: "approval_vote", expiresAt: past }),
+    paymentApproval: { approvalId: "a", correlationId: "op_payment", verdict: "reject", requestHash: "r" } } });
+  // An archive line from before payments were recorded, then a torn tail.
+  writeFileSync(join(".owner-intents", ".env.expired.jsonl"), `${JSON.stringify({ correlationId: "vote-1", type: "approval_vote", expiresAt: past, hash: "h", delegate: null })}\n{"correlationId":"vo`);
+  await reconcileOwnerIntents();
+  const requests = daoRequests();
+  assert.deepEqual(requests.map((r) => [r.correlationId, r.state, r.payment]), [
+    ["vote-1", "expired", null],
+    ["vote-2", "expired", { correlationId: "op_payment", verdict: "reject" }],
+  ]);
 });

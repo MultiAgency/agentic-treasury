@@ -14,12 +14,19 @@ One Agent API agent with its own wallet, policy and grant, run by one instance o
 _Avoid_: bot, worker
 
 **Treasury agent**:
-An agent that swaps and shields toward a strategy without a vote per action. The **Agentic Treasury
-Management** prototype (docs/treasury.md).
+An agent that swaps and shields toward a strategy without a vote per action. It runs the **Treasury**
+area (docs/treasury.md).
 
 **Payout agent**:
 An agent that only makes confidential USDC transfers to agreed payees, each held for the owner's approval.
-The **Confidential Treasury Facilitator** prototype (docs/facilitator.md).
+It runs the **Payables** area (docs/facilitator.md).
+
+**Area** / **Brief**:
+An area is what one agent shows: **Payables** (the payout agent) or **Treasury** (the treasury agent). A
+brief is an experiment from the Agent Connect catalog that an area runs or plans, keeping its catalog
+number and title (01 Confidential Treasury Facilitator, 02 Agentic Treasury Management). Each brief's
+requirements are measured as complete, tested or live, or open.
+_Avoid_: prototype (for an area), use case
 
 **Executor**:
 The one instance that sends, reconciles and serves invoices for an agent. Any other instance of the same
@@ -27,9 +34,10 @@ agent is **approve-only**: it reads and approves as the owner, and never sends.
 _Avoid_: primary, leader
 
 **Member** / **Operator**:
-Who may use the hosted dashboard. A member is named in one of the DAO's group roles (a token-weighted
-role names no one): reads everything and may file owner actions as proposals. An operator is also named
-in the dashboard's configuration and may move money and change settings.
+Who may use the hosted dashboard, decided per agent from its owner. A member is named in one of the
+owner DAO's group roles (a token-weighted role names no one): reads everything and may file owner actions
+as proposals. An operator may also move money and change settings: an owner that is a wallet, for its own
+agents, or an account named beside an agent in the dashboard's configuration, for that agent.
 
 ## Mandate
 

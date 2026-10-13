@@ -13,11 +13,13 @@ import { sessionToken } from "../src/signin.js";
 /**
  * The real gateway process in front of an instrumented agent server: every call that gets past the
  * gateway is counted there, so a refused call is proven never to reach a handler, let alone the
- * provider. The DAO's policy comes from a stand-in RPC; no membership is changed anywhere.
+ * provider. Two agents: one owned by a DAO, whose policy comes from a stand-in RPC, and one owned by a
+ * plain account, which the RPC knows no contract for. No membership is changed anywhere.
  */
 
 const SECRET = "test-only-gateway-session-secret-0123456789";
 const DAO = "fixture.sputnik-dao.near";
+const OWNER = "owner.near";
 const policy = {
   proposal_bond: "0",
   roles: [{ name: "Viewer", kind: { Group: ["member.near"] }, permissions: [], vote_policy: {} }],
@@ -25,7 +27,7 @@ const policy = {
 };
 
 const reached: string[] = [];
-let agentServer: Server, rpcServer: Server, gateway: ChildProcess, base: string, dir: string;
+let agentServers: Server[], rpcServer: Server, gateway: ChildProcess, base: string, dir: string;
 
 const listen = (server: Server) => new Promise<number>((done) => server.listen(0, "127.0.0.1", () => done((server.address() as AddressInfo).port)));
 
@@ -34,24 +36,49 @@ function paths(node: object, prefix = ""): string[] {
     "~orpc" in child ? [`${prefix}${name}`] : paths(child as object, `${prefix}${name}/`));
 }
 
+/** The DAO's MPC key as the stand-in RPC derives it, and so the account that signs as the DAO's agents' owner. */
+const DAO_KEY = "ed25519:11111111111111111111111111111111";
+const DAO_SIGNER = "0".repeat(64);
+
+/**
+ * An agent server whose agent is owned by `owner` (null: not created yet). It counts every call the
+ * gateway forwards; the gateway's own owner check (marked `x-gateway`) is answered, not counted.
+ */
+const agentServer = (owner: string | null) => createServer((req, res) => {
+  const path = req.url!.replace(/^\/rpc\//, "");
+  if (req.headers["x-gateway"]) {
+    const setup = { agentId: owner && "a".repeat(64), owner: owner && { type: "near", account_id: owner } };
+    return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ json: path === "setup" ? setup : null }));
+  }
+  reached.push(path);
+  res.writeHead(200, { "content-type": "application/json" }).end('{"json":null}');
+});
+
 before(async () => {
-  agentServer = createServer((req, res) => {
-    reached.push(req.url!.replace(/^\/rpc\//, ""));
-    res.writeHead(200, { "content-type": "application/json" }).end('{"json":null}');
-  });
+  agentServers = [agentServer(DAO_SIGNER), agentServer(OWNER), agentServer(null), agentServer("someone-else.near")];
   rpcServer = createServer((req, res) => {
     let body = "";
     req.on("data", (chunk) => (body += chunk)).on("end", () => {
-      const { id } = JSON.parse(body) as { id: unknown };
-      const result = { result: [...Buffer.from(JSON.stringify(policy))], logs: [], block_height: 1, block_hash: "11111111111111111111111111111111" };
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ jsonrpc: "2.0", id, result }));
+      const { id, params } = JSON.parse(body) as { id: unknown; params: { account_id?: string } };
+      const view = (value: unknown) => ({ result: { result: [...Buffer.from(JSON.stringify(value))], logs: [], block_height: 1, block_hash: "11111111111111111111111111111111" } });
+      // Only the DAO and the MPC signer have contracts; any other account is answered as the chain answers an unknown one.
+      const answer = params.account_id === DAO ? view(policy) : params.account_id === "v1.signer" ? view(DAO_KEY)
+        : { error: { name: "HANDLER_ERROR", cause: { name: "UNKNOWN_ACCOUNT", info: { requested_account_id: params.account_id } }, code: -32000, message: "Server error" } };
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ jsonrpc: "2.0", id, ...answer }));
     });
   });
-  const [agentPort, rpcPort] = await Promise.all([listen(agentServer), listen(rpcServer)]);
+  const [treasuryPort, walletPort, newPort, strayPort, rpcPort] = await Promise.all([...agentServers.map(listen), listen(rpcServer)]);
 
   dir = mkdtempSync(join(tmpdir(), "gateway-denial-"));
   const file = join(dir, "dashboard.json");
-  writeFileSync(file, JSON.stringify({ dao: DAO, host: "dao.test", operators: ["ops.near"], agents: [{ name: "treasury", port: agentPort }] }));
+  writeFileSync(file, JSON.stringify({ host: "dao.test", agents: [
+    { name: "treasury", owner: DAO, operators: ["ops.near"], port: treasuryPort },
+    { name: "wallet", owner: OWNER, port: walletPort },
+    // Not created yet: its configured owner sets it up.
+    { name: "new", owner: OWNER, port: newPort },
+    // Configured as OWNER's, but its server reports another owner: closed to everyone.
+    { name: "stray", owner: OWNER, operators: ["ops.near"], port: strayPort },
+  ] }));
   const probe = createServer();
   const port = await listen(probe);
   await new Promise((done) => probe.close(done));
@@ -69,12 +96,13 @@ before(async () => {
 
 after(() => {
   gateway?.kill();
-  agentServer?.close();
+  for (const server of agentServers ?? []) server.close();
   rpcServer?.close();
 });
 
-const call = (path: string, account?: string) =>
-  fetch(`${base}/a/treasury/rpc/${path}`, {
+const session = (account: string) => ({ cookie: `dao_session=${sessionToken(account, SECRET)}` });
+const call = (path: string, account?: string, agent = "treasury") =>
+  fetch(`${base}/a/${agent}/rpc/${path}`, {
     method: "POST",
     headers: { "content-type": "application/json", ...(account && { cookie: `dao_session=${sessionToken(account, SECRET)}` }) },
     body: "{}",
@@ -195,8 +223,55 @@ test("signed out, the gateway serves no roster or proposals: the old public view
 });
 
 test("a failure on the gateway's side is a 500 that shows no internals", async () => {
-  // The stand-in RPC answers every view with the DAO's policy, which is not a proposal list.
-  const answer = await fetch(`${base}/gw/proposals`, { headers: { cookie: `dao_session=${sessionToken("member.near", SECRET)}` } });
+  // The stand-in RPC answers every view of the DAO with its policy, which is not a proposal list.
+  const answer = await fetch(`${base}/gw/proposals?dao=${DAO}`, { headers: session("member.near") });
   assert.equal(answer.status, 500);
   assert.deepEqual(await answer.json(), { error: "Something went wrong. Try again later." });
+});
+
+test("an agent owned by a plain account: its owner operates it and sees nothing of the DAO's agents; the DAO's operators see nothing of it", async () => {
+  reached.length = 0;
+  assert.equal((await call("pay", OWNER, "wallet")).status, 200);
+  assert.equal((await call("overview", OWNER, "treasury")).status, 403);
+  assert.equal((await call("overview", "member.near", "wallet")).status, 403);
+  assert.equal((await call("overview", "ops.near", "wallet")).status, 403, "operators are named per agent");
+  assert.deepEqual(reached, ["pay"]);
+});
+
+test("who sees what: the agents a visitor may know of, each with its owner, and a viewer's access to each", async () => {
+  type Me = { agents: unknown; invoices: unknown; viewer: { account: string; access: Record<string, unknown> } | null };
+  const me = (account?: string) => fetch(`${base}/gw/me`, { headers: account ? session(account) : {} }).then((r) => r.json() as Promise<Me>);
+  const dao = { name: "treasury", owner: DAO, dao: true };
+  const wallet = { name: "wallet", owner: OWNER, dao: false };
+  // Signed out, a wallet's agent isn't listed: who owns an agent here is the owner's to tell.
+  assert.deepEqual(await me(), { agents: [dao], invoices: null, viewer: null });
+  const operator = { role: "operator", canPropose: false, canVote: false };
+  assert.deepEqual(await me(OWNER), {
+    agents: [wallet, { name: "new", owner: OWNER, dao: false }],
+    invoices: null,
+    viewer: { account: OWNER, access: { wallet: operator, new: operator } },
+  });
+  assert.deepEqual((await me("member.near")).agents, [dao]);
+});
+
+test("proposals are listed per DAO, for viewers of an agent it owns", async () => {
+  const proposals = (dao: string, account: string) => fetch(`${base}/gw/proposals?dao=${dao}`, { headers: session(account) });
+  assert.equal((await proposals(DAO, OWNER)).status, 403);
+  assert.equal((await proposals(OWNER, "member.near")).status, 403);
+  assert.equal((await proposals(OWNER, OWNER)).status, 400, "a plain account files no proposals");
+});
+
+test("the configured owner must be the agent's real owner: an agent owned by anyone else is closed to everyone", async () => {
+  reached.length = 0;
+  for (const account of [OWNER, "ops.near"]) assert.equal((await call("overview", account, "stray")).status, 403, account);
+  assert.equal((await call("pay", OWNER, "new")).status, 200, "an agent not created yet is its configured owner's to set up");
+  assert.equal((await call("overview", "member.near", "treasury")).status, 200, "the DAO's agent is owned by the account the DAO signs with");
+  assert.deepEqual(reached, ["pay", "overview"]);
+});
+
+test("an operator sees only the interventions on the agents it operates", async () => {
+  assert.equal((await call("autopilot/tick", "ops.near")).status, 200);
+  const calls = async (account: string) => ((await (await interventions(account)).json()) as { calls: { agent: string }[] }).calls;
+  assert.ok((await calls("ops.near")).some((c) => c.agent === "treasury"));
+  assert.deepEqual((await calls(OWNER)).filter((c) => c.agent !== "wallet" && c.agent !== "new"), []);
 });

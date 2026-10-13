@@ -3,7 +3,7 @@ import { ORPCError, os as base } from "@orpc/server";
 import { z } from "zod";
 import { depositAddress, pay } from "./agent.js";
 import { allHoldings } from "./holdings.js";
-import { held } from "./payouts.js";
+import { held, paymentStatus } from "./payouts.js";
 import { api } from "./api.js";
 import { accountExists, daoPayees, describeTreasury, fundingTransaction, isDao } from "./chain.js";
 import { daoOwner, ownerFunded } from "./dao-owner.js";
@@ -46,12 +46,13 @@ const activity = () =>
 /**
  * Errors reach the page with their message: this server answers only its own page on loopback, and
  * behind the hosted gateway only signed-in members (operators, for anything beyond reads). An Agent
- * API refusal keeps its code (`policy_change_throttled`, ...) for the page to branch on.
+ * API refusal keeps its code (`policy_change_throttled`, ...) for the page to branch on, and for a
+ * throttle, quota or schedule refusal when it can be tried again (`availableAt`).
  */
 function toClientError(error: unknown) {
   if (error instanceof ORPCError) return error;
   if (error instanceof AgentApiError)
-    return new ORPCError("BAD_REQUEST", { message: error.detail ?? error.title, data: { code: error.code } });
+    return new ORPCError("BAD_REQUEST", { message: error.detail ?? error.title, data: { code: error.code, availableAt: error.availableAt ?? null } });
   return new ORPCError("BAD_REQUEST", { message: error instanceof Error ? error.message : String(error) });
 }
 
@@ -277,6 +278,10 @@ export const router = {
     /** Every tick's evidence line since `since`: what the scheduler saw and did (src/evidence.ts). */
     evidence: os.input(z.object({ since: z.iso.datetime().optional() })).handler(({ input }) => ticks(input.since)),
   },
+  /** One of this agent's payments as the provider sees it now (`paymentStatus` in src/payouts.ts). */
+  // `waitMs`: long-poll at the provider, kept under proxies' and browsers' timeouts.
+  paymentStatus: os.input(z.object({ correlationId: z.string().min(1).max(200), waitMs: z.number().int().min(0).max(25_000).optional() }))
+    .handler(({ input }) => paymentStatus(input.correlationId, input.waitMs)),
   inbox: {
     // Every open message, however old, so dismissing a repeated one clears every copy; and the latest runs.
     list: os.handler(() => {

@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { bindingWindow } from "./budget-window.js";
 import { agentId } from "./env.js";
 import { ASSETS } from "./policy.js";
 import { usdValue } from "./value.js";
@@ -55,7 +56,8 @@ export const holdings = async () => (await allHoldings()).managed;
 export const format = (raw: bigint | string, h: Pick<Holding, "decimals" | "symbol">) =>
   `${(Number(raw) / 10 ** h.decimals).toFixed(6)} ${h.symbol}`;
 
-/** What the policy's monthly budget has left, in USD. */
+/** What the policy's USD budget has left before its binding window refuses, in USD; null when no window is limited. */
 export async function budgetRemaining() {
-  return (await api.getPolicy(agentId())).usage?.budget.monthly.remaining_usd;
+  const budget = (await api.getPolicy(agentId())).usage?.budget;
+  return budget ? (bindingWindow(budget)?.remaining_usd ?? null) : null;
 }

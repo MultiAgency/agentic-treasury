@@ -1,11 +1,11 @@
-import { createHash } from "node:crypto";
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { RouterClient } from "@orpc/server";
 import type { Intent } from "@near-intents-agent-api/sdk";
-import { DELEGATE_ACTION_PREFIX, decodeSignedDelegateAction, Near } from "near-kit";
+import { decodeSignedDelegateAction, Near } from "near-kit";
 import { mainnet } from "../chain.js";
 import { nep413Hash } from "../nep413.js";
+import { delegateSigningHash } from "../owner-signature.js";
 import type { Router } from "../router.js";
 import type { AgentEntry } from "./config.js";
 import { type DaoProposal, signRequestOf } from "./sign-requests.js";
@@ -46,11 +46,7 @@ export function readDelegate(signedDelegate: Uint8Array) {
     if (!("functionCall" in action)) throw new Error("Not a function call");
     return action.functionCall.methodName;
   });
-  const prefix = Buffer.alloc(4);
-  prefix.writeUInt32LE(DELEGATE_ACTION_PREFIX);
-  const action = Buffer.from(signedDelegate).subarray(0, signedDelegate.length - 65);
-  const hash = createHash("sha256").update(Buffer.concat([prefix, action])).digest("hex");
-  return { sender: delegateAction.senderId, receiver: delegateAction.receiverId, methods, hash };
+  return { sender: delegateAction.senderId, receiver: delegateAction.receiverId, methods, hash: delegateSigningHash(signedDelegate).toString("hex") };
 }
 
 type Check =

@@ -2,16 +2,13 @@ import { readFileSync } from "node:fs";
 import { z } from "zod";
 
 /**
- * The hosted dashboard's configuration, `dashboard.json` (or DASHBOARD_FILE): the DAO, who operates
- * it, and its agents, each an agent server with its own settings file and loopback port.
+ * The hosted dashboard's configuration, `dashboard.json` (or DASHBOARD_FILE): its agents, each an agent
+ * server with its own owner, operators, settings file and loopback port.
  */
 const Config = z.object({
-  dao: z.string().min(2),
   /** The public host users sign in to, e.g. "dao.example.com". Bound into every sign-in signature. */
   host: z.string().min(1),
-  /** Accounts that may move money and change settings; DAO members can read and file proposals. */
-  operators: z.array(z.string()),
-  /** Where the DAO's payees submit invoices, linked from the public page. */
+  /** Where payees submit invoices, linked from the public page. */
   invoices: z.url().optional(),
   /**
    * Each agent's server: with `envFile`, the gateway runs it on `port`; without, one is already
@@ -21,6 +18,16 @@ const Config = z.object({
     .array(
       z.object({
         name: z.string().regex(/^[a-z0-9-]{1,32}$/),
+        /**
+         * The NEAR account the agent answers to: a Sputnik DAO, whose members sign in, or any other
+         * account, which signs in itself (src/gateway/roles.ts).
+         */
+        owner: z.string().min(2),
+        /**
+         * Accounts besides the owner that may move this agent's money and change its settings. Named per
+         * agent, so hosting someone's agent never hands it to the host's own operators.
+         */
+        operators: z.array(z.string()).default([]),
         envFile: z.string().optional(),
         port: z.number().int().min(1024).max(65535),
         /** false: the server here only reads and files owner proposals; another host executes for this agent. */

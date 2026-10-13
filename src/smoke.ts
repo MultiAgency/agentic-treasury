@@ -52,10 +52,12 @@ const rpc = <T>(agent: string, path: string) => hostedRpc<T>(DASHBOARD, COOKIE!,
   const challenge = (await (await get(at(DASHBOARD, "/gw/challenge"))).json()) as { recipient?: string };
   check("dashboard signs in for its own host", challenge.recipient === DASHBOARD.host, `signs for ${challenge.recipient}`);
 
-  const me = (await (await get(at(DASHBOARD, "/gw/me"))).json()) as { agents: string[]; viewer: unknown };
+  const me = (await (await get(at(DASHBOARD, "/gw/me"))).json()) as { agents: { name: string; owner: string; dao: boolean }[]; viewer: unknown };
   check("no viewer without a session", me.viewer === null);
-  check("proposals need a session", (await get(at(DASHBOARD, "/gw/proposals"))).status === 401);
-  for (const agent of me.agents)
+  check("signed out, only DAO-owned agents are listed", me.agents.every((a) => a.dao));
+  const dao = me.agents[0]?.owner ?? "";
+  check("proposals need a session", (await get(at(DASHBOARD, `/gw/proposals?dao=${dao}`))).status === 401);
+  for (const { name: agent } of me.agents)
     for (const path of PROBES) {
       const { status } = await post(at(DASHBOARD, `/a/${agent}/rpc/${path}`));
       check(`${agent} ${path} needs a session`, status === 401, String(status));
@@ -79,10 +81,12 @@ const rpc = <T>(agent: string, path: string) => hostedRpc<T>(DASHBOARD, COOKIE!,
 
 // As a signed-in account.
 if (COOKIE) {
-  const me = (await (await get(at(DASHBOARD, "/gw/me"), { cookie: COOKIE })).json()) as { viewer: { account: string; role: string } | null };
+  type Me = { agents: { name: string; owner: string; dao: boolean }[]; viewer: { account: string; access: Record<string, { role: string }> } | null };
+  const me = (await (await get(at(DASHBOARD, "/gw/me"), { cookie: COOKIE })).json()) as Me;
   check("the session signs in", me.viewer !== null);
-  if (me.viewer) console.log(`     as ${me.viewer.account} (${me.viewer.role})`);
-  check("proposals read", (await get(at(DASHBOARD, "/gw/proposals"), { cookie: COOKIE })).ok);
+  if (me.viewer) console.log(`     as ${me.viewer.account} (${Object.entries(me.viewer.access).map(([agent, a]) => `${agent}: ${a.role}`).join(", ")})`);
+  for (const dao of new Set(me.agents.filter((a) => a.dao).map((a) => a.owner)))
+    check(`proposals of ${dao} read`, (await get(at(DASHBOARD, `/gw/proposals?dao=${dao}`), { cookie: COOKIE })).ok);
 
   if (SNAPSHOT) {
     type Overview = { digest: string | null; grants: { label: string }[] };

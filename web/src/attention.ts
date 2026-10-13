@@ -1,6 +1,7 @@
 import { ago, amountOf, type client, type Overview } from "./lib";
 import type { Setup } from "./owner";
 import type { Tone } from "./ui";
+import { plainMessage } from "./words";
 
 /** What a person must act on for one agent, each with the page to act on, relative to the agent's pages. */
 export type Attention = {
@@ -13,6 +14,8 @@ export type Attention = {
 };
 
 type Reads = {
+  /** An account as people know it (names.ts); the raw account when not given. */
+  nameOf?: (account: string) => string;
   setup: Setup;
   overview: Overview;
   held: Awaited<ReturnType<typeof client.held>>;
@@ -23,7 +26,7 @@ type Reads = {
 const GRANT_WARNING_DAYS = 7;
 
 /** What stops the agent sending, or waits on a person, most urgent first: shared by an agent's overview and the DAO's home. */
-export function attentionOf({ setup, overview, held, unresolved, inbox }: Reads): Attention[] {
+export function attentionOf({ setup, overview, held, unresolved, inbox, nameOf = (a) => a }: Reads): Attention[] {
   const items: Attention[] = [];
   if (unresolved.length) {
     const oldest = unresolved.map((op) => op.at).sort()[0]!;
@@ -41,7 +44,7 @@ export function attentionOf({ setup, overview, held, unresolved, inbox }: Reads)
   for (const h of held) {
     const r = h.request as { amount?: string; asset?: string; recipient?: string };
     items.push({ tone: "warning", to: "/", action: "Approve",
-      text: `${r.amount && r.asset ? amountOf(r.amount, r.asset, overview.book) : "A payout"} to ${r.recipient ?? "a payee"} is held for the owner's approval (requested ${ago(h.at)}).` });
+      text: `${r.amount && r.asset ? amountOf(r.amount, r.asset, overview.book) : "A payout"} to ${r.recipient ? nameOf(r.recipient) : "a payee"} is held for the owner's approval (requested ${ago(h.at)}).` });
   }
   // What the autopilot raised while no one was watching, until the owner dismisses it.
   // The same message raised again is one item, its age ignored ("12 min old" changes every tick). Newest
@@ -53,7 +56,7 @@ export function attentionOf({ setup, overview, held, unresolved, inbox }: Reads)
   }
   for (const [latest, ...earlier] of open.values())
     items.push({ tone: latest!.level === "warn" ? "warning" : "info", to: "/automations", action: "Open",
-      text: `${latest!.text} (${earlier.length ? `${earlier.length + 1} times, latest ${ago(latest!.at)}` : ago(latest!.at)})`,
+      text: `${plainMessage(latest!.text)} (${earlier.length ? `${earlier.length + 1} times, latest ${ago(latest!.at)}` : ago(latest!.at)})`,
       inboxIds: [latest!.id, ...earlier.map((e) => e.id)] });
   return items;
 }

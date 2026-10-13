@@ -5,11 +5,13 @@
 //   accepted  the API accepts it and the grant comes into force
 //   unreached the submission fails before the API receives it: the intent still awaits a signature
 //   late      the API receives the signature only when it is sent again
+//   forged    the wallet returns a signature that isn't the owner's over the prepared intent
 // Prints how the submission ended.
 import { AgentApiError } from "@near-intents-agent-api/sdk";
 import { readFileSync } from "node:fs";
 import { api } from "../../src/api.js";
 import { reconcileOwnerIntents, submit } from "../../src/owner-intents.js";
+import { walletSignature } from "./wallet-signature.js";
 
 const refusal = new AgentApiError(400, {
   errors: [{ status: "400", code: "invalid_signature", title: "Invalid signature", meta: { retryable: false } }],
@@ -44,7 +46,9 @@ Object.assign(api, {
 try {
   const result = process.argv[2] === "recover" || process.argv[2] === "late"
     ? await reconcileOwnerIntents()
-    : await submit("grant", { signature: "s" });
+    : await submit("grant", process.argv[2] === "forged"
+      ? { ...(await walletSignature()), signature: Buffer.alloc(64, 1).toString("base64") }
+      : await walletSignature());
   console.log(JSON.stringify({ result, sends }));
 } catch (error) {
   console.log(JSON.stringify({ error: error instanceof Error ? error.message : String(error), sends }));

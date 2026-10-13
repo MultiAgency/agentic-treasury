@@ -29,8 +29,12 @@ function checkedStatus<T extends { correlation_id: string; agent_id?: string | n
   return status;
 }
 
-/** One status read, bound to the operation asked about. */
-export const readStatus = async (id: string) => checkedStatus(id, await api.getStatus(id, { signal: AbortSignal.timeout(30_000) }));
+/**
+ * One status read, bound to the operation asked about. With `waitMs` the provider holds the request until
+ * the status is final or needs a signature, or the wait ends: one call instead of polling.
+ */
+export const readStatus = async (id: string, waitMs?: number) =>
+  checkedStatus(id, await api.getStatus(id, { ...(waitMs && { waitMs }), signal: AbortSignal.timeout(30_000 + (waitMs ?? 0)) }));
 
 /** Polls until the operation stops moving; UNCERTAIN/NEEDS_REVIEW are returned, never retried. */
 export async function waitForStatus(correlationId: string, signal = AbortSignal.timeout(180_000)) {

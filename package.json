@@ -17,6 +17,7 @@
     "archive": "tsx --env-file-if-exists=.env src/archive.ts",
     "smoke": "tsx src/smoke.ts",
     "run-report": "tsx src/run-report.ts",
+    "demo-check": "tsx src/demo-check.ts",
     "typecheck": "tsc && tsc -p web",
     "server": "tsx --env-file-if-exists=.env src/server.ts",
     "hosted": "tsx --env-file-if-exists=.env src/gateway/server.ts",

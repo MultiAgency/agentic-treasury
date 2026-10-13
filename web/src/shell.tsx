@@ -4,15 +4,15 @@ import {
   ClockCounterClockwise,
   Lightning,
   type Icon,
+  Robot,
   ShieldCheck,
   SquaresFour,
   UsersThree,
-  Wallet,
 } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, type LinkProps, Outlet } from "@tanstack/react-router";
-import { createContext, type ReactNode, useContext, useEffect } from "react";
-import { client, kindOf, type Overview } from "./lib";
+import { Link, type LinkProps, Outlet, useMatchRoute } from "@tanstack/react-router";
+import { createContext, type ReactNode, useContext, useEffect, useId } from "react";
+import { BASE, client, kindOf, type Overview } from "./lib";
 import { type Kind, PROTOTYPES } from "./beats";
 import { ViewerBadge } from "./session";
 import { useViewer } from "./viewer";
@@ -32,30 +32,59 @@ export function useAgent() {
   return agent;
 }
 
-/** Each prototype's pages, named for what they are in it. */
-const NAV: Record<Kind, { to: LinkProps["to"]; label: string; icon: Icon }[]> = {
+/**
+ * Each area's pages, in the order its story runs, named for what they are in it. A page not listed
+ * for an agent's kind isn't part of that area, and the shell says so instead of showing it.
+ */
+const NAV: Record<Kind, { to: LinkProps["to"]; label: string; icon: Icon; tag?: string }[]> = {
   facilitator: [
     { to: "/", label: "Overview", icon: SquaresFour },
     { to: "/payees", label: "Agreements", icon: UsersThree },
-    { to: "/activity", label: "Activity", icon: ClockCounterClockwise },
+    { to: "/funding", label: "Funding", icon: Bank },
     { to: "/policy", label: "Policy", icon: ShieldCheck },
+    { to: "/activity", label: "Activity", icon: ClockCounterClockwise },
   ],
   treasury: [
     { to: "/", label: "Overview", icon: SquaresFour },
+    { to: "/steward", label: "Steward", icon: Robot, tag: "experimental" },
     { to: "/automations", label: "Automations", icon: Lightning },
-    { to: "/treasury", label: "Funding", icon: Bank },
+    { to: "/funding", label: "Funding", icon: Bank },
     { to: "/policy", label: "Policy", icon: ShieldCheck },
     { to: "/activity", label: "Activity", icon: ClockCounterClockwise },
   ],
 };
 
+/**
+ * Pages an agent shows that aren't in its menu, opened from its Overview instead. A payout agent's
+ * Automations holds only Sweep and the autopilot, reached from the attention items that need them.
+ * The timelines follow one held payment (from Held payouts) or the latest autopilot run.
+ */
+const OFF_NAV: Record<Kind, LinkProps["to"][]> = { facilitator: ["/automations", "/follow/payment"], treasury: ["/follow/run"] };
+
+/** The mark, drawn as the favicon is (web/rsbuild.config.ts): a safe in the logo blue, a tick cut from its dial. */
+function Logo() {
+  const tick = useId();
+  return (
+    <svg viewBox="0 0 32 32" className="size-9 shrink-0 text-logo" fill="currentColor" aria-hidden="true">
+      <mask id={tick}>
+        <rect width="32" height="32" fill="white" />
+        <path d="M13.7 14.6l1.6 1.6 3-3.2" fill="none" stroke="black" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
+      </mask>
+      <rect x="6" y="5.5" width="20" height="18.5" style={{ opacity: "var(--logo-tint)" }} />
+      <path fillRule="evenodd" d="M7.5 3h17a4 4 0 0 1 4 4v15.5a4 4 0 0 1-4 4h-17a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4zM6.5 6v17.5h19V6z" />
+      <rect x="20" y="13.5" width="6" height="3" />
+      <rect x="6.5" y="25.5" width="4" height="3.5" rx="1.5" />
+      <rect x="21.5" y="25.5" width="4" height="3.5" rx="1.5" />
+      <circle cx="16" cy="14.8" r="5.2" mask={`url(#${tick})`} />
+    </svg>
+  );
+}
+
 function Brand({ data }: { data?: Overview }) {
   return (
     <div className="flex items-center gap-3">
-      <div className="grid size-9 place-items-center rounded-xl bg-primary text-primary-foreground">
-        <Wallet size={18} weight="bold" />
-      </div>
-      <span className="hidden font-heading text-lg leading-tight font-semibold sm:inline">{data ? PROTOTYPES[kindOf(data)].name : "Two agent prototypes"}</span>
+      <Logo />
+      <span className="hidden font-heading text-lg leading-tight font-semibold sm:inline">{data ? PROTOTYPES[kindOf(data)].name : "Agentic Treasury"}</span>
     </div>
   );
 }
@@ -63,7 +92,7 @@ function Brand({ data }: { data?: Overview }) {
 function Nav({ className, data }: { className: string; data?: Overview }) {
   return (
     <nav className={className}>
-      {(data ? NAV[kindOf(data)] : NAV.treasury.slice(0, 1)).map(({ to, label, icon: Icon }) => (
+      {(data ? NAV[kindOf(data)] : NAV.treasury.slice(0, 1)).map(({ to, label, icon: Icon, tag }) => (
         <Link
           key={to}
           to={to}
@@ -72,6 +101,7 @@ function Nav({ className, data }: { className: string; data?: Overview }) {
           activeProps={{ className: "bg-muted font-medium text-foreground" }}
         >
           <Icon size={18} /> {label}
+          {tag && <span className="rounded-full bg-muted px-2 text-xs text-muted-foreground">{tag}</span>}
         </Link>
       ))}
     </nav>
@@ -116,6 +146,20 @@ function Notice({ children }: { children: ReactNode }) {
   return <div className="flex items-center gap-3 p-8 text-muted-foreground">{children}</div>;
 }
 
+/** The page asked for, when it belongs to this agent's area; otherwise where to go instead. */
+function Page({ data }: { data: Overview }) {
+  const matchRoute = useMatchRoute();
+  if ([...NAV[kindOf(data)].map(({ to }) => to), ...OFF_NAV[kindOf(data)]].some((to) => matchRoute({ to }))) return <Outlet />;
+  return (
+    <div className="flex flex-col items-start gap-3 text-sm text-muted-foreground">
+      <p>This page isn't part of {PROTOTYPES[kindOf(data)].name}.</p>
+      <Link to="/" className="underline hover:text-foreground">
+        Go to its Overview
+      </Link>
+    </div>
+  );
+}
+
 /**
  * The command center's frame: navigation, the agent's identity and the shared queries. Until the
  * agent exists and this server holds a grant for it, onboarding is the only screen.
@@ -139,9 +183,21 @@ export function Shell() {
 
   if (error)
     return (
-      <p className="m-8 rounded-2xl bg-destructive-muted p-6 text-sm text-destructive-muted-foreground">
-        Could not reach the treasury server: {error.message}. Is <code>pnpm server</code> running?
-      </p>
+      <div className="m-8 flex flex-col items-start gap-4 rounded-2xl bg-destructive-muted p-6 text-sm text-destructive-muted-foreground">
+        <p>
+          Couldn't reach this agent: {error.message}.
+          {/* Served by a local agent server, the likely cause is that it isn't running. */}
+          {!BASE && (
+            <>
+              {" "}
+              Is <code>pnpm server</code> running?
+            </>
+          )}
+        </p>
+        <Button variant="outline" size="sm" onClick={() => location.reload()}>
+          <ArrowClockwise size={16} /> Retry
+        </Button>
+      </div>
     );
   if (!setup.data)
     return (
@@ -202,7 +258,7 @@ export function Shell() {
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-14 px-4 py-10 sm:px-8 lg:py-12">
         {overview.data && treasury.isSuccess ? (
           <AgentContext.Provider value={{ setup: setup.data, data: overview.data, treasury: treasury.data }}>
-            <Outlet />
+            <Page data={overview.data} />
           </AgentContext.Provider>
         ) : (
           <Notice>

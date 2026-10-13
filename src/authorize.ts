@@ -38,7 +38,7 @@ type TreasuryFacts = Common & { plan: PlanFacts; strategy: Strategy; tokens: Tok
 /**
  * What a payout may still spend, in the asset's smallest unit: the confidential balance less payouts of
  * that asset already held for approval. The reported balance still includes held payouts (mainnet,
- * 2026-10-13: op_-PNz_6ZYk… held, balance unchanged; docs/mainnet-log.md), so they are subtracted here.
+ * 2026-10-13, docs/mainnet-log.md), so they are subtracted here.
  */
 type Funds = { available: string };
 
@@ -116,7 +116,7 @@ export function authorize(action: Action, c: Case): Refusal | null {
     if (purpose !== "payout" && (!policy.owner_approval || !policy.confidential))
       return refuse("owner_approval_required", "Invoices and approvals need a confidential policy holding every payment for the owner");
     // The provider holds a payment for the owner's vote without checking the balance, and fails it
-    // only after the vote (mainnet, 2026-10-12: op_v5cnpSsa6u3…, docs/mainnet-log.md): an unfunded payout is refused
+    // only after the vote (mainnet, 2026-10-12, docs/mainnet-log.md): an unfunded payout is refused
     // before anyone is asked to approve it.
     if ((c.purpose === "payout" || c.purpose === "invoice") && BigInt(action.request.amount) > BigInt(c.facts.available))
       return refuse("insufficient_balance", `Only ${c.facts.available} of ${action.request.asset} isn't already held for approval, less than ${action.request.amount}: fund the wallet first`);

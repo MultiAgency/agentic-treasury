@@ -13,9 +13,11 @@ test("the signed-out page reads nothing from the server", () => {
   assert.deepEqual(imports.sort(), ["./session", "./showcase", "@phosphor-icons/react"]);
 });
 
-test("its prototype cards read nothing either, and show claims and how each is known, never their evidence", () => {
+test("its prototype cards read nothing either, and show requirements and their phases, never the evidence", () => {
   const source = readFileSync(new URL("../web/src/showcase.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(source, /fetch\(|gw[<(]|client\.|useQuery/);
-  const card = source.slice(source.indexOf("export function PrototypeCard"));
+  const start = source.indexOf("export function PrototypeCard(");
+  assert.ok(start >= 0, "showcase.tsx no longer defines PrototypeCard: repoint this test");
+  const card = source.slice(start);
   assert.doesNotMatch(card, /evidence/);
 });

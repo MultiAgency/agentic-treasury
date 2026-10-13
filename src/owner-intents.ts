@@ -1,7 +1,7 @@
 import lockfile from "proper-lockfile";
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { type OwnerWallet, type SubmitIntentRequest } from "@near-intents-agent-api/sdk";
+import { type Intent, type OwnerWallet, type SubmitIntentRequest } from "@near-intents-agent-api/sdk";
 import { api, readStatus } from "./api.js";
 import { completeSigning, type DaoSigning, daoOwner, findSignature, latestBlock, proposalAndVote, proposalTransaction, signingRequest, signTransaction } from "./dao-owner.js";
 import { agentId, ENV_FILE, executes, saveEnv } from "./env.js";
@@ -15,6 +15,7 @@ import { mandateDigest } from "./mandate.js";
 import { isTerminal, settle } from "./ops.js";
 import { checkPaymentApproval, type PaymentApproval } from "./payment-approval.js";
 import { acquireMoneyLock, assertMoneyLock } from "./lock.js";
+import { ownerSignatureProblem } from "./owner-signature.js";
 
 /**
  * Owner actions, signed by the owner's browser wallet or by a DAO. The server prepares each with
@@ -37,6 +38,8 @@ export type OwnerAction =
 type Signer = "wallet" | "dao";
 
 type Prepared = { stage?: "prepared" | "submitted" | "settled"; result?: { status: string; failureCode?: string | null }; ownerSucceeded?: boolean; type: string; expiresAt: string; grantToken?: string; releases?: string; dao?: DaoSigning; paymentApproval?: PaymentApproval;
+  /** For a wallet's signature: what was prepared and who must sign it, checked before the signature is relayed. */
+  wallet?: { intent: Intent; signer: OwnerWallet };
   /** The owner's signature as submitted, kept to send again if the API never received it. */
   signedData?: Record<string, unknown> };
 
@@ -116,7 +119,7 @@ function savePending() {
 /** Drops intents past the API's signing window, a DAO's recorded as expired for the page; true if any. */
 function expire() {
   let dropped = false;
-  for (const [correlationId, { dao, expiresAt, stage, type }] of pending) {
+  for (const [correlationId, { dao, expiresAt, stage, type, paymentApproval }] of pending) {
     if (stage === "submitted" || stage === "settled") continue;
     if (Date.now() <= new Date(expiresAt).getTime()) continue;
     pending.delete(correlationId);
@@ -124,12 +127,15 @@ function expire() {
       outcomes.set(correlationId, { stage: "expired" });
       // Kept so a proposal filed for it can still be recognised once its signing window has closed.
       mkdirSync(dirname(EXPIRED_FILE), { recursive: true });
-      appendSynced(EXPIRED_FILE, { correlationId, type, expiresAt, hash: dao.hash, intent: dao.intent, delegate: dao.delegate ?? null });
+      appendSynced(EXPIRED_FILE, { correlationId, type, expiresAt, hash: dao.hash, intent: dao.intent, delegate: dao.delegate ?? null, payment: paymentOf(paymentApproval) });
     }
     dropped = true;
   }
   return dropped;
 }
+
+/** An approval vote names the held payment it releases or rejects: how a proposal links to its payment. */
+const paymentOf = (approval?: PaymentApproval) => (approval ? { correlationId: approval.correlationId, verdict: approval.verdict } : null);
 
 /** DAO signing requests whose window closed before the vote passed: what they were, nothing secret. */
 const EXPIRED_FILE = join(".owner-intents", `${basename(ENV_FILE)}.expired.jsonl`);
@@ -197,7 +203,8 @@ async function prepareLocked(action: OwnerAction, signer: Signer) {
   const base = { correlationId: generated.correlation_id, preview: generated.preview, expiresAt: generated.expires_at, digest };
 
   if (!owner) {
-    hold(generated.correlation_id, { type: generated.type, expiresAt: generated.expires_at, grantToken, releases, paymentApproval });
+    const wallet = { intent: generated.intent, signer: generated.signer };
+    hold(generated.correlation_id, { type: generated.type, expiresAt: generated.expires_at, grantToken, releases, paymentApproval, wallet });
     return { ...base, intent: generated.intent, signer: generated.signer };
   }
   if (generated.signer.type !== "near" || generated.signer.account_id !== owner.account_id)
@@ -314,16 +321,27 @@ const sendSignature = async (correlationId: string, prepared: Prepared, signedDa
  * The signature is sent again only if the API says it never arrived (see `reconcileOne`).
  */
 export function submit(correlationId: string, signedData: Record<string, unknown>) {
-  return withOwnerLock(() => submitLocked(correlationId, signedData));
+  return withOwnerLock(() => submitLocked(correlationId, signedData, "wallet"));
 }
 
-async function submitLocked(correlationId: string, signedData: Record<string, unknown>) {
+/**
+ * `from`: who signed. A wallet's signature arrives from the browser and is checked here against what
+ * was prepared; a DAO's is found on chain, already verified against the prepared hash (`findSignature`).
+ */
+async function submitLocked(correlationId: string, signedData: Record<string, unknown>, from: "wallet" | "dao") {
   assertOwnerLock();
   const prepared = pending.get(correlationId);
   if (!prepared) throw new Error("Unknown intent");
   if (prepared.stage === "settled") return prepared.result!;
   if (prepared.stage === "submitted") return reconcileOne(correlationId, prepared);
   if (Date.now() >= Date.parse(prepared.expiresAt)) throw new Error("Intent expired");
+  if (from === "dao") {
+    if (!prepared.dao) throw new Error("This intent wasn't prepared for a DAO's signature");
+  } else {
+    if (!prepared.wallet) throw new Error("This intent wasn't prepared for a wallet's signature: prepare it again");
+    const problem = ownerSignatureProblem(prepared.wallet.intent, prepared.wallet.signer, signedData);
+    if (problem) throw new Error(`Not submitted: ${problem}`);
+  }
   if (prepared.grantToken) stageGrantToken(prepared.grantToken);
   if (prepared.type !== "approval_vote") {
     prepared.stage = "submitted";
@@ -371,17 +389,20 @@ export function status(correlationId: string) {
  * signature.
  */
 export function daoRequests(now = Date.now()) {
-  const kept = [...readPending()].flatMap(([correlationId, { type, expiresAt, dao, stage }]) => {
+  const kept = [...readPending()].flatMap(([correlationId, { type, expiresAt, dao, stage, paymentApproval }]) => {
     if (!dao) return [];
     const state = stage === "submitted" || stage === "settled" ? "done" : now <= new Date(expiresAt).getTime() ? "waiting" : "expired";
-    return [{ correlationId, type, expiresAt, hash: dao.hash, intent: dao.intent, delegate: dao.delegate ?? null, state }];
+    return [{ correlationId, type, expiresAt, hash: dao.hash, intent: dao.intent, delegate: dao.delegate ?? null, state, payment: paymentOf(paymentApproval) }];
   });
+  type Archived = Omit<(typeof kept)[number], "state">;
+  // Lines archived before payments were recorded carry none; a torn last line is skipped.
   const expired = existsSync(EXPIRED_FILE)
-    ? readFileSync(EXPIRED_FILE, "utf8")
-        .split("\n")
-        .filter(Boolean)
-        .slice(-100)
-        .map((line) => ({ ...(JSON.parse(line) as Omit<(typeof kept)[number], "state">), state: "expired" as const }))
+    ? readFileSync(EXPIRED_FILE, "utf8").split("\n").filter(Boolean).slice(-100).flatMap((line) => {
+        try {
+          const archived = JSON.parse(line) as Archived;
+          return [{ ...archived, payment: archived.payment ?? null, state: "expired" as const }];
+        } catch { return []; }
+      })
     : [];
   return [...kept, ...expired];
 }
@@ -394,24 +415,7 @@ function watch() {
     if (busy) return;
     busy = true;
     try {
-      await withOwnerLock(async () => {
-        await reconcileLocked();
-        for (const [correlationId, prepared] of pending) {
-          const { dao, stage } = prepared;
-          if (!dao || stage === "submitted" || stage === "settled") continue;
-          const daoId = process.env.TREASURY_ACCOUNT;
-          const signature = daoId ? await findSignature(daoId, dao).catch(() => null) : null;
-          if (!signature) continue;
-          outcomes.set(correlationId, { stage: "submitting" });
-          try {
-            outcomes.set(correlationId, { stage: "submitted", ...(await submitLocked(correlationId, completeSigning(dao, signature))) });
-          } catch (error) {
-            // The durable submitted state prevents the next tick from sending again.
-            if (pending.has(correlationId)) outcomes.delete(correlationId);
-            else outcomes.set(correlationId, { stage: "failed", error: error instanceof Error ? error.message : String(error) });
-          }
-        }
-      });
+      await followDaoVotes();
     } catch (error) {
       console.error("Owner reconciliation deferred:", String(error));
     } finally {
@@ -419,6 +423,28 @@ function watch() {
     }
   }, 10_000);
   watching.unref();
+}
+
+/** One pass: polls submitted intents, and submits each DAO signature that a passed vote produced. */
+export function followDaoVotes() {
+  return withOwnerLock(async () => {
+    await reconcileLocked();
+    for (const [correlationId, prepared] of pending) {
+      const { dao, stage } = prepared;
+      if (!dao || stage === "submitted" || stage === "settled") continue;
+      const daoId = process.env.TREASURY_ACCOUNT;
+      const signature = daoId ? await findSignature(daoId, dao).catch(() => null) : null;
+      if (!signature) continue;
+      outcomes.set(correlationId, { stage: "submitting" });
+      try {
+        outcomes.set(correlationId, { stage: "submitted", ...(await submitLocked(correlationId, completeSigning(dao, signature), "dao")) });
+      } catch (error) {
+        // The durable submitted state prevents the next tick from sending again.
+        if (pending.has(correlationId)) outcomes.delete(correlationId);
+        else outcomes.set(correlationId, { stage: "failed", error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+  });
 }
 
 // At load: drop expired intents, and grant tokens kept by records written before they were dropped on save.

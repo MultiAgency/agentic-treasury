@@ -19,12 +19,18 @@ import { writeAtomic } from "./synced.js";
 /** `path`: where on the agent's dashboard the owner acts on it, appended to NOTIFY_LINK (the agent's page). */
 export type Item = { key: string; text: string; path: string };
 
+/**
+ * A sent action normally settles within a minute or two, and the send path stops waiting after three: one
+ * still without an outcome after this long is stuck, not just in flight.
+ */
+const STUCK_MIN = 5;
+
 /** What waits for a person right now, from local state only. */
 export function pending(): Item[] {
   const name = process.env.NOTIFY_NAME ?? "The agent";
   const items: Item[] = [];
   for (const op of readOps().filter(isHeld)) items.push({ key: `held:${op.idempotencyKey}`, text: `${name}: a payment is waiting for approval.`, path: "/" });
-  for (const op of unresolved())
+  for (const op of unresolved().filter((op) => Date.now() - Date.parse(op.at) >= STUCK_MIN * 60_000))
     items.push({ key: `unresolved:${op.idempotencyKey}`, text: `${name}: a money action has no proven outcome; sends are paused until it's reconciled.`, path: "/activity" });
   for (const e of readInbox().filter((e) => !e.dismissed && e.level !== "run"))
     items.push({ key: `inbox:${e.id}`, text: `${name}: the autopilot ${e.level === "action" ? "left a decision for you" : "needs attention"}.`, path: "/automations" });

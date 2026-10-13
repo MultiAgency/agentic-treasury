@@ -5,12 +5,14 @@ import { type Attention, attentionOf } from "./attention";
 import type { Kind } from "./beats";
 import { PrototypeCard } from "./showcase";
 import { ago, clientFor, gw, kindOf, minutesSeconds, useCountdown } from "./lib";
-import { type Gateway, ViewerBadge } from "./session";
+import { AGENT_NAME, namer } from "./names";
+import { type Gateway, type GatewayAgent, ownersOf, ViewerBadge } from "./session";
 import { Badge, Card, Details, Section, Spinner, type Tone } from "./ui";
 
 /**
- * The hosted dashboard's home: what the council is being asked to sign, and the agents the DAO owns.
- * Agent data comes through the gateway, by the same calls each agent's own dashboard makes.
+ * The hosted dashboard's home: the agents this viewer may see and, for each DAO among their owners,
+ * what its council is being asked to sign. Agent data comes through the gateway, by the same calls
+ * each agent's own dashboard makes.
  */
 
 const TYPE_WORDS: Record<string, string> = {
@@ -43,6 +45,17 @@ const VERDICT: Record<Decoded["what"], [Tone, string]> = {
   other: ["warning", "Signs for another key"],
 };
 
+/**
+ * A proposal description in a few words. Sputnik descriptions are "* Key: value" fields joined by <br>;
+ * the action field says what it asks (ours and Trezu's both set it). Anything else shows its first line.
+ */
+function titleOf(p: Decoded): string {
+  if (p.what === "trezu") return "A payment from the DAO's confidential treasury; Trezu keeps its details private";
+  const fields = p.description.split(/<br\s*\/?>/i).map((f) => f.replace(/^\s*\*\s*/, "").trim());
+  const action = fields.find((f) => /^Proposal Action:/i.test(f))?.replace(/^Proposal Action:\s*/i, "").replace(/\.$/, "");
+  return action || fields[0] || `Proposal #${p.id}`;
+}
+
 function Proposal({ p, dao }: { p: Decoded; dao: string }) {
   const [tone, label] =
     p.what !== "agent"
@@ -58,7 +71,7 @@ function Proposal({ p, dao }: { p: Decoded; dao: string }) {
     <li className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium">#{p.id}</span>
-        <span className="flex-1">{p.what === "agent" ? `${TYPE_WORDS[p.type] ?? p.type} · ${p.agent}` : p.description}</span>
+        <span className="flex-1">{p.what === "agent" ? `${TYPE_WORDS[p.type] ?? p.type} · ${p.agent}` : titleOf(p)}</span>
         <Badge tone={tone}>
           {tone === "success" ? <CheckCircle size={14} /> : tone === "destructive" ? <WarningOctagon size={14} /> : null}
           {label}
@@ -94,6 +107,11 @@ function Proposal({ p, dao }: { p: Decoded; dao: string }) {
           action again if it is still wanted.
         </p>
       )}
+      {p.what !== "agent" && p.what !== "trezu" && p.description !== titleOf(p) && (
+        <Details summary="Full description">
+          <p className="whitespace-pre-wrap break-all font-mono text-xs text-muted-foreground">{p.description.replace(/<br\s*\/?>\s*/gi, "\n")}</p>
+        </Details>
+      )}
       {p.what === "agent" && p.check.kind === "verified" && (
         <Details summary="What the signature authorizes">
           {p.check.standard === "nep413" ? (
@@ -114,8 +132,8 @@ function Proposal({ p, dao }: { p: Decoded; dao: string }) {
 
 function Proposals({ dao }: { dao: string }) {
   const proposals = useQuery({
-    queryKey: ["gw", "proposals"],
-    queryFn: () => gw<Decoded[]>("/gw/proposals"),
+    queryKey: ["gw", "proposals", dao],
+    queryFn: () => gw<Decoded[]>(`/gw/proposals?dao=${encodeURIComponent(dao)}`),
     refetchInterval: 15_000,
   });
   const open = proposals.data?.filter((p) => p.status === "InProgress") ?? [];
@@ -164,13 +182,19 @@ type AgentState = Awaited<ReturnType<ReturnType<typeof agentQuery>["queryFn"]>>;
 
 type Item = Attention & { agent: string };
 
-const itemsOf = (name: string, d: AgentState): Item[] => attentionOf(d).map((item) => ({ ...item, agent: name }));
+const itemsOf = (name: string, d: AgentState, nameOf: (account: string) => string): Item[] =>
+  attentionOf({ ...d, nameOf }).map((item) => ({ ...item, agent: name }));
+
+/** Each agent's wallet by its role, so a payment to the payout agent reads as such, not as 64 hex digits. */
+const namesOf = (states: (AgentState | undefined)[]) =>
+  namer(new Map(states.flatMap((d) => (d?.setup.wallet ? [[d.setup.wallet, AGENT_NAME[kindOf(d.overview) as Kind]] as const] : []))));
 
 function NeedsAttention({ agents }: { agents: string[] }) {
   const results = useQueries({ queries: agents.map(agentQuery) });
   const loading = results.some((r) => r.isPending);
   const failed = agents.filter((_, i) => results[i]?.error);
-  const items = agents.flatMap((name, i) => (results[i]?.data ? itemsOf(name, results[i].data) : []));
+  const nameOf = namesOf(results.map((r) => r.data));
+  const items = agents.flatMap((name, i) => (results[i]?.data ? itemsOf(name, results[i].data, nameOf) : []));
   const rank: Record<Tone, number> = { destructive: 0, warning: 1, info: 2, success: 3, neutral: 4 };
   items.sort((a, b) => rank[a.tone] - rank[b.tone]);
   return (
@@ -223,17 +247,17 @@ function AgentStatus({ d }: { d: AgentState }) {
   );
 }
 
-/** The two prototypes first, each opening its agent's dashboard once that agent has answered. */
-function Prototypes({ gateway }: { gateway: Gateway }) {
-  const results = useQueries({ queries: gateway.agents.map(agentQuery) });
-  const indexOf = (kind: Kind) => gateway.agents.findIndex((_, i) => results[i]?.data && kindOf(results[i].data.overview) === kind);
+/** The two areas first, each opening its agent's dashboard once that agent has answered. */
+function Prototypes({ agents, invoices }: { agents: GatewayAgent[]; invoices: string | null }) {
+  const results = useQueries({ queries: agents.map((a) => agentQuery(a.name)) });
+  const indexOf = (kind: Kind) => agents.findIndex((_, i) => results[i]?.data && kindOf(results[i].data.overview) === kind);
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid gap-6 lg:grid-cols-2">
       {(["facilitator", "treasury"] as const).map((kind) => {
         const i = indexOf(kind);
         const d = results[i]?.data;
         return (
-          <PrototypeCard key={kind} kind={kind} open={d ? `/a/${gateway.agents[i]}/` : undefined} invoices={gateway.invoices}
+          <PrototypeCard key={kind} kind={kind} open={d ? `/a/${agents[i]!.name}/` : undefined} invoices={invoices}
             status={d && <AgentStatus d={d} />} />
         );
       })}
@@ -242,23 +266,29 @@ function Prototypes({ gateway }: { gateway: Gateway }) {
 }
 
 export function DaoHome({ gateway }: { gateway: Gateway }) {
+  // The gateway lists only the agents this viewer may see.
+  const { agents } = gateway;
+  const daos = ownersOf(agents.filter((a) => a.dao));
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-10 p-4 sm:p-8">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <h1 className="font-heading text-2xl font-semibold">{gateway.dao}</h1>
+          <h1 className="font-heading text-2xl font-semibold">{ownersOf(agents).join(" · ")}</h1>
           <p className="text-sm text-muted-foreground">
-            Two prototypes, each an agent this DAO owns. Every owner action is a proposal the council votes on in Trezu; check it here
-            first.
+            {agents.every((a) => a.dao)
+              ? "Two areas, each an agent this DAO owns. Every owner action is a proposal the council votes on in Trezu; check it here first."
+              : "The agents you may see, each answering to its owner: a DAO votes on every owner action as a proposal, checked here first; any other owner signs with its own wallet."}
           </p>
         </div>
         <div className="w-64">
           <ViewerBadge />
         </div>
       </header>
-      <Prototypes gateway={gateway} />
-      <NeedsAttention agents={gateway.agents} />
-      <Proposals dao={gateway.dao} />
+      <Prototypes agents={agents} invoices={gateway.invoices} />
+      <NeedsAttention agents={agents.map((a) => a.name)} />
+      {daos.map((dao) => (
+        <Proposals key={dao} dao={dao} />
+      ))}
     </div>
   );
 }

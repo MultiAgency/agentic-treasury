@@ -6,14 +6,15 @@ The owner can be a person's wallet or a Sputnik DAO, such as a [Trezu](https://t
 
 > Runs on NEAR mainnet with real funds. Use a low-value account and small amounts.
 
-Two prototypes, each one agent owned by the same DAO, `agentic.sputnik-dao.near`:
+Two areas, each one agent owned by the same DAO, `agentic.sputnik-dao.near`. Each runs a brief from
+the Agent Connect catalog and plans more:
 
-| Prototype | What it shows | Details |
+| Area | What it shows | Details |
 |---|---|---|
-| **Confidential Treasury Facilitator** | Anyone asks the DAO to be paid; agreements carry terms (contractor requests, purchase orders, bounty and grant awards); each payment is held for the DAO's vote and paid confidentially | [docs/facilitator.md](docs/facilitator.md) |
-| **Agentic Treasury Management** | An agent rebalances toward a target on its own, quoting every swap, inside per-asset caps and a USD budget the DAO signed; idle funds stay confidential | [docs/treasury.md](docs/treasury.md) |
+| **Payables** (Confidential Treasury Facilitator) | Anyone asks the DAO to be paid; agreements carry terms (contractor requests, purchase orders, bounty and grant awards); each payment is held for the DAO's vote and paid confidentially | [docs/facilitator.md](docs/facilitator.md) |
+| **Treasury** (Agentic Treasury Management) | An agent rebalances toward a target on its own, quoting every swap, inside per-asset caps and a USD budget the DAO signed; idle funds stay confidential | [docs/treasury.md](docs/treasury.md) |
 
-Each doc maps its brief to what is built, how each claim is known, and what isn't covered.
+Each doc measures its briefs requirement by requirement (complete, tested, live) and lists what isn't covered.
 
 ## How it works
 
@@ -65,17 +66,26 @@ The command line has only what the dashboard doesn't: owner actions signed with 
 
 Two pages on Railway. Signing in with a NEAR wallet signs a message, never a transaction.
 
-- **Dashboard**, https://proto.multiagency.ai. Signed out, it shows the two prototypes and how each claim is
-  known, and reads nothing from the server. Members of `agentic.sputnik-dao.near` sign in to see the treasury
-  and the proposals.
+- **Dashboard**, https://proto.multiagency.ai. Signed out, it shows the two areas, Payables and
+  Treasury: each brief from the Agent Connect catalog as capabilities (what the agent does) and guarantees
+  (what it can't do). Each guarantee names who stops a misbehaving agent (the signed policy, our server, or
+  nobody yet), and each row says how it's known: held or working on mainnet, tested offline, or not yet. Each
+  card counts its running brief's guarantees enforced by the signed policy and its requirements on mainnet.
+  It reads nothing from the server. Members of `agentic.sputnik-dao.near` sign in to see the treasury and
+  the proposals.
   It is the treasury agent's executor and runs the payout agent approve-only.
 - **Invoices**, https://invoices.multiagency.ai, where anyone asks the DAO to be paid. It is the payout
   agent's executor.
 
-The gateway reads who may sign in from the DAO's own policy, at most a minute old. An account in any DAO
-role is a member: it reads everything and may file owner actions as proposals, which do nothing until
-the DAO votes. Accounts listed in `operators` (`deploy/dashboard.json`) can also move money and change
-settings. Anyone else is refused at sign-in. On the invoice page anyone may sign in, but only payees in
+Each agent in `deploy/dashboard.json` names its `owner`, and the gateway decides per agent who may see
+it, from that owner at most a minute old. When the owner is a Sputnik DAO, an account in any of its roles
+is a member: it reads everything and may file owner actions as proposals, which do nothing until the DAO
+votes. Any other owner account signs in itself and operates its agents, signing owner actions with its
+own wallet. Accounts listed in an agent's `operators` can also move its money and change its settings.
+Anyone else is refused at sign-in. Signed out, the gateway lists only the DAOs' agents, which their
+on-chain proposals already name; a wallet's agent is listed only to those who may see it. None of this
+limits whoever runs the host, who can read every agent's state there. Both hosted agents are owned by the DAO; a wallet-owned agent behind the
+gateway is tested offline only (`test/gateway-denial.test.ts`). On the invoice page anyone may sign in, but only payees in
 the payout agent's policy file invoices; anyone else files an agreement request.
 
 The demo walkthrough is in [DEMO.md](DEMO.md).
@@ -103,10 +113,11 @@ instance of an agent runs `EXECUTOR=off` ([operations](docs/operations.md#payout
 ## Notifications
 
 Each executor can tell the owner on Telegram when something waits for a person: a payment held for
-approval, a money action with no proven outcome (sends are paused until it's reconciled), or the
-autopilot's open warnings and decisions. It reads only the executor's own state, once a minute, and
-announces each item once while it stays open, across restarts too (`src/notify.ts`). Messages name the
-agent and link to the dashboard; they never carry amounts, payees or balances, since Telegram sees them.
+approval, a money action still without a proven outcome after about five minutes (sends are paused
+until it's reconciled; one merely in flight settles sooner), or the autopilot's open warnings and
+decisions. It reads only the executor's own state, once a minute, and announces each item once while it
+stays open, across restarts too (`src/notify.ts`). Messages name the agent and link to the page where the
+owner acts on the item; they never carry amounts, payees or balances, since Telegram sees them.
 Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (and optionally `NOTIFY_NAME`, `NOTIFY_LINK`) on the
 executor's service; without them it does nothing.
 
@@ -137,14 +148,25 @@ dashboard through Trezu. Later, policy edits and the approvals of two held payou
 voted the same way from the dashboard; both payouts settled (approvals #17 and #21, edits #20 and #22).
 
 A confidential Trezu treasury funds its agent with a payment from its confidential balance to
-`nearcom:<the agent's wallet account>`, which the Treasury page links to. Without the `nearcom:`
+`nearcom:<the agent's wallet account>`, which the Funding page links to. Without the `nearcom:`
 prefix, Trezu sends the payment out as a public withdrawal.
 
 ## Mainnet evidence
 
-Each prototype's doc maps every claim to how it is known: [facilitator](docs/facilitator.md),
-[treasury](docs/treasury.md). Every dated mainnet run, op ids and proposal numbers included, is in
-[docs/mainnet-log.md](docs/mainnet-log.md).
+Each area's doc maps every claim to how it is known: [Payables](docs/facilitator.md),
+[Treasury](docs/treasury.md). Every dated mainnet run, with its DAO proposal numbers, is in
+[docs/mainnet-log.md](docs/mainnet-log.md). Operation ids and amounts are kept in a private record, since the
+treasury is confidential; they are available to reviewers on request.
+
+Beyond the briefs, the signed-out page lists how the hosts were shown to run on mainnet (`PROVEN` in
+`web/src/beats.ts`):
+- On the 2026-10-12 build ([DEMO.md](DEMO.md#what-is-verified)):
+  - state survived a restart and a redeploy;
+  - the autopilot ran on schedule;
+  - each agent had one executor;
+  - signed-out callers were refused every agent read.
+- Every policy revision reproduces its hash, and the owner's grant and approval signatures verify
+  ([log](docs/mainnet-log.md#policy-signatures-and-operation-proofs-2026-10-13t0410z)).
 
 ## Not done yet
 
@@ -165,5 +187,17 @@ as proof that a replacement payment is safe. See [recovery guidance](DEMO.md#the
   the signed payload isn't shown to commit to it.
 - Confidential credits from outside the API can't be attributed: nothing public indexes `intents.far`.
 - A refusal says `policy_denied` without naming the rule that refused.
-- The autopilot (off by default) hasn't yet run unattended for days, and its warnings stay in the dashboard:
-  nothing reaches the owner outside it.
+- An agent owned by a person's wallet was created and granted from a local dashboard on mainnet, and its
+  autopilot then swapped under that grant on its own (2026-10-13, [mainnet log](docs/mainnet-log.md));
+  behind the hosted gateway it is offline-tested only. Creating one signs a NEAR delegate
+  action; the dashboard offers only the wallets HOT's near-connect list declares it for (today HOT, Meteor,
+  Intear, Ledger and NEAR Mobile), read live; Meteor has signed through it so far.
+- The owner's wallet picker loads HOT's near-connect wallet list from its `main` branch, unpinned, and each
+  wallet's code from wherever that list points. The server checks every owner signature against what it
+  prepared before relaying it, but a changed wallet could still phish for the owner's keys.
+- Agreed terms (an amount per invoice and a deadline) are shown to voters beside each held payout;
+  nothing refuses an invoice outside them.
+- A DAO or other contract account can be paid, but can't ask to be paid on the invoice page: sign-in
+  there needs a full-access key.
+- The autopilot (off by default) hasn't yet run unattended for days. Outside the dashboard, its warnings
+  reach the owner only through the optional Telegram notices (Notifications, above).

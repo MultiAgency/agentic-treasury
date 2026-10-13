@@ -1,12 +1,12 @@
 # Architecture
 
-Two prototypes share one core. Each agent runs in its own instance of the server (`src/server.ts`),
+Two areas, Payables and Treasury, share one core. Each agent runs in its own instance of the server (`src/server.ts`),
 with its own wallet, grant, money lock and logs; the hosted gateway signs members in and forwards
 their calls to those instances. Files are listed under `src/` unless a path says otherwise.
 
 ## The one rule
 
-**One send site.** Every money action, whichever prototype starts it, goes through `dispatch` in
+**One send site.** Every money action, whichever area starts it, goes through `dispatch` in
 `agent.ts`: under the money lock, with no unresolved operation, a write-ahead record, `authorize`, then
 the provider call. `test/send-path.test.ts` fails if any other file sends. The callers are
 `invoices.ts` (an invoice's payment), `treasury.ts` and `plans.ts` (shields, swaps, sweeps) and
@@ -40,11 +40,14 @@ the provider call. `test/send-path.test.ts` fails if any other file sends. The c
 
 ## Around them
 
-- **Gateway** (`gateway/`): member sign-in from the DAO's roles (`roles.ts`), which calls each role may
+- **Gateway** (`gateway/`): sign-in decided per agent from its owner (`roles.ts`): a DAO's roles, or the
+  owner account itself; which calls each role may
   make (`allowlist.ts`), and, for members, proposal decoding for "What am I voting on?" (`proposals.ts`, `sign-requests.ts`).
-- **Web** (`web/src/`): one app for both prototypes. `lib.ts` `kindOf` picks the prototype from the
-  agent's policy; `beats.ts` holds each prototype's claims and how each is known; `showcase.tsx` shows
-  them.
+- **Web** (`web/src/`): one app for both areas. `lib.ts` `kindOf` picks the area from the
+  agent's policy; `beats.ts` holds each area's briefs, requirements and stages; `showcase.tsx` shows
+  them. `timeline-payment.tsx` and `timeline-run.tsx` follow one held payment or the latest autopilot
+  run step by step, each step read from its own record; they show data only on the instance that holds
+  those records (approvals filed there, evidence its executor wrote).
 - **Command line**: `create-agent.ts`, `issue-grant.ts`, `revoke-grant.ts`, `update-policy.ts`,
   `archive.ts`, `inspect.ts`, `books.ts`, `smoke.ts`, `run-report.ts`, `report.ts`, `remote.ts`.
 
@@ -65,6 +68,14 @@ in-flight send remains a single-host residual risk, not a distributed fencing gu
 Owner intents persist `prepared → submitted → settled` in a private per-instance file. Updates take
 an inter-process lock and reload the file before modification, so concurrent preparation and settlement
 preserve each other's records. `submitted` means submission was attempted, not proven accepted.
+A browser wallet's signature is relayed only if it is the owner's key, as the API names it, over exactly
+the prepared intent: the NEP-413 message, or a NEP-366 delegate action from the owner's account calling
+exactly the prepared methods, arguments, gas and deposits (`src/owner-signature.ts`). The wallet's own
+code loads from outside this repo, so this doesn't rest on the API's check. Offline-tested, and passed
+by a browser wallet's delegate action and message signature on mainnet (2026-10-13, mainnet log); a
+tampered signature hasn't been seen live. A wallet that adds a `callbackUrl` to a NEP-413 signature is
+refused, safe but possibly too strict for some wallets. A DAO's signature is found on chain and
+verified against the prepared hash (`findSignature` in `src/dao-owner.ts`) before it is submitted.
 Approval signatures are poll-only after an attempt. For other owner actions, the existing recovery
 flow can resend the saved signature only while the API reports `PENDING_SIGNATURE` and the signing
 window remains open. Settled results remain available after restart. Records deleted by older versions

@@ -6,8 +6,9 @@ import { DaoHome } from "./dao";
 import { BASE } from "./lib";
 import { router } from "./router";
 import { PublicHome } from "./public";
-import { loadGateway } from "./session";
-import { ViewerContext } from "./viewer";
+import { ErrorBox } from "./ui";
+import { loadGateway, ownersOf } from "./session";
+import { ViewerContext, viewerOf } from "./viewer";
 import "./styles.css";
 
 // Follow the system theme.
@@ -20,16 +21,20 @@ const queryClient = new QueryClient({ defaultOptions: { queries: { refetchOnWind
 
 /**
  * Served by a local agent server, this is that agent's dashboard. Behind the hosted gateway, a
- * visitor sees only what the DAO shows on chain; a member who signs in gets the DAO's home at `/`
- * and `/a/<agent>/` each agent's dashboard.
+ * visitor sees only the prototypes and sign-in; an owner or a DAO member who signs in gets the home
+ * at `/` and `/a/<agent>/` each agent's dashboard it may see.
  */
 async function start() {
-  const gateway = await loadGateway();
+  const gateway = await loadGateway().catch((error: Error) => error);
   const page =
-    gateway && !gateway.viewer ? (
-      <PublicHome dao={gateway.dao} invoices={gateway.invoices} />
+    gateway instanceof Error ? (
+      <div className="mx-auto max-w-xl p-8">
+        <ErrorBox error={`The dashboard can't load right now: ${gateway.message} Try again in a minute.`} />
+      </div>
+    ) : gateway && !gateway.viewer ? (
+      <PublicHome daos={ownersOf(gateway.agents)} invoices={gateway.invoices} />
     ) : (
-      <ViewerContext.Provider value={gateway?.viewer ?? null}>
+      <ViewerContext.Provider value={gateway?.viewer ? viewerOf(gateway.viewer, BASE ? BASE.slice("/a/".length) : null) : null}>
         {gateway && !BASE ? <DaoHome gateway={gateway} /> : <RouterProvider router={router} />}
       </ViewerContext.Provider>
     );
