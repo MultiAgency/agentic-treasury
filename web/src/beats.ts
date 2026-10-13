@@ -1,13 +1,13 @@
 /**
  * What each prototype shows, item by item, and how it is known. Static on purpose: every line states
- * evidence someone can check, so a change here is a reviewed change (docs/facilitator.md,
- * docs/treasury.md hold the same table with sources).
+ * evidence someone can check, so a change here is a reviewed change. The prototype docs
+ * (docs/facilitator.md, docs/treasury.md) are the source, citing docs/mainnet-log.md; keep this in step.
  */
 
 export type Kind = "facilitator" | "treasury";
 
 /** How a claim is known, strongest first. */
-export type Proof = "mainnet" | "offline" | "design" | "provider-docs" | "not-applicable";
+export type Proof = "mainnet" | "offline" | "design" | "provider-docs" | "unverified" | "not-applicable";
 
 /** `proposal`: the DAO proposal the evidence cites, linked to where anyone can read it. */
 export type Beat = { claim: string; proof: Proof; evidence: string; proposal?: number };
@@ -38,9 +38,9 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; beats: Be
         evidence: "test/agreements.test.ts. Shown to voters beside each held payout; the vote enforces it",
       },
       {
-        claim: "An over-limit payment is refused before there is anything to vote on",
-        proof: "mainnet",
-        evidence: "11 USDC against a 10 USDC hourly cap: 409 policy_denied, 2026-10-11",
+        claim: "An over-cap payment is refused before there is anything to vote on",
+        proof: "unverified",
+        evidence: "Not yet shown on the payout agent (its cap is 25 USDC a payment). The provider refused an over-cap transfer on the treasury agent, 2026-10-11, but that policy holds nothing for a vote",
       },
       {
         claim: "Chain watchers can't reconstruct who the DAO pays",
@@ -50,7 +50,7 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; beats: Be
       {
         claim: "The requester never sees a member account",
         proof: "design",
-        evidence: "The invoice page reads no DAO roles. Sputnik roles and votes are still public on chain",
+        evidence: "Neither the invoice page nor the public page reads DAO roles. Sputnik roles and votes are still public on chain",
       },
     ],
     demo: [
@@ -93,7 +93,7 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; beats: Be
       {
         claim: "Unshielding exactly what a payout needs",
         proof: "not-applicable",
-        evidence: "Payouts are confidential transfers end to end, so funds never need to go public",
+        evidence: "Payouts are confidential transfers end to end, so funds don't go public; a payee without confidential intents enabled would need a public payout, not built",
       },
     ],
     demo: [
@@ -110,5 +110,6 @@ export const PROOF_LABEL: Record<Proof, string> = {
   offline: "Tested offline",
   design: "By design",
   "provider-docs": "Provider docs",
+  unverified: "Not yet shown",
   "not-applicable": "Not needed",
 };

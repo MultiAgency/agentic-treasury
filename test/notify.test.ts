@@ -18,7 +18,7 @@ beforeEach(() => {
   process.chdir(mkdtempSync(join(tmpdir(), "notify-")));
   process.env.AGENT_ID = "a".repeat(64);
   process.env.NOTIFY_NAME = "Payout agent";
-  process.env.NOTIFY_LINK = "https://proto.example";
+  process.env.NOTIFY_LINK = "https://proto.example/a/payout/";
   sent = [];
   mock.method(globalThis, "fetch", async () => { throw new Error("offline only"); });
 });
@@ -33,7 +33,7 @@ test("a held payment is announced once, with a link and without its amount or pa
   hold("payout:1");
   assert.equal(await notifyOnce(send), 1);
   assert.equal(await notifyOnce(send), 0, "still open: not announced again");
-  assert.deepEqual(sent, ["Payout agent: a payment is waiting for approval.\nOpen: https://proto.example"]);
+  assert.deepEqual(sent, ["Payout agent: a payment is waiting for approval.\nOpen: https://proto.example/a/payout/"]);
   assert.doesNotMatch(sent.join(), /1234567|1\.23|secret-payee/);
 });
 
@@ -45,8 +45,8 @@ test("an operation with no proven outcome and the autopilot's open entries are a
   dismiss(gone.id);
   await notifyOnce(send);
   assert.equal(sent.length, 1);
-  assert.match(sent[0]!, /no proven outcome/);
-  assert.match(sent[0]!, /autopilot needs attention/);
+  assert.match(sent[0]!, /no proven outcome; sends are paused until it's reconciled\.\nOpen: https:\/\/proto\.example\/a\/payout\/activity/);
+  assert.match(sent[0]!, /autopilot needs attention\.\nOpen: https:\/\/proto\.example\/a\/payout\/automations/);
   assert.doesNotMatch(sent[0]!, /6\.30|book on target|already handled/, "inbox text can carry amounts: never forwarded");
   assert.equal(pending().filter((i) => i.key === `inbox:${warn.id}`).length, 1);
 });

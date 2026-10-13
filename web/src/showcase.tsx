@@ -1,9 +1,10 @@
-import { ArrowRight, ChartPieSlice, CheckCircle, Flask, HandCoins, Info, MinusCircle, Receipt, Scroll } from "@phosphor-icons/react";
-import { type Kind, type Proof, PROOF_LABEL, PROTOTYPES } from "./beats";
+import { ArrowRight, ChartPieSlice, CheckCircle, Flask, HandCoins, Info, MinusCircle, Question, Receipt, Scroll } from "@phosphor-icons/react";
+import type { ReactNode } from "react";
+import { type Beat, type Kind, type Proof, PROOF_LABEL, PROTOTYPES } from "./beats";
 import { Badge, Card, Details, type Tone } from "./ui";
 
-const TONE: Record<Proof, Tone> = { mainnet: "success", offline: "info", design: "neutral", "provider-docs": "warning", "not-applicable": "neutral" };
-const ICON: Record<Proof, typeof CheckCircle> = { mainnet: CheckCircle, offline: Flask, design: Info, "provider-docs": Scroll, "not-applicable": MinusCircle };
+const TONE: Record<Proof, Tone> = { mainnet: "success", offline: "info", design: "neutral", "provider-docs": "warning", unverified: "warning", "not-applicable": "neutral" };
+const ICON: Record<Proof, typeof CheckCircle> = { mainnet: CheckCircle, offline: Flask, design: Info, "provider-docs": Scroll, unverified: Question, "not-applicable": MinusCircle };
 
 /** What this prototype shows and how each claim is known (beats.ts): only for signed-in viewers. */
 export function WhatThisShows({ kind, dao }: { kind: Kind; dao?: string }) {
@@ -48,11 +49,16 @@ export function WhatThisShows({ kind, dao }: { kind: Kind; dao?: string }) {
 
 const PROTOTYPE_ICON: Record<Kind, typeof HandCoins> = { facilitator: HandCoins, treasury: ChartPieSlice };
 
+/** A card's three strongest claims: shown on mainnet before tested offline. */
+const RANK: Partial<Record<Proof, number>> = { mainnet: 0, offline: 1 };
+const strongest = (beats: Beat[]) =>
+  beats.filter((b) => RANK[b.proof] !== undefined).sort((a, b) => RANK[a.proof]! - RANK[b.proof]!).slice(0, 3);
+
 /**
  * A prototype as the front door shows it: what it is, its strongest claims with how each is known,
  * and how to try it. Claims only, never their evidence: signed out, nothing beyond the chain is shown.
  */
-export function PrototypeCard({ kind, open, invoices }: { kind: Kind; open?: string; invoices?: string | null }) {
+export function PrototypeCard({ kind, open, invoices, status }: { kind: Kind; open?: string; invoices?: string | null; status?: ReactNode }) {
   const { name, tagline, beats, demo } = PROTOTYPES[kind];
   const Icon = PROTOTYPE_ICON[kind];
   return (
@@ -61,18 +67,19 @@ export function PrototypeCard({ kind, open, invoices }: { kind: Kind; open?: str
         <Icon size={24} />
         <h2 className="font-heading text-2xl font-semibold">{name}</h2>
       </div>
+      {status}
       <p className="text-sm text-muted-foreground">{tagline}</p>
       <ul className="flex flex-col gap-2 text-sm">
-        {beats.filter((b) => b.proof === "mainnet").slice(0, 3).map((b) => (
+        {strongest(beats).map((b) => (
           <li key={b.claim} className="flex items-start gap-2">
-            <CheckCircle size={16} className="mt-0.5 shrink-0 text-success" />
+            {b.proof === "mainnet" ? <CheckCircle size={16} className="mt-0.5 shrink-0 text-success" /> : <Flask size={16} className="mt-0.5 shrink-0 text-info-muted-foreground" />}
             <span>
               {b.claim} <span className="text-muted-foreground">· {PROOF_LABEL[b.proof].toLowerCase()}</span>
             </span>
           </li>
         ))}
       </ul>
-      <Details summary="Run the demo">
+      <Details summary={open ? "Run the demo" : "How the demo runs"}>
         <ol className="flex list-decimal flex-col gap-1 pl-5">
           {demo.map((step) => (
             <li key={step.text}>

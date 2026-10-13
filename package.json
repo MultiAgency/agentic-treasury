@@ -12,7 +12,6 @@
     "revoke-grant": "tsx --env-file-if-exists=.env src/revoke-grant.ts",
     "update-policy": "tsx --env-file-if-exists=.env src/update-policy.ts",
     "inspect": "tsx --env-file-if-exists=.env src/inspect.ts",
-    "refusals": "tsx --env-file-if-exists=.env src/refusals.ts",
     "reconcile": "tsx --env-file-if-exists=.env src/reconcile.ts",
     "books": "tsx --env-file-if-exists=.env src/books.ts",
     "archive": "tsx --env-file-if-exists=.env src/archive.ts",

@@ -278,7 +278,12 @@ export const router = {
     evidence: os.input(z.object({ since: z.iso.datetime().optional() })).handler(({ input }) => ticks(input.since)),
   },
   inbox: {
-    list: os.handler(() => readInbox().slice(0, 50)),
+    // Every open message, however old, so dismissing a repeated one clears every copy; and the latest runs.
+    list: os.handler(() => {
+      const entries = readInbox();
+      const runs = new Set(entries.filter((e) => e.level === "run").slice(0, 20));
+      return entries.filter((e) => (e.level === "run" ? runs.has(e) : !e.dismissed));
+    }),
     dismiss: os.input(z.object({ id: z.uuid() })).handler(({ input }) => dismiss(input.id)),
   },
   /** The books: every money execution with its assets, evidence and the mandate it ran under. */

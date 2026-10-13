@@ -109,6 +109,12 @@ export function PayeesSection() {
   );
 }
 
+/** On a treasury agent's Funding page: where its funds may go, only when it is that kind of agent. */
+export function TreasuryPayees() {
+  const { data } = useAgent();
+  return kindOf(data) === "treasury" ? <PayeesSection /> : null;
+}
+
 /** A payment sent by hand, folded away: the provider decides, refusing anyone the policy doesn't list. */
 function ManualPayment({ listed }: { listed: Set<string> }) {
   const { data } = useAgent();

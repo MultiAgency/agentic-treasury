@@ -8,21 +8,21 @@ Vocabulary is in `CONTEXT.md`: use its terms in code, tests, docs and conversati
 policy, grant, purpose, authorization, operation, unresolved, held payout, refusal). Read it first.
 
 ## Where things are
-- `README.md` — what runs, how to start it, the first mainnet results, and **Not done yet**.
-- `docs/architecture.md` — which files are shared core, facilitator or treasury; the one send site.
-- `docs/money-path.md` — the local safeguards: dispatch, journal, reconciliation, invoice storage,
-  checks before each send. `docs/mainnet-log.md` — later dated mainnet runs.
-- `docs/operations.md` — deployment, executor migration and state preservation.
+- `README.md` — what runs, how to start it, the two prototypes, and **Not done yet**.
+- `docs/facilitator.md`, `docs/treasury.md` — each prototype: its brief, what's built, how each claim is
+  known, what isn't covered.
+- `docs/architecture.md` — which files are shared core, facilitator or treasury; the one send site; how
+  the money path stays safe on one host (journal, reconciliation, checks before each send, invoices).
+- `docs/operations.md` — deployment, executor migration, state preservation, the unattended-run report.
+- `docs/enforcement.md` — what the signed policy guarantees today, how each part is known, and what a
+  stronger claim needs (threat model, obligations, open cases, provider questions).
+- `docs/mainnet-log.md` — every dated mainnet run, with op ids and proposal numbers.
 - `DEMO.md` — the hosted walkthrough (kept out of the app so copy edits don't redeploy `dao`).
-- `docs/enforcement.md` — what the signed envelope guarantees today and the sequence to close gaps;
-  `docs/signed-envelope.md` + `docs/envelope/` — threat model, acceptance, verification record.
-- `docs/unattended-run.md` — how autopilot evidence is collected and reported.
 
 ## The money path
 Files: `src/agent.ts` (dispatch), `authorize.ts`, `lock.ts`, `ops.ts`, `plans.ts`, `treasury.ts`, `autopilot.ts`,
 `invoices.ts`, `invoice-store.ts`, `payouts.ts`, `payment-approval.ts`, `owner-intents.ts`,
-`owner-requests.ts`, `owner.ts`, `recover.ts`, `reconcile.ts`, `probes.ts` (live refusal probes send
-for real). Invariants every change keeps:
+`owner-requests.ts`, `owner.ts`, `recover.ts`, `reconcile.ts`. Invariants every change keeps:
 - **One send site.** Every submission (dashboard, CLI, invoice, autopilot) goes through `dispatch`:
   under the money lock, no unresolved operation, write-ahead record, then send.
   `test/send-path.test.ts` enforces it.
@@ -42,11 +42,10 @@ for real). Invariants every change keeps:
   approve-only) and https://invoices.multiagency.ai (payout executor). Railway, one replica each,
   state on the `/data` volume.
 - Deploys, restarts and dashboard money actions are the user's. Prepare and verify; let them ship.
-- The signed-out public page shows only what is public on chain (DAO roles and proposals). No
-  balances, amounts, payees, policies or invoice data. `test/public.test.ts` pins
-  `src/gateway/public.ts`'s imports.
-- `pnpm refusals --live` and `pnpm test:live` move or touch real funds: run only when asked, never
-  scheduled. `pnpm smoke` is the read-only check of both hosts.
+- The signed-out public page shows the two prototypes and how each claim is known, never the evidence,
+  and reads nothing from the server: no balances, amounts, payees, policies, invoices, roster or
+  proposals. `test/public.test.ts` pins `web/src/public.tsx`.
+- `pnpm test:live` moves or touches real funds: run only when asked, never scheduled. `pnpm smoke` is the read-only check of both hosts.
 - An unattended run or freeze may be in progress: ask the user before editing money-path files.
 
 ## Calibrated claims

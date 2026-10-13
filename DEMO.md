@@ -11,13 +11,15 @@ anyone can see how the DAO governs its agents, but only members see the money.
 | The DAO on chain | https://nearblocks.io/address/agentic.sputnik-dao.near |
 
 Keep confidential details out of the talk: no targets, limits, payees or amounts. The public page is the line: it
-shows only what the DAO's contract shows on chain.
+shows the two prototypes and how each claim is known, and reads nothing from the server.
 
 ## What is verified
 
 The table was checked on the 2026-10-12 build: dao `aa6ec064` and invoices `a3aa194a`, from commit `fe3330c`.
-The current deployment is dao `2713d2ea` and invoices `07a35af2` (2026-10-13, 15:13–15:18Z; source commit `a23f0e1`
-per the deployer, since Railway records no commit). The table hasn't been re-checked on it.
+The current deployment is dao `76f9a092` and invoices `3a7d0833` (2026-10-13, 16:44–16:59Z). Railway records no
+commit; the dashboard's served bundle carries the prototype showcase of commit `9ce8cdc` (checked 2026-10-13), and
+`pnpm smoke` passed against both. The table hasn't been re-checked on it. The slimmer signed-out page (no roster or
+proposals) and the later dashboard changes aren't deployed yet.
 
 | Claim | How it is known | When |
 |---|---|---|
@@ -48,7 +50,7 @@ the DAO contract do; only a live check does.
 
 | Persona | Gets in by | Sees | Can do |
 |---|---|---|---|
-| Visitor (signed out) | — | The DAO's roles and proposals, from chain | Nothing |
+| Visitor (signed out) | — | The two prototypes, their claims and how each is known | Sign in; ask to be paid on the invoice page |
 | Member | Being in one of the DAO's groups | Both agents: books, policy, autopilot, held payments | File owner actions as DAO proposals; vote in Trezu if the DAO lets them |
 | Operator | Being named in `dashboard.json` | Everything a member sees | Money and configuration actions; each call is recorded before it runs |
 | Payee | Signing in on the invoice page with an account the DAO agreed to pay | Their own invoices and their status | Submit invoices |
@@ -59,33 +61,36 @@ operator view; showing a member-only view needs a second account in the DAO.
 ## The two prototypes, outcome by outcome
 
 Each row is one outcome from the prototype's brief: what to do, what you'll see, and what it leaves as
-evidence. Where this build differs from the brief, the row says so. Details: [facilitator](docs/facilitator.md),
-[treasury](docs/treasury.md).
+evidence. What has been shown so far, and where this build differs from each brief, is in the prototype's doc:
+[facilitator](docs/facilitator.md), [treasury](docs/treasury.md).
 
 ### Confidential Treasury Facilitator
 
-| Outcome | Do | See | Evidence |
+| Outcome | Do | See | Leaves |
 |---|---|---|---|
-| Request → vote → paid confidentially | On the invoice page, an agreed payee submits; on the payout agent's Overview, approve; vote | The invoice moves from waiting to paid; the payee sees no member account | The op id and the approval's proposal # (mainnet: `op_uUMA-amAfCgP…`, #47). USDC, not USDT; the quorum is the DAO's own vote threshold |
-| A new payee is routed to a new agreement | Sign in on the invoice page with an account the DAO hasn't agreed to pay, and submit | The page says it waits for the DAO; the request appears on **Agreements** | The request's id, then the policy update's proposal # once agreed. Tested offline; not yet run on mainnet |
-| Over-limit is refused | Submit an invoice over the policy's cap | Refused before anything is voted on | The refusal code. Votes never come into it: the cap is checked when the payment is requested (mainnet: 409 `policy_denied`, 2026-10-11) |
-| Chain watchers can't rebuild the payouts | Open the DAO on the block explorer, or the public page | Approvals read "Approve the pending confidential request": no payee, no amount | The proposal #s (#46–#53) |
+| Request → vote → paid confidentially | On the invoice page, an agreed payee submits; on the payout agent's Overview, approve; vote | The invoice moves from waiting to paid; the payee sees no member account | An op id and the approval's proposal # |
+| A new payee is routed to a new agreement | Sign in on the invoice page with an account the DAO hasn't agreed to pay, and submit | The page says it waits for the DAO; the request appears on **Agreements** | The request, then the policy update's proposal # once agreed |
+| Over-limit is refused | Submit an invoice over the per-payment cap | Expected: refused before anything is voted on (not yet shown on this agent) | A refusal with its code, and no proposal |
+| Chain watchers can't rebuild the payouts | Open the DAO's proposals on a block explorer or in Trezu | Approvals read "Approve the pending confidential request": no payee, no amount | The proposal #s |
 
 ### Agentic Treasury Management
 
-| Outcome | Do | See | Evidence |
+| Outcome | Do | See | Leaves |
 |---|---|---|---|
-| Balances in, quoted plan out, swaps inside the caps | Automations → Preview, then Run now | Each leg quoted and within the cost cap; "Monthly budget left" drops by the swaps' value | The op ids, each with its policy revision in Activity. Three assets need at most two swaps, not three |
-| A breach is refused | A run whose value exceeds the budget left | Activity shows it refused with `spend_budget_exceeded`; nothing moved | The refusal (mainnet: 2026-10-12 13:57Z and 14:06Z) |
-| Idle funds go confidential | When the agent holds a public balance, let the autopilot run | "Held privately" returns to 100% | The shield's op id. Tested offline and on a test agent; the treasury agent itself hasn't shielded on mainnet yet |
+| Balances in, quoted plan out, swaps inside the caps | Automations → Preview, then Run now | Each leg quoted and within the cost cap; "Monthly budget left" drops by the swaps' value | Op ids, each with its policy revision in Activity |
+| A breach is refused | A run whose value exceeds the budget left | Activity shows it refused with `spend_budget_exceeded`; nothing moved | A refusal with its code |
+| Idle funds go confidential | When the agent holds a public balance, let the autopilot run | "Held privately" returns to 100% | The shield's op id |
+
+Record what a run leaves in [docs/mainnet-log.md](docs/mainnet-log.md), and update the prototype's doc and the
+dashboard's "What this shows" (`web/src/beats.ts`) to match.
 
 ## 1. As a visitor: what a confidential treasury shows
 
-1. Open https://proto.multiagency.ai without signing in. It shows the DAO's roles and its latest proposals, read
-   from chain.
-2. Point out what each proposal reveals. An owner signature shows only the hash the DAO signs, and a Trezu
-   confidential payment shows only that it happened. There are no balances, amounts or payees.
-3. Open the block explorer link: the page shows nothing the chain doesn't.
+1. Open https://proto.multiagency.ai without signing in. It shows the two prototypes, each claim with how it is known
+   (shown on mainnet, tested offline), and how to try them. Nothing else: no balances, payments, roster or proposals.
+2. For what anyone can see on chain, open the DAO on a block explorer: each approval reads "Approve the pending
+   confidential request", with no payee or amount. The council's roster is public there, as it is for any Sputnik
+   DAO; this site doesn't advertise it.
 
 ## 2. As a payee: asking to be paid (Facilitator)
 
@@ -191,8 +196,8 @@ most two swaps to rebalance, so two is the honest number. Nothing signed changes
 - The agents run under rules the DAO approved, and changing those rules takes a DAO vote.
 - Each agent has exactly one executor: the `dao` service for the treasury agent, the `invoices` service for the
   payout agent. Every other instance is approve-only.
-- The public page reads only from chain. Treasury data reaches signed-in members only, and money actions operators
-  only.
+- The public page reads nothing from the server. Treasury data and proposals reach signed-in members only, and money
+  actions operators only.
 - Sign-in is bound to each site's host: a signature made for another site can't be used.
 - State lives on each service's volume and survives a restart. To check, run `pnpm smoke` with `SMOKE_COOKIE_FILE`
   and `SMOKE_SNAPSHOT` before and after (see `src/smoke.ts`).
@@ -209,5 +214,5 @@ its signed policy". At the custody level:
 The plan is in `docs/enforcement.md`.
 
 How the server keeps its own sends safe on one host (the journal, crash recovery, owner-action locking) and what
-tests that is in [docs/money-path.md](docs/money-path.md); the tests and what deployment shows are in
+tests that is in [docs/architecture.md](docs/architecture.md#how-the-money-path-stays-safe-on-one-host); the tests and what deployment shows are in
 [enforcement](docs/enforcement.md#local-crash-and-concurrency-recovery).

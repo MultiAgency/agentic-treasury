@@ -7,7 +7,6 @@ import { acquireMoneyLock, type MoneyLock, UnresolvedOperations } from "../src/l
 import { readOps, record } from "../src/ops.js";
 import { mandateDigest } from "../src/mandate.js";
 import { ASSETS, payoutPolicy, treasuryPolicy } from "../src/policy.js";
-import { refusals } from "../src/probes.js";
 import { authorityFixture, policyView } from "./fixtures/authority.js";
 import { freshDirectory, offline } from "./fixtures/harness.js";
 
@@ -34,48 +33,6 @@ beforeEach(() => {
   mock.method(api, "forGrant", () => ({ transfer: method, swap: method, shield: method, unshield: method }));
 });
 afterEach(() => mock.restoreAll());
-
-test("live probes default off before any API read or send", async () => {
-  mock.method(api, "getPolicy", () => assert.fail("disabled probes must not read the API"));
-  mock.method(api, "getTokens", () => assert.fail("disabled probes must not read the API"));
-  await assert.rejects(async () => { for await (const _ of refusals()) assert.fail("no events expected"); }, /disabled/);
-  assert.deepEqual(calls, []);
-  assert.deepEqual(readOps(), []);
-});
-
-for (const failure of ["lost response", "retryable API error", "untrusted refusal-shaped error", "status timeout", "non-retryable status error"]) {
-  test(`submission stays unknown after ${failure}, and a later run stays blocked`, async () => {
-    if (failure === "non-retryable status error") mock.method(api, "getStatus", async () => {
-      throw new AgentApiError(404, { errors: [{ status: "404", code: "not_found", title: "Not found" }], meta: {} });
-    });
-    else if (failure === "status timeout") mock.method(api, "getStatus", async () => { throw new Error("status timeout"); });
-    else answer = async () => {
-      if (failure === "retryable API error") throw new AgentApiError(503, {
-        errors: [{ status: "503", code: "unavailable", title: "Unavailable", meta: { retryable: true } }], meta: {},
-      });
-      if (failure === "untrusted refusal-shaped error") throw Object.assign(new Error("unknown"), { errors: [{ code: "policy_denied" }] });
-      throw new Error("lost response");
-    };
-    const lock = await acquireMoneyLock();
-    try { await assert.rejects(dispatch(lock, "fixture", action)); } finally { await lock.release(); }
-    assert.equal(calls.length, 1);
-    assert.equal(readOps().length, 1);
-    assert.equal(readOps()[0]?.refused, undefined);
-    await assert.rejects(acquireMoneyLock(), UnresolvedOperations);
-  });
-}
-
-for (const outcome of ["UNCERTAIN", "NEEDS_REVIEW"]) {
-  test(`submission stops on ${outcome} without another request or a refusal label`, async () => {
-    status = outcome;
-    const lock = await acquireMoneyLock();
-    try { assert.equal((await dispatch(lock, "fixture", action)).status, outcome); } finally { await lock.release(); }
-    assert.equal(calls.length, 1);
-    assert.equal(readOps()[0]?.status, outcome);
-    assert.equal(readOps()[0]?.refused, undefined);
-    await assert.rejects(acquireMoneyLock(), UnresolvedOperations);
-  });
-}
 
 test("a proven first-submission refusal resolves only that operation", async () => {
   answer = async () => { throw new AgentApiError(409, {

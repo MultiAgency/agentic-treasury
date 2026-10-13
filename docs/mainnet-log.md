@@ -1,6 +1,34 @@
 # Mainnet log
 
-Dated mainnet runs after the first payouts, which are in the [README](../README.md#mainnet-results).
+Dated mainnet runs, with their op ids and proposal numbers. Each prototype's doc says which of these back
+which claim:
+[facilitator](facilitator.md), [treasury](treasury.md).
+
+## A swap into an unlisted asset, 2026-10-10
+
+A direct-API swap into an asset outside the policy's `assets` succeeded
+(`op_F2Yko4W0gDPrZXy0EzVYxjCk_z9q1kz3rr8bWGWJglk`): the provider checks only the asset spent. This server now
+refuses such a swap before sending ([enforcement](enforcement.md#status)).
+
+## First payouts, 2026-10-11
+
+Payouts from a confidential Trezu treasury (`agentic.sputnik-dao.near`), 2026-10-11. The payout agent
+was created, granted and added to the treasury agent's agreement by DAO vote (proposals #23 to #25).
+
+| Check | Result | Evidence |
+|---|---|---|
+| A payout waits for the DAO | 1 USDC to an agreed payee went `PENDING_APPROVAL`, was released by proposal #26 and settled | `op_ECYZZAMgrNUauo5YnlKdUrwmml8p_TP9yrs93ViY0GI` |
+| A new payee is refused | Refused with `policy_destination_denied` before anything was recorded or voted on | treasury agent, 0.01 USDC to an unlisted account |
+| Over-limit is refused | An 11 USDC transfer to the DAO refused with 409 `policy_denied`; nothing was sent | treasury agent under policy revision 8 (owner approval off, so no vote was involved), 17:51Z, `op_1rDuSQuaZfLdZRLoI-jRvoFEQdYmzCo91_nCLYVk8dc`. The only USDC limit it exceeded was the 10 USDC hourly cap; `policy_denied` doesn't name the rule |
+| Agents fund each other without a vote | The treasury agent sent the payout agent 5 USDC inside its caps | `op_Y5KTotI2PhJPjWdtKN4SXxEGrAuymJrArNhmYYlHzh4` |
+| Nothing public but the vote | The payout agent's account has no public transactions; no public NEAR Intents balances changed | NearBlocks, `mt_tokens_for_owner` |
+| The payee sees no sender | near.com shows "Receive 1 USDC" with only a one-time 1Click deposit address, which 1Click's public status lookup doesn't know | deposit address `f26a8ae5…a17ee9` |
+
+What stays visible or known: each approval is a public DAO proposal, so its timing shows; 1Click and
+NEAR Intents can see the mapping, and their terms don't guarantee confidentiality. A held payment
+stays approvable for 24 hours, but each vote request expires in about 5 minutes.
+
+## Later runs
 
 Invoices on mainnet, 2026-10-12: the page is live on Railway. A contractor signed in with a NEAR
 wallet as an agreed payee, submitted 1 USDC, the DAO approved it from the dashboard (listed as `remote`,
@@ -41,3 +69,64 @@ approved only by a grant whose label carries its digest, `treasury:117b0a425eba7
 
 Along the way, two new pre-send checks held every agent until fixed: refused requests counted as missing
 history, and budgets compared as text ("25" vs "25.00"). Both failed safe: nothing was sent.
+
+## Isolated test agent: shield and monthly cap, 2026-10-13T03:27Z
+
+Run with the user's explicit authorization, during the unattended-run window, from base `9b9fe64` plus the
+then-staged runner and `update-policy`, on an agent created for these tests by the laptop CLI owner,
+never a production treasury or payout agent. Gas and storage ceilings weren't checked by the runner. The
+remaining funds stay in the test agent. Agent `fbb390d7…2354` (wallet `7ad3bf83…f404`, owner
+`treasury.multiagentic.near`), one grant (`b0f040b7…`, label `treasury:bc37ba01…`), autopilot off.
+Policy revision 2: USDC caps of 5 per transaction, hour and day and 3 per month; a $10 USD budget in every
+window; the destination list copied byte-for-byte from the treasury agent's revision 11. Funded with 8.88
+USDC confidential (a DAO Trezu payment) and 0.5 wNEAR public (tx `5QGXHAWRvW36aSQTrR4fitDZApwWbyv2v1115pvhCVL6`).
+Preflight: the applied policy matched, budget zero in every window, quote worst cost 179 bps.
+
+| Step | Result | Evidence |
+|---|---|---|
+| Shield 0.5 wNEAR under the treasury's destination list | SUCCESS: public → confidential, USD budget $0 → $0 | `op_mPNFaz-SI04vTSkwNrxk7SH3XdR23jzPMoPFHwtE1KQ` |
+| Swap 2 USDC → wNEAR | SUCCESS: USDC 8.88 → 6.88; budget $0 → $1.999536 | `op_Uli9thHSyzCONMy1iHrB_6JHiMhQPJWeQohdiBZlrxs` |
+| The identical 2 USDC swap again | `policy_denied`, no correlation id, balances and budget unchanged | Only the 3 USDC monthly cap was exceeded: every other limit, the budget and the balance fit |
+
+`policy_denied` names no rule and per-asset usage isn't exposed, so the monthly attribution rests on the
+isolation and on the first swap being the agent's only USDC spend. Sequential, one grant, one host: it
+shows the monthly cap enforced, not its behaviour under concurrency. Evidence, without tokens, is in the
+release record `proto-releases/20261013T032658Z-envelope-phase1/`, outside this repository. The runner
+is archived at commit `c25b61b` (`src/envelope-phase1.ts`).
+
+## Isolated test agent: USD budget under concurrency, 2026-10-13T03:32Z
+
+Same agent, policy revision 3 (`daily_usd` 3, all else unchanged), $1.000464 of the daily budget left.
+Five $0.40 wNEAR → USDC swaps sent at the same instant straight to the API with the test grant, bypassing
+this server's money lock (archived runner `scripts/envelope-concurrency.ts`, commit `c25b61b`).
+
+- One accepted and settled (`op_13BiIirYsg208ObtehlBZqEwvW52gthNOoW0EZEvlRo`), one `wallet_busy`, three
+  `spend_budget_exceeded`.
+- Budget $1.999536 → $2.399537 against $3.00: no overshoot.
+- More conservative than the figure suggests: two would have fit, one ran, and requests were refused while
+  $0.60 remained. Why is unknown.
+
+One trial, five requests, one grant, one host: not proof of atomicity across grants or API instances, or
+after a crash. Evidence: `proto-releases/20261013T033230Z-envelope-concurrency/result.json`.
+
+## Policy signatures and operation proofs, 2026-10-13T04:10Z
+
+A read-only capture from `api.demo.agentsonintents.com`; nothing was generated, signed or submitted.
+
+- All 15 returned policy revisions (treasury 1–11, payout 1, test agent 1–3) reproduce their API
+  `policy_hash`. Nine captured NEP-366 policy delegates and nine custody ciphertext-store signatures
+  verify, and fail when receiver, arguments or caller are changed. This binds the encrypted blobs, not
+  their match with the readable policy. The policy-transaction checks used earlier RPC captures because
+  fresh requests timed out; chain inclusion and historical key authority weren't independently checked.
+- The ten retained NEP-413 owner signatures (five grant issues, one revocation, four approval votes)
+  verify and match their recorded DAO hashes; changed messages and recipients fail. None is a policy
+  update, so no owner policy signature has yet been verified against the enforced policy.
+- Operation proofs: all three sampled successful operations (`op_XNaqLYyKbGtTqnqKudiH8uQGIPQKxYvU9oLjHXJdaW4`,
+  `op_RCW0gaWGDo_fl7VYWln71qoFSPtfWGgXoGyVaStGvZ0`, `op_13BiIirYsg208ObtehlBZqEwvW52gthNOoW0EZEvlRo`)
+  returned HTTP 501 `transparency_log_disabled`. That is an unavailable check, not evidence of a wrong
+  debit.
+
+Sanitized results: [report.json](envelope/results/20261013T0410Z/report.json),
+[policy-signatures.json](envelope/results/20261013T0410Z/policy-signatures.json) and the
+[capture manifest](envelope/results/20261013T0410Z/capture-manifest.json). Raw captures and the one-off
+scripts are archived privately in `.evidence/provider-verification-20261013T0410Z/`.

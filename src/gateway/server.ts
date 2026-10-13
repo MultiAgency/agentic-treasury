@@ -8,7 +8,6 @@ import { BadRequest, crossSite, readJson, SECURITY_HEADERS, sendFailure, sendJso
 import { chainKeyLookup, challengeAnswer, clientAddress, hourlyLimit, parseSignIn, sessions, verifySignIn } from "../signin.js";
 import { type AgentEntry, childEnv, hostOf, loadConfig } from "./config.js";
 import { recentSignProposals } from "./proposals.js";
-import { readPublicView } from "./public.js";
 import { resolveAccess } from "./roles.js";
 import { appendSynced } from "../synced.js";
 
@@ -105,9 +104,6 @@ createServer(async (req, res) => {
       return json(res, 200, { dao: config.dao, agents: config.agents.map((a) => a.name), invoices: config.invoices ?? null, viewer: me });
     }
 
-    // For everyone: only what the DAO's contract already shows on chain.
-    if (pathname === "/gw/public") return json(res, 200, await readPublicView(config.dao));
-
     if (pathname === "/gw/proposals") {
       if (!(await viewer(req))) return json(res, 401, { error: "Sign in first" });
       return json(res, 200, await recentSignProposals(config.dao, config.agents));
@@ -120,6 +116,8 @@ createServer(async (req, res) => {
       const since = url.searchParams.get("since") ?? "";
       return json(res, 200, interventions(since));
     }
+    // Every gateway path is listed above; anything else under /gw/ is no page either.
+    if (pathname.startsWith("/gw/")) return json(res, 404, { error: "Not found" });
 
     const call = pathname.match(/^\/a\/([a-z0-9-]+)\/rpc\/(.+)$/);
     if (call) {

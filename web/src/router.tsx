@@ -4,9 +4,9 @@ import { BASE } from "./lib";
 import { Overview } from "./overview";
 import { Policy } from "./policy";
 import { Shell } from "./shell";
-import { Automations } from "./automations";
 import { Steward } from "./steward";
-import { PayeesSection } from "./payees";
+import { Automations } from "./automations";
+import { PayeesSection, TreasuryPayees } from "./payees";
 import { TreasurySection } from "./treasury";
 
 const root = createRootRoute({ component: Shell });
@@ -19,7 +19,13 @@ export const router = createRouter({
     page("/", Overview),
     page("/steward", Steward),
     page("/automations", Automations),
-    page("/treasury", TreasurySection),
+    // A treasury agent's few destinations (the DAO, the payout agent) belong with its funding.
+    page("/treasury", () => (
+      <>
+        <TreasurySection />
+        <TreasuryPayees />
+      </>
+    )),
     page("/payees", PayeesSection),
     page("/policy", Policy),
     page("/activity", () => (

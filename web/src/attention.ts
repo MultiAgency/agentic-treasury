@@ -8,8 +8,8 @@ export type Attention = {
   to: "/" | "/activity" | "/policy" | "/automations";
   action: string;
   text: string;
-  /** The autopilot inbox entry this item shows, which the owner can dismiss. */
-  inboxId?: string;
+  /** The autopilot inbox entries this item shows (one message, repeated), which the owner can dismiss. */
+  inboxIds?: string[];
 };
 
 type Reads = {
@@ -44,7 +44,16 @@ export function attentionOf({ setup, overview, held, unresolved, inbox }: Reads)
       text: `${r.amount && r.asset ? amountOf(r.amount, r.asset, overview.book) : "A payout"} to ${r.recipient ?? "a payee"} is held for the owner's approval (requested ${ago(h.at)}).` });
   }
   // What the autopilot raised while no one was watching, until the owner dismisses it.
-  for (const e of inbox.filter((e) => !e.dismissed && e.level !== "run"))
-    items.push({ tone: e.level === "warn" ? "warning" : "info", to: "/automations", action: "Open", text: `${e.text} (${ago(e.at)})`, inboxId: e.id });
+  // The same message raised again is one item, its age ignored ("12 min old" changes every tick). Newest
+  // first, so the first of each is the latest, and its text is the one shown.
+  const open = new Map<string, typeof inbox>();
+  for (const e of inbox.filter((e) => !e.dismissed && e.level !== "run")) {
+    const key = e.text.replace(/\d+ min old/g, "min old");
+    open.set(key, [...(open.get(key) ?? []), e]);
+  }
+  for (const [latest, ...earlier] of open.values())
+    items.push({ tone: latest!.level === "warn" ? "warning" : "info", to: "/automations", action: "Open",
+      text: `${latest!.text} (${earlier.length ? `${earlier.length + 1} times, latest ${ago(latest!.at)}` : ago(latest!.at)})`,
+      inboxIds: [latest!.id, ...earlier.map((e) => e.id)] });
   return items;
 }

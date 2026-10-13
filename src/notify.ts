@@ -16,17 +16,18 @@ import { writeAtomic } from "./synced.js";
  * it stays open, also across restarts. Off unless TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set.
  */
 
-export type Item = { key: string; text: string };
+/** `path`: where on the agent's dashboard the owner acts on it, appended to NOTIFY_LINK (the agent's page). */
+export type Item = { key: string; text: string; path: string };
 
 /** What waits for a person right now, from local state only. */
 export function pending(): Item[] {
   const name = process.env.NOTIFY_NAME ?? "The agent";
   const items: Item[] = [];
-  for (const op of readOps().filter(isHeld)) items.push({ key: `held:${op.idempotencyKey}`, text: `${name}: a payment is waiting for approval.` });
+  for (const op of readOps().filter(isHeld)) items.push({ key: `held:${op.idempotencyKey}`, text: `${name}: a payment is waiting for approval.`, path: "/" });
   for (const op of unresolved())
-    items.push({ key: `unresolved:${op.idempotencyKey}`, text: `${name}: a money action has no proven outcome; sends are paused until it's reconciled.` });
+    items.push({ key: `unresolved:${op.idempotencyKey}`, text: `${name}: a money action has no proven outcome; sends are paused until it's reconciled.`, path: "/activity" });
   for (const e of readInbox().filter((e) => !e.dismissed && e.level !== "run"))
-    items.push({ key: `inbox:${e.id}`, text: `${name}: the autopilot ${e.level === "action" ? "left a decision for you" : "needs attention"}.` });
+    items.push({ key: `inbox:${e.id}`, text: `${name}: the autopilot ${e.level === "action" ? "left a decision for you" : "needs attention"}.`, path: "/automations" });
   return items;
 }
 
@@ -36,7 +37,7 @@ const stateFile = () => {
 };
 const sentKeys = () => new Set<string>(existsSync(stateFile()) ? (JSON.parse(readFileSync(stateFile(), "utf8")) as string[]) : []);
 
-export async function telegram(text: string) {
+async function telegram(text: string) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
@@ -54,8 +55,10 @@ export async function notifyOnce(send: (text: string) => Promise<void> = telegra
   const sent = sentKeys();
   const fresh = items.filter((i) => !sent.has(i.key));
   if (fresh.length) {
-    const link = process.env.NOTIFY_LINK;
-    await send([...new Set(fresh.map((i) => i.text))].join("\n") + (link ? `\nOpen: ${link}` : ""));
+    // One line per kind of item, each with the page where the owner acts on it.
+    const link = process.env.NOTIFY_LINK?.replace(/\/$/, "");
+    const lines = new Map(fresh.map((i) => [i.text, link ? `${i.text}\nOpen: ${link}${i.path}` : i.text]));
+    await send([...lines.values()].join("\n"));
   }
   const open = new Set(items.map((i) => i.key));
   writeAtomic(stateFile(), JSON.stringify([...sent, ...fresh.map((i) => i.key)].filter((k) => open.has(k))));

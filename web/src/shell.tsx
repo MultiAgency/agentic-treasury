@@ -44,7 +44,6 @@ const NAV: Record<Kind, { to: LinkProps["to"]; label: string; icon: Icon }[]> = 
     { to: "/", label: "Overview", icon: SquaresFour },
     { to: "/automations", label: "Automations", icon: Lightning },
     { to: "/treasury", label: "Funding", icon: Bank },
-    { to: "/payees", label: "Payees", icon: UsersThree },
     { to: "/policy", label: "Policy", icon: ShieldCheck },
     { to: "/activity", label: "Activity", icon: ClockCounterClockwise },
   ],
@@ -56,7 +55,7 @@ function Brand({ data }: { data?: Overview }) {
       <div className="grid size-9 place-items-center rounded-xl bg-primary text-primary-foreground">
         <Wallet size={18} weight="bold" />
       </div>
-      <span className="hidden font-heading text-lg leading-tight font-semibold sm:inline">{data ? PROTOTYPES[kindOf(data)].name : "Agentic Treasury"}</span>
+      <span className="hidden font-heading text-lg leading-tight font-semibold sm:inline">{data ? PROTOTYPES[kindOf(data)].name : "Two agent prototypes"}</span>
     </div>
   );
 }

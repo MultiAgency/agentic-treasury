@@ -132,6 +132,11 @@ operations, sweeps, and executes a rebalance only up to the strategy's auto-exec
 start can't be recorded does not run; a missing end means it was interrupted or its outcome is unknown.
 _Avoid_: bot, cron job
 
+**Tick**:
+One autopilot run: sweep, then rebalance if the strategy's grant approves it and the plan fits the
+limit. Scheduled on the strategy's interval, counted from the previous tick's end, or run by an
+operator. Each records a start and an end in the evidence.
+
 **Inbox**:
 What the agent tells its owner while no one is watching: a record of each tick, and warnings or
 requests that stay open until the owner dismisses them.

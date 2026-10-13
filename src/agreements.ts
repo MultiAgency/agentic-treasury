@@ -36,6 +36,8 @@ type Entry = Stored & { declined?: true; terms?: Terms };
 /** Open requests kept at once: per account, and in all. Past either, a new one is turned away. */
 const PER_ACCOUNT = 3;
 const OPEN = 50;
+/** A request unanswered this long stays listed but stops holding a slot, so stale ones can't block intake. */
+const SLOT_DAYS = 14;
 
 const file = () => {
   mkdirSync(".agreements", { recursive: true });
@@ -83,7 +85,8 @@ export function requestAgreement(input: InvoiceInput, agreed: Set<string>): { id
   const all = agreements(agreed);
   const known = all.find((a) => a.id === id);
   if (known) return { id, status: known.status };
-  const open = all.filter((a) => a.origin === "payee" && (a.status === "requested" || a.status === "proposed"));
+  const since = Date.now() - SLOT_DAYS * 86_400_000;
+  const open = all.filter((a) => a.origin === "payee" && (a.status === "requested" || a.status === "proposed") && Date.parse(a.at) >= since);
   if (open.length >= OPEN || open.filter((a) => a.payee === input.payee).length >= PER_ACCOUNT) return { id, status: "busy" };
   appendSynced(file(), { agreement: { ...input, id, origin: "payee", at: new Date().toISOString() } } satisfies Line);
   return { id, status: "requested" };
@@ -158,6 +161,8 @@ export function remoteStore(url: string, secret: string): AgreementStore {
       method: body === undefined ? "GET" : "POST",
       headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
+      // A hung invoice host fails this call, not the dashboard waiting on it.
+      signal: AbortSignal.timeout(10_000),
     });
     const json = (await res.json().catch(() => ({}))) as { error?: string };
     if (!res.ok) throw new Error(json.error ?? `The invoice host answered ${res.status}`);

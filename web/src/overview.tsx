@@ -33,17 +33,32 @@ function Figures({ data }: { data: Book }) {
   const shielded = data.book.reduce((sum, h) => sum + units(h.confidential, h.decimals) * h.price, 0);
   const monthly = data.policy.usage.budget.monthly;
   const limit = Number(monthly.limit_usd ?? 0);
+  const budget = (
+    <Figure label="Monthly budget left" value={usd(monthly.remaining_usd)}>
+      <Meter value={limit ? Number(monthly.spent_usd) / limit : 0} />
+      <span className="text-sm text-muted-foreground">
+        {usd(monthly.spent_usd)} of {usd(limit)} spent{monthly.resets_at && ` · resets ${ago(monthly.resets_at)}`}
+      </span>
+    </Figure>
+  );
+  // A payout agent holds and pays only confidential USDC: its balance is the one figure that moves.
+  if (kindOf(data) === "facilitator") {
+    const usdc = data.book.find((h) => h.symbol === "USDC");
+    return (
+      <div className="grid gap-10 sm:grid-cols-2">
+        <Figure label="Balance" value={usdc ? amount(usdc.confidential, usdc) : "0 USDC"}>
+          <span className="text-sm text-muted-foreground">In the confidential balance, paid out only by vote</span>
+        </Figure>
+        {budget}
+      </div>
+    );
+  }
   return (
     <div className="grid gap-10 sm:grid-cols-3">
       <Figure label="Book value" value={usd(total)}>
         <span className="text-sm text-muted-foreground">Across {data.book.length} assets at API prices</span>
       </Figure>
-      <Figure label="Monthly budget left" value={usd(monthly.remaining_usd)}>
-        <Meter value={limit ? Number(monthly.spent_usd) / limit : 0} />
-        <span className="text-sm text-muted-foreground">
-          {usd(monthly.spent_usd)} of {usd(limit)} spent{monthly.resets_at && ` · resets ${ago(monthly.resets_at)}`}
-        </span>
-      </Figure>
+      {budget}
       <Figure label="Held privately" value={total ? `${Math.round((shielded / total) * 100)}%` : "—"}>
         <Meter value={total ? shielded / total : 0} className="bg-chart-3" />
         <span className="text-sm text-muted-foreground">
@@ -72,10 +87,10 @@ function useAttention(dismissing: ReturnType<typeof useAttempt>): Item[] {
   // Held payouts head this page in their own section; the DAO home lists them as attention items.
   const items: Item[] = attentionOf({ setup, overview: data, held, unresolved, inbox })
     .filter(({ to }) => to !== "/")
-    .map(({ to, text, inboxId }) => ({
+    .map(({ to, text, inboxIds }) => ({
       to,
       text,
-      dismiss: inboxId ? () => dismissing.attempt(() => client.inbox.dismiss({ id: inboxId })) : undefined,
+      dismiss: inboxIds ? () => dismissing.attempt(async () => { for (const id of inboxIds) await client.inbox.dismiss({ id }); }) : undefined,
     }));
 
   const policy = data.policy.policy;
@@ -85,12 +100,17 @@ function useAttention(dismissing: ReturnType<typeof useAttempt>): Item[] {
   const asked = (useQuery({ ...queries.agreements, enabled: kindOf(data) === "facilitator" }).data ?? []).filter((a) => a.status === "requested");
   const exposed = data.book.filter((h) => BigInt(h.public) > 0n);
   const gap = drift(data);
-  if (bookValue(data) === 0) items.push({ to: "/treasury", text: "The book is empty. Fund it to give the agent something to manage." });
+  // A payout agent pays only from its confidential USDC, the balance its Overview shows.
+  const payable = data.book.find((h) => h.symbol === "USDC")?.confidential ?? "0";
+  if (kindOf(data) === "facilitator" ? BigInt(payable) === 0n : bookValue(data) === 0)
+    items.push({ to: "/treasury", text: kindOf(data) === "facilitator"
+      ? "The payout wallet's confidential USDC is empty: invoices are refused until it is funded."
+      : "The book is empty. Fund it to give the agent something to manage." });
   if (!treasury) items.push({ to: "/treasury", text: "No treasury linked. Link the account this agent works for." });
   if (asked.length)
     items.push({ to: "/payees", text: `${asked.length} account${asked.length === 1 ? " asks" : "s ask"} to be paid and ${asked.length === 1 ? "isn't" : "aren't"} agreed yet.` });
   if (candidates.length)
-    items.push({ to: "/payees", text: `${treasury?.accountId} approved ${candidates.length} payee${candidates.length === 1 ? "" : "s"} the policy doesn't list yet.` });
+    items.push({ to: kindOf(data) === "treasury" ? "/treasury" : "/payees", text: `${treasury?.accountId} approved ${candidates.length} payee${candidates.length === 1 ? "" : "s"} the policy doesn't list yet.` });
   if (exposed.length)
     items.push({ to: "/automations", text: `${exposed.map((h) => amount(h.public, h)).join(", ")} sit${exposed.length === 1 ? "s" : ""} in the public balance, visible to anyone. Sweep shields it.` });
   for (const u of data.unmanaged) {

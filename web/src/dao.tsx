@@ -1,10 +1,10 @@
-import { ArrowRight, CheckCircle, Robot, WarningOctagon } from "@phosphor-icons/react";
+import { ArrowRight, CheckCircle, WarningOctagon } from "@phosphor-icons/react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import type { Decoded } from "../../src/gateway/proposals.js";
 import { type Attention, attentionOf } from "./attention";
-import { type Kind, PROTOTYPES } from "./beats";
+import type { Kind } from "./beats";
 import { PrototypeCard } from "./showcase";
-import { ago, bookValue, clientFor, gw, kindOf, minutesSeconds, useCountdown, usd } from "./lib";
+import { ago, clientFor, gw, kindOf, minutesSeconds, useCountdown } from "./lib";
 import { type Gateway, ViewerBadge } from "./session";
 import { Badge, Card, Details, Section, Spinner, type Tone } from "./ui";
 
@@ -207,52 +207,35 @@ function NeedsAttention({ agents }: { agents: string[] }) {
   );
 }
 
-function AgentCard({ name }: { name: string }) {
-  const data = useQuery(agentQuery(name));
-  const d = data.data;
-  const value = d ? bookValue(d.overview) : 0;
+/** An agent's state in one line: whether it may act, and what waits on a person. */
+function AgentStatus({ d }: { d: AgentState }) {
   return (
-    <a href={`/a/${name}/`} className="group">
-      <Card className="h-full">
-        <div className="flex items-center gap-3">
-          <Robot size={20} />
-          <span className="flex flex-1 flex-col">
-            <span className="font-medium">{d ? PROTOTYPES[kindOf(d.overview)].name : name}</span>
-            <span className="text-sm text-muted-foreground">{name} agent</span>
-          </span>
-          <ArrowRight size={16} className="text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-        </div>
-        {data.error ? (
-          <p className="text-sm text-destructive-muted-foreground">{data.error.message}</p>
-        ) : !d ? (
-          <Spinner />
-        ) : (
-          <>
-            <span className="font-heading text-2xl font-semibold tabular-nums">{usd(value)}</span>
-            <div className="flex flex-wrap gap-2">
-              <Badge tone={d.overview.notInForce ? "destructive" : "success"}>
-                {d.overview.policy.policy?.frozen ? "Frozen" : d.overview.notInForce ? "Not in force" : "Active"}
-              </Badge>
-              {d.held.length > 0 && <Badge tone="warning">{d.held.length} held for approval</Badge>}
-              {d.unresolved.length > 0 && <Badge tone="destructive">{d.unresolved.length} unresolved</Badge>}
-              <Badge tone={d.autopilot.on ? "info" : "neutral"}>{d.autopilot.on ? `Autopilot to $${d.autopilot.maxUsd}` : "Autopilot off"}</Badge>
-            </div>
-          </>
-        )}
-      </Card>
-    </a>
+    <div className="flex flex-wrap gap-2">
+      <Badge tone={d.overview.notInForce ? "destructive" : "success"}>
+        {d.overview.policy.policy?.frozen ? "Frozen" : d.overview.notInForce ? "Not in force" : "Active"}
+      </Badge>
+      {d.held.length > 0 && <Badge tone="warning">{d.held.length} held for approval</Badge>}
+      {d.unresolved.length > 0 && <Badge tone="destructive">{d.unresolved.length} unresolved</Badge>}
+      {kindOf(d.overview) === "treasury" && (
+        <Badge tone={d.autopilot.on ? "info" : "neutral"}>{d.autopilot.on ? `Autopilot to $${d.autopilot.maxUsd}` : "Autopilot off"}</Badge>
+      )}
+    </div>
   );
 }
 
 /** The two prototypes first, each opening its agent's dashboard once that agent has answered. */
 function Prototypes({ gateway }: { gateway: Gateway }) {
   const results = useQueries({ queries: gateway.agents.map(agentQuery) });
-  const agentOf = (kind: Kind) => gateway.agents.find((_, i) => results[i]?.data && kindOf(results[i].data.overview) === kind);
+  const indexOf = (kind: Kind) => gateway.agents.findIndex((_, i) => results[i]?.data && kindOf(results[i].data.overview) === kind);
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       {(["facilitator", "treasury"] as const).map((kind) => {
-        const agent = agentOf(kind);
-        return <PrototypeCard key={kind} kind={kind} open={agent ? `/a/${agent}/` : undefined} invoices={gateway.invoices} />;
+        const i = indexOf(kind);
+        const d = results[i]?.data;
+        return (
+          <PrototypeCard key={kind} kind={kind} open={d ? `/a/${gateway.agents[i]}/` : undefined} invoices={gateway.invoices}
+            status={d && <AgentStatus d={d} />} />
+        );
       })}
     </div>
   );
@@ -276,13 +259,6 @@ export function DaoHome({ gateway }: { gateway: Gateway }) {
       <Prototypes gateway={gateway} />
       <NeedsAttention agents={gateway.agents} />
       <Proposals dao={gateway.dao} />
-      <Section title="Agents" description="The agent behind each prototype, as it stands now.">
-        <div className="grid gap-4 sm:grid-cols-2">
-          {gateway.agents.map((name) => (
-            <AgentCard key={name} name={name} />
-          ))}
-        </div>
-      </Section>
     </div>
   );
 }

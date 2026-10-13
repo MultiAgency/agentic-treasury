@@ -19,7 +19,8 @@ funds stay in the confidential balance. Mainnet: `agentic.sputnik-dao.near`'s tr
 
 - **Three quoted swaps.** Three assets need at most two swaps to rebalance, so the demo shows two.
 - **Unshield for payouts.** Not needed: payouts are confidential transfers from the payout agent,
-  which the treasury agent funds without a vote (`op_Y5KTotI2…`, 2026-10-11). Funds never go public.
+  which the treasury agent funds without a vote (`op_Y5KTotI2…`, 2026-10-11). Funds don't go public, as long as the payee can receive confidentially
+  ([enforcement](enforcement.md#what-a-stronger-claim-needs)).
 - **No address whitelist.** The brief expects whitelist mode to conflict with shielding. Here the
   treasury agent's `only` list (the DAO and the payout agent) didn't stop a shield on a test agent
   with the same list; no `policy_confidential_whitelist_conflict` exists in any public source.
@@ -38,7 +39,7 @@ Where this lives in the code: [architecture](architecture.md).
   (`listScheduledExecutions`) with a countdown and a cancel (`execution_cancel`), so the owner has a
   veto on every autopilot swap. Needs its own money-path design first: today a queued execution
   counts as unresolved and blocks new sends, and provider timelocks are held because their
-  release-time checks aren't established ([money path](money-path.md)).
+  release-time checks aren't established ([architecture](architecture.md#how-the-money-path-stays-safe-on-one-host)).
 - **Asset pinning, shown.** The policy lists the assets the agent spends; this server also refuses a
   swap into an unlisted one (`asset_out_not_allowed`, `src/authorize.ts`), which the provider doesn't
   check. Add it to the dashboard's evidence once refused on mainnet.

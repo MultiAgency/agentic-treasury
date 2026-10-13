@@ -11,12 +11,12 @@ https://invoices.multiagency.ai.
 |---|---|---|
 | Requests from anyone | The invoice page signs in any NEAR account. An agreed payee files an invoice. Anyone else files an **agreement request** the DAO sees on the payout agent's Agreement page | Offline: `test/invoice-http.test.ts` |
 | Whitelist = the DAO's agreement | Agreed payees are the confidential transfer destinations of the payout agent's `only` policy (`agreedPayees`, `src/authorize.ts`). Payees from the DAO's passed transfer proposals are offered for it (`daoPayees`, `src/chain.ts`) | Mainnet: payout agent added to the treasury agent's agreement by proposals #23–#25, 2026-10-11 |
-| New payee needs a fresh signed agreement | Agreeing is a policy update the DAO votes on; the payee then files the invoice. Nothing is paid because a vote passed | Mainnet: an unlisted payee was refused with `policy_destination_denied`, 2026-10-11 (README) |
+| New payee needs a fresh signed agreement | Agreeing is a policy update the DAO votes on; the payee then files the invoice. Nothing is paid because a vote passed | Mainnet: an unlisted payee was refused with `policy_destination_denied`, on the treasury agent, 2026-10-11 ([log](mainnet-log.md)) |
 | Invoices against agreed terms | An agreement carries terms: each invoice at most an amount, until a deadline. Either side starts it: a payee requests it, or the DAO offers it (a purchase order, a bounty or grant award). Each held payout shows whether it is within its payee's terms | Offline: `test/agreements.test.ts`. The terms are this server's, not the policy's: the vote on each payment enforces them |
 | Member quorum releases each payment | `owner_approval` holds every payout; the owner is the DAO, signing through NEAR MPC, so the DAO's own vote threshold is the quorum | Mainnet: approvals #17, #21, #26, #47; one-click #51 (README, docs/mainnet-log.md) |
-| Over-limit refused even with votes | Caps are checked when the payment is requested, so an over-cap payment is refused before there is anything to vote on | Mainnet: 11 USDC against a 10 USDC hourly cap, 409 `policy_denied`, 2026-10-11 |
+| Over-limit refused even with votes | Expected: the provider checks caps when a payment is requested, so an over-cap payment should be refused before there is anything to vote on | **Not yet shown on the payout agent** (25 USDC a payment). Related only: an over-cap transfer refused on the treasury agent, whose policy holds nothing for a vote ([log](mainnet-log.md)) |
 | Chain watchers can't rebuild the payout graph | Payments are confidential transfers; approval proposals read "Approve the pending confidential request" (#46–#53) | Mainnet: no public transactions on the payout account; the payee sees no sender, 2026-10-11 |
-| Requesters never learn the roster | The invoice page reads no DAO roles | By design. A Sputnik DAO's roles, proposers and votes are public on chain, so the roster is never secret; requesters just never deal with it |
+| Requesters never learn the roster | Neither the invoice page nor the public page reads DAO roles | By design. A Sputnik DAO's roles, proposers and votes are public on chain, so the roster is never secret; requesters just never deal with it |
 
 ## Differences from the brief
 
@@ -40,7 +40,10 @@ Where this lives in the code: [architecture](architecture.md).
 ## Gaps
 
 - Cumulative caps used up while a payout is held aren't re-checked before the vote
-  ([acceptance E8](envelope/ACCEPTANCE.md)).
+  (case E8 in [enforcement](enforcement.md#what-a-stronger-claim-needs)).
+- A payee must be able to receive confidentially: the provider documents that a confidential transfer's
+  recipient needs confidential intents enabled. A requester without it can be agreed but not paid; a public
+  payout for them isn't built.
 - The agreement-request flow hasn't run on mainnet yet: record its proposal and op ids here once it
   has.
 - See README **Not done yet** and [enforcement](enforcement.md).

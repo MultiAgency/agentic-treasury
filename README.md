@@ -32,7 +32,7 @@ Each doc maps its brief to what is built, how each claim is known, and what isn'
   and `pnpm books --csv` exports the ledger.
 
 How the money path keeps these safe (one send site, the journal, reconciliation, owner intents, invoice
-storage and the checks before each send) is in [docs/money-path.md](docs/money-path.md).
+storage and the checks before each send) is in [docs/architecture.md](docs/architecture.md#how-the-money-path-stays-safe-on-one-host).
 
 ## Run it
 
@@ -58,16 +58,16 @@ The command line has only what the dashboard doesn't: owner actions signed with 
 | `pnpm inspect [--whoami]` | The agent's policy, balances and grants, as the API returns them |
 | `pnpm reconcile [--poll]` | Operations without a proven outcome; `--poll` reads their statuses once, resending nothing |
 | `pnpm books [--csv]` | Balances against chain transfers and recorded executions; `--csv` prints the ledger |
-| `pnpm refusals [--live]` | Policy refusal probes; `--live` sends them for real |
 | `pnpm smoke` | Read-only check of the hosted dashboard and invoice page |
-| `pnpm run-report` | The unattended-run report ([docs/unattended-run.md](docs/unattended-run.md)) |
+| `pnpm run-report` | The unattended-run report ([operations](docs/operations.md#unattended-run-observing-the-treasury-autopilot)) |
 
 ## Hosted demo
 
 Two pages on Railway. Signing in with a NEAR wallet signs a message, never a transaction.
 
-- **Dashboard**, https://proto.multiagency.ai. Signed out, it shows only what the DAO's contract shows
-  on chain: its roles and proposals. Members of `agentic.sputnik-dao.near` sign in to see the treasury.
+- **Dashboard**, https://proto.multiagency.ai. Signed out, it shows the two prototypes and how each claim is
+  known, and reads nothing from the server. Members of `agentic.sputnik-dao.near` sign in to see the treasury
+  and the proposals.
   It is the treasury agent's executor and runs the payout agent approve-only.
 - **Invoices**, https://invoices.multiagency.ai, where anyone asks the DAO to be paid. It is the payout
   agent's executor.
@@ -122,7 +122,7 @@ offer them first, as a purchase order or an award. Agreeing lists the payee in t
 payee then files the invoice, which is held for its own vote ([facilitator](docs/facilitator.md)).
 The hosted dashboard reads the invoice host's agreements with a shared secret (`AGREEMENTS_URL`,
 `AGREEMENTS_SECRET`; [operations](docs/operations.md#payout-executor)). Sign-in, storage, retries and
-recovery are in [docs/money-path.md](docs/money-path.md#invoices).
+recovery are in [docs/architecture.md](docs/architecture.md#invoice-storage).
 
 ## DAO ownership
 
@@ -140,33 +140,18 @@ A confidential Trezu treasury funds its agent with a payment from its confidenti
 `nearcom:<the agent's wallet account>`, which the Treasury page links to. Without the `nearcom:`
 prefix, Trezu sends the payment out as a public withdrawal.
 
-## Mainnet results
+## Mainnet evidence
 
-Payouts from a confidential Trezu treasury (`agentic.sputnik-dao.near`), 2026-10-11. The payout agent
-was created, granted and added to the treasury agent's agreement by DAO vote (proposals #23 to #25).
-
-| Check | Result | Evidence |
-|---|---|---|
-| A payout waits for the DAO | 1 USDC to an agreed payee went `PENDING_APPROVAL`, was released by proposal #26 and settled | `op_ECYZZAMgrNUauo5YnlKdUrwmml8p_TP9yrs93ViY0GI` |
-| A new payee is refused | Refused with `policy_destination_denied` before anything was recorded or voted on | treasury agent, 0.01 USDC to an unlisted account |
-| Over-limit is refused | Refused with 409 `policy_denied` before anything was recorded or voted on | 11 USDC against a 10 USDC hourly cap |
-| Agents fund each other without a vote | The treasury agent sent the payout agent 5 USDC inside its caps | `op_Y5KTotI2PhJPjWdtKN4SXxEGrAuymJrArNhmYYlHzh4` |
-| Nothing public but the vote | The payout agent's account has no public transactions; no public NEAR Intents balances changed | NearBlocks, `mt_tokens_for_owner` |
-| The payee sees no sender | near.com shows "Receive 1 USDC" with only a one-time 1Click deposit address, which 1Click's public status lookup doesn't know | deposit address `f26a8ae5…a17ee9` |
-
-What stays visible or known: each approval is a public DAO proposal, so its timing shows; 1Click and
-NEAR Intents can see the mapping, and their terms don't guarantee confidentiality. A held payment
-stays approvable for 24 hours, but each vote request expires in about 5 minutes.
-
-Later mainnet runs (invoices, one-click approval, the held-payout balance, and the treasury agent
-rebalancing itself under a DAO-approved strategy) are logged in [docs/mainnet-log.md](docs/mainnet-log.md).
+Each prototype's doc maps every claim to how it is known: [facilitator](docs/facilitator.md),
+[treasury](docs/treasury.md). Every dated mainnet run, op ids and proposal numbers included, is in
+[docs/mainnet-log.md](docs/mainnet-log.md).
 
 ## Not done yet
 
 The [enforcement assessment](docs/enforcement.md#status) tracks the current evidence for the signed
 spending envelope, including cumulative limits, policy binding and execution-artifact trust.
 A provider `FAILED` status is currently treated as terminal locally; it is not independently verified
-as proof that a replacement payment is safe. See [recovery guidance](DEMO.md#the-live-moment-one-invoice-end-to-end).
+as proof that a replacement payment is safe. See [recovery guidance](DEMO.md#the-live-moment-one-invoice-end-to-end-facilitator).
 
 - The API keeps signing requests open for 5 to 10 minutes, so a slow council misses the window.
 - Trezu shows these proposals as a generic "sign on v1.signer", so a member voting there sees only a hash.

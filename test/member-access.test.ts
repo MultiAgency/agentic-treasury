@@ -50,6 +50,6 @@ test("a plain member reaches exactly the reads and owner/prepare; every other pr
 
 test("money and settings procedures are refused to members", () => {
   for (const path of ["pay", "sweep", "rebalance", "executePlan", "recover", "autopilot/set", "autopilot/tick",
-    "inbox/dismiss", "owner/submit", "treasury/link", "deposit", "steward/propose", "cancelPreparedInvoice", "refusals", "agreements/decline"])
+    "inbox/dismiss", "owner/submit", "treasury/link", "deposit", "steward/propose", "cancelPreparedInvoice", "agreements/decline"])
     assert.ok(!mayCall("member", path), path);
 });

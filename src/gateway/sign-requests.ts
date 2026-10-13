@@ -1,6 +1,6 @@
 /**
  * A Sputnik DAO proposal as its contract returns it, and the `v1.signer` request inside one. Decoding
- * only, from what the chain shows everyone: the public page uses it, so it imports nothing.
+ * only, from what the chain shows everyone, so it imports nothing.
  */
 
 export type DaoProposal = {

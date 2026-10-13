@@ -1,5 +1,5 @@
 import lockfile from "proper-lockfile";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { type OwnerWallet, type SubmitIntentRequest } from "@near-intents-agent-api/sdk";
 import { api, readStatus } from "./api.js";
@@ -50,6 +50,24 @@ const readPending = () => new Map<string, Prepared>(
   existsSync(PENDING_FILE) ? Object.entries(JSON.parse(readFileSync(PENDING_FILE, "utf8")) as Record<string, Prepared>) : [],
 );
 let pending = new Map<string, Prepared>();
+
+/**
+ * A NEAR delegate action (NEP-366) still waiting for the DAO's vote under `owner`, from any agent's
+ * server on this host. The owner key has one nonce sequence: whichever delegate action executes raises
+ * it, so a second one prepared meanwhile would fail after its own vote. Each server keeps its pending
+ * intents beside the others in `.owner-intents/`; another host's (a laptop's) aren't visible here.
+ */
+export function delegateWaiting(owner: string, now = Date.now()): Prepared | undefined {
+  if (!existsSync(".owner-intents")) return undefined;
+  for (const name of readdirSync(".owner-intents").filter((n) => n.endsWith(".json"))) {
+    let entries: Prepared[];
+    try { entries = Object.values(JSON.parse(readFileSync(join(".owner-intents", name), "utf8")) as Record<string, Prepared>); }
+    catch { continue; }
+    const waiting = entries.find((p) => p.dao?.delegate && p.dao.owner.account_id === owner && (p.stage ?? "prepared") === "prepared" && Date.parse(p.expiresAt) > now);
+    if (waiting) return waiting;
+  }
+  return undefined;
+}
 let assertOwnerLock: () => void = () => { throw new Error("Owner-intent storage requires its lock"); };
 let ownerQueue: Promise<unknown> = Promise.resolve();
 
@@ -184,6 +202,11 @@ async function prepareLocked(action: OwnerAction, signer: Signer) {
   }
   if (generated.signer.type !== "near" || generated.signer.account_id !== owner.account_id)
     throw new Error("This agent's owner is not the DAO's owner account");
+  if (generated.intent.standard === "nep366") {
+    const waiting = delegateWaiting(owner.account_id);
+    if (waiting) throw new Error(`Another owner action (${waiting.type}) is waiting for the DAO's vote until ${waiting.expiresAt}. ` +
+      "Both would use the owner key's next nonce, so this one would fail after its vote: finish or let the first expire, then try again.");
+  }
   // Read before the proposal is filed, so its signature can only come later.
   const dao = { ...(await signingRequest(generated.intent, owner)), since: await latestBlock() };
   hold(generated.correlation_id, { type: generated.type, expiresAt: generated.expires_at, grantToken, releases, dao, paymentApproval });

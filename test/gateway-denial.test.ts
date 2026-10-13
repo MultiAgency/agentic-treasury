@@ -189,9 +189,14 @@ test("a cross-site or malformed Origin is refused 403, not mistaken for a bad re
   assert.deepEqual(reached, []);
 });
 
+test("signed out, the gateway serves no roster or proposals: the old public view is gone", async () => {
+  assert.equal((await fetch(`${base}/gw/public`)).status, 404);
+  assert.equal((await fetch(`${base}/gw/proposals`)).status, 401);
+});
+
 test("a failure on the gateway's side is a 500 that shows no internals", async () => {
   // The stand-in RPC answers every view with the DAO's policy, which is not a proposal list.
-  const answer = await fetch(`${base}/gw/public`);
+  const answer = await fetch(`${base}/gw/proposals`, { headers: { cookie: `dao_session=${sessionToken("member.near", SECRET)}` } });
   assert.equal(answer.status, 500);
   assert.deepEqual(await answer.json(), { error: "Something went wrong. Try again later." });
 });
