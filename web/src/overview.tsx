@@ -215,15 +215,77 @@ function Allocation({ data }: { data: Book }) {
   );
 }
 
+/** The facilitator's story as counts: who asked, who is agreed, what waits for a vote, what was paid. */
+function Funnel() {
+  const agreements = useQuery(queries.agreements).data ?? [];
+  const held = useQuery(queries.held).data ?? [];
+  const activity = useQuery({ queryKey: ["activity"], queryFn: () => client.activity() }).data ?? [];
+  const paid = activity.filter((op) => op.status === "SUCCESS" && (op.request as { recipient?: string }).recipient).length;
+  const stages: { label: string; count: number; to: LinkProps["to"] }[] = [
+    { label: "Asked to be paid", count: agreements.filter((a) => a.status === "requested").length, to: "/payees" },
+    { label: "Agreement proposed or agreed", count: agreements.filter((a) => a.status === "proposed" || a.status === "agreed").length, to: "/payees" },
+    { label: "Held for the DAO's vote", count: held.length, to: "/" },
+    { label: "Paid confidentially", count: paid, to: "/activity" },
+  ];
+  return (
+    <ol className="grid gap-3 sm:grid-cols-4">
+      {stages.map((stage, i) => (
+        <li key={stage.label}>
+          <Link to={stage.to} className="flex h-full flex-col gap-1 rounded-2xl border bg-card p-4 hover:bg-muted">
+            <span className="text-sm text-muted-foreground">
+              {i + 1}. {stage.label}
+            </span>
+            <span className="font-heading text-3xl font-semibold tabular-nums">{stage.count}</span>
+          </Link>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** The treasury's story ends with what the autopilot did on its own, run by run. */
+function AutopilotRuns() {
+  const status = useQuery({ queryKey: ["autopilot"], queryFn: () => client.autopilot.get() }).data;
+  const runs = (useQuery(queries.inbox).data ?? []).filter((e) => e.level === "run").slice(0, 3);
+  if (!status) return null;
+  return (
+    <Section
+      title="Autopilot"
+      description={status.on ? `Runs every ${status.everyMin} minutes, executing rebalances up to $${status.maxUsd}.` : "Off: rebalances run only when someone runs them."}
+      action={
+        <Link to="/automations" className="text-sm text-muted-foreground hover:text-foreground">
+          Automations
+        </Link>
+      }
+    >
+      {runs.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No runs yet.</p>
+      ) : (
+        <ul className="flex flex-col divide-y text-sm">
+          {runs.map((r) => (
+            <li key={r.id} className="flex gap-3 py-2">
+              <span className="w-28 shrink-0 text-muted-foreground">{ago(r.at)}</span>
+              <span>{r.text}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
+  );
+}
+
 export function Overview() {
   const { data, setup } = useAgent();
+  const kind = kindOf(data);
   return (
     <>
       <Held data={data} setup={setup} />
-      <WhatThisShows kind={kindOf(data)} />
+      <WhatThisShows kind={kind} dao={setup.dao?.id} />
+      {kind === "facilitator" && <Funnel />}
       <Figures data={data} />
+      {kind === "treasury" && <Allocation data={data} />}
+      {kind === "treasury" && <AutopilotRuns />}
       <Attention />
-      {swaps(data) && <Allocation data={data} />}
       <Activity limit={5} />
     </>
   );

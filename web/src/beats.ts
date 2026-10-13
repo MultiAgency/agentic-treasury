@@ -9,9 +9,13 @@ export type Kind = "facilitator" | "treasury";
 /** How a claim is known, strongest first. */
 export type Proof = "mainnet" | "offline" | "design" | "provider-docs" | "not-applicable";
 
-export type Beat = { claim: string; proof: Proof; evidence: string };
+/** `proposal`: the DAO proposal the evidence cites, linked to where anyone can read it. */
+export type Beat = { claim: string; proof: Proof; evidence: string; proposal?: number };
 
-export const PROTOTYPES: Record<Kind, { name: string; tagline: string; beats: Beat[] }> = {
+/** A demo step; `on` says which site it happens on. */
+export type Step = { text: string; on: "invoices" | "dashboard" };
+
+export const PROTOTYPES: Record<Kind, { name: string; tagline: string; beats: Beat[]; demo: Step[] }> = {
   facilitator: {
     name: "Confidential Treasury Facilitator",
     tagline:
@@ -21,6 +25,7 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; beats: Be
         claim: "A payee files an invoice, the DAO votes, and USDC lands confidentially",
         proof: "mainnet",
         evidence: "op_uUMA-amAfCgP… paid after proposal #47, 2026-10-12",
+        proposal: 47,
       },
       {
         claim: "Someone the DAO hasn't agreed to pay is routed to a new agreement, not paid",
@@ -47,6 +52,12 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; beats: Be
         proof: "design",
         evidence: "The invoice page reads no DAO roles. Sputnik roles and votes are still public on chain",
       },
+    ],
+    demo: [
+      { on: "invoices", text: "Sign in with NEAR and ask to be paid. Someone the DAO hasn't agreed to pay files a request; nothing is paid." },
+      { on: "dashboard", text: "On Agreements, agree to the request's terms. That files a policy update for the DAO's vote." },
+      { on: "invoices", text: "Once agreed, the payee files the invoice. It is held for the DAO's vote." },
+      { on: "dashboard", text: "Approve it on the Overview, checked against the terms. It is paid confidentially and shows in Activity." },
     ],
   },
   treasury: {
@@ -84,6 +95,12 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; beats: Be
         proof: "not-applicable",
         evidence: "Payouts are confidential transfers end to end, so funds never need to go public",
       },
+    ],
+    demo: [
+      { on: "dashboard", text: "Overview: the book against its target, and the USD budget left this month." },
+      { on: "dashboard", text: "Automations: preview a rebalance. Each leg is quoted and checked against the strategy's cost cap." },
+      { on: "dashboard", text: "Run now: the swaps settle inside the caps, and the budget left drops by their value." },
+      { on: "dashboard", text: "Activity: each swap with the policy revision it ran under." },
     ],
   },
 };

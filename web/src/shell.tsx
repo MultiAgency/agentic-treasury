@@ -11,7 +11,7 @@ import {
 } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, type LinkProps, Outlet } from "@tanstack/react-router";
-import { createContext, type ReactNode, useContext } from "react";
+import { createContext, type ReactNode, useContext, useEffect } from "react";
 import { client, kindOf, type Overview } from "./lib";
 import { type Kind, PROTOTYPES } from "./beats";
 import { ViewerBadge } from "./session";
@@ -133,6 +133,10 @@ export function Shell() {
   });
   const treasury = useQuery({ queryKey: ["treasury"], queryFn: () => client.treasury.get(), enabled: ready });
   const error = setup.error ?? overview.error ?? treasury.error;
+  const name = overview.data && PROTOTYPES[kindOf(overview.data)].name;
+  useEffect(() => {
+    if (name) document.title = name;
+  }, [name]);
 
   if (error)
     return (

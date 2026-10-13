@@ -1,7 +1,7 @@
-import { ArrowSquareOut, ChartPieSlice, HandCoins, LockSimple, Receipt } from "@phosphor-icons/react";
+import { ArrowSquareOut, LockSimple } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import type { PublicProposal, PublicView } from "../../src/gateway/public.js";
-import { PROTOTYPES } from "./beats";
+import { PrototypeCard } from "./showcase";
 import { ago, gw } from "./lib";
 import { SignIn } from "./session";
 import { Badge, Card, Section, Spinner, type Tone } from "./ui";
@@ -66,38 +66,14 @@ export function PublicHome({ dao, invoices }: { dao: string; invoices: string | 
         </a>
       </header>
 
-      {/* Names and what each does, never data: this page shows nothing the chain doesn't. */}
-      <div className="grid gap-4 sm:grid-cols-2">
-        {([["facilitator", HandCoins], ["treasury", ChartPieSlice]] as const).map(([kind, Icon]) => (
-          <Card key={kind}>
-            <div className="flex items-center gap-3">
-              <Icon size={20} />
-              <h2 className="text-xl font-semibold">{PROTOTYPES[kind].name}</h2>
-            </div>
-            <p className="text-sm text-muted-foreground">{PROTOTYPES[kind].tagline}</p>
-          </Card>
-        ))}
+      {/* Claims and how each is known, never their evidence: this page shows nothing the chain doesn't. */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <PrototypeCard kind="facilitator" invoices={invoices} />
+        <PrototypeCard kind="treasury" />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <SignIn dao={dao} />
-        {invoices && (
-          <Card>
-            <div className="flex flex-col gap-2">
-              <h2 className="text-xl font-semibold">Get paid</h2>
-              <p className="text-sm text-muted-foreground">
-                Anyone can ask the DAO to pay them, signed in with their NEAR account. An agreed payee files an invoice; anyone else
-                files a request the DAO answers.
-              </p>
-            </div>
-            <a
-              className="inline-flex h-11 w-fit items-center gap-2 rounded-full border px-5 font-medium hover:bg-muted"
-              href={invoices}
-            >
-              <Receipt size={16} /> Request a payment
-            </a>
-          </Card>
-        )}
       </div>
 
       {view.error ? (

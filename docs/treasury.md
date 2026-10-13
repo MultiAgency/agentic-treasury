@@ -24,6 +24,8 @@ funds stay in the confidential balance. Mainnet: `agentic.sputnik-dao.near`'s tr
   treasury agent's `only` list (the DAO and the payout agent) didn't stop a shield on a test agent
   with the same list; no `policy_confidential_whitelist_conflict` exists in any public source.
 
+Where this lives in the code: [architecture](architecture.md).
+
 ## Gaps
 
 - What a swap buys is checked by this server, not by the provider; strict cumulative per-asset

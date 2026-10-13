@@ -9,6 +9,7 @@ policy, grant, purpose, authorization, operation, unresolved, held payout, refus
 
 ## Where things are
 - `README.md` — what runs, how to start it, the first mainnet results, and **Not done yet**.
+- `docs/architecture.md` — which files are shared core, facilitator or treasury; the one send site.
 - `docs/money-path.md` — the local safeguards: dispatch, journal, reconciliation, invoice storage,
   checks before each send. `docs/mainnet-log.md` — later dated mainnet runs.
 - `docs/operations.md` — deployment, executor migration and state preservation.

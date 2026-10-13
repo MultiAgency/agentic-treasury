@@ -56,6 +56,29 @@ the DAO contract do; only a live check does.
 Today the DAO has one member, `multiagentic.near`, who is also the only operator. Signing in with it shows the
 operator view; showing a member-only view needs a second account in the DAO.
 
+## The two prototypes, outcome by outcome
+
+Each row is one outcome from the prototype's brief: what to do, what you'll see, and what it leaves as
+evidence. Where this build differs from the brief, the row says so. Details: [facilitator](docs/facilitator.md),
+[treasury](docs/treasury.md).
+
+### Confidential Treasury Facilitator
+
+| Outcome | Do | See | Evidence |
+|---|---|---|---|
+| Request → vote → paid confidentially | On the invoice page, an agreed payee submits; on the payout agent's Overview, approve; vote | The invoice moves from waiting to paid; the payee sees no member account | The op id and the approval's proposal # (mainnet: `op_uUMA-amAfCgP…`, #47). USDC, not USDT; the quorum is the DAO's own vote threshold |
+| A new payee is routed to a new agreement | Sign in on the invoice page with an account the DAO hasn't agreed to pay, and submit | The page says it waits for the DAO; the request appears on **Agreements** | The request's id, then the policy update's proposal # once agreed. Tested offline; not yet run on mainnet |
+| Over-limit is refused | Submit an invoice over the policy's cap | Refused before anything is voted on | The refusal code. Votes never come into it: the cap is checked when the payment is requested (mainnet: 409 `policy_denied`, 2026-10-11) |
+| Chain watchers can't rebuild the payouts | Open the DAO on the block explorer, or the public page | Approvals read "Approve the pending confidential request": no payee, no amount | The proposal #s (#46–#53) |
+
+### Agentic Treasury Management
+
+| Outcome | Do | See | Evidence |
+|---|---|---|---|
+| Balances in, quoted plan out, swaps inside the caps | Automations → Preview, then Run now | Each leg quoted and within the cost cap; "Monthly budget left" drops by the swaps' value | The op ids, each with its policy revision in Activity. Three assets need at most two swaps, not three |
+| A breach is refused | A run whose value exceeds the budget left | Activity shows it refused with `spend_budget_exceeded`; nothing moved | The refusal (mainnet: 2026-10-12 13:57Z and 14:06Z) |
+| Idle funds go confidential | When the agent holds a public balance, let the autopilot run | "Held privately" returns to 100% | The shield's op id. Tested offline and on a test agent; the treasury agent itself hasn't shielded on mainnet yet |
+
 ## 1. As a visitor: what a confidential treasury shows
 
 1. Open https://proto.multiagency.ai without signing in. It shows the DAO's roles and its latest proposals, read

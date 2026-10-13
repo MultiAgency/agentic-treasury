@@ -35,6 +35,8 @@ https://invoices.multiagency.ai.
   order (containment per order), refusal at the grant, payment without a vote, and the supplier-side
   forward to its treasury.
 
+Where this lives in the code: [architecture](architecture.md).
+
 ## Gaps
 
 - Cumulative caps used up while a payout is held aren't re-checked before the vote

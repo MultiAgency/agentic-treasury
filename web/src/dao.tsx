@@ -2,7 +2,8 @@ import { ArrowRight, CheckCircle, Robot, WarningOctagon } from "@phosphor-icons/
 import { useQueries, useQuery } from "@tanstack/react-query";
 import type { Decoded } from "../../src/gateway/proposals.js";
 import { type Attention, attentionOf } from "./attention";
-import { PROTOTYPES } from "./beats";
+import { type Kind, PROTOTYPES } from "./beats";
+import { PrototypeCard } from "./showcase";
 import { ago, bookValue, clientFor, gw, kindOf, minutesSeconds, useCountdown, usd } from "./lib";
 import { type Gateway, ViewerBadge } from "./session";
 import { Badge, Card, Details, Section, Spinner, type Tone } from "./ui";
@@ -243,6 +244,20 @@ function AgentCard({ name }: { name: string }) {
   );
 }
 
+/** The two prototypes first, each opening its agent's dashboard once that agent has answered. */
+function Prototypes({ gateway }: { gateway: Gateway }) {
+  const results = useQueries({ queries: gateway.agents.map(agentQuery) });
+  const agentOf = (kind: Kind) => gateway.agents.find((_, i) => results[i]?.data && kindOf(results[i].data.overview) === kind);
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {(["facilitator", "treasury"] as const).map((kind) => {
+        const agent = agentOf(kind);
+        return <PrototypeCard key={kind} kind={kind} open={agent ? `/a/${agent}/` : undefined} invoices={gateway.invoices} />;
+      })}
+    </div>
+  );
+}
+
 export function DaoHome({ gateway }: { gateway: Gateway }) {
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-10 p-4 sm:p-8">
@@ -250,16 +265,18 @@ export function DaoHome({ gateway }: { gateway: Gateway }) {
         <div className="flex flex-col gap-1">
           <h1 className="font-heading text-2xl font-semibold">{gateway.dao}</h1>
           <p className="text-sm text-muted-foreground">
-            The agents this DAO owns. Every owner action is a proposal the council votes on in Trezu; check it here first.
+            Two prototypes, each an agent this DAO owns. Every owner action is a proposal the council votes on in Trezu; check it here
+            first.
           </p>
         </div>
         <div className="w-64">
           <ViewerBadge />
         </div>
       </header>
+      <Prototypes gateway={gateway} />
       <NeedsAttention agents={gateway.agents} />
       <Proposals dao={gateway.dao} />
-      <Section title="Prototypes" description="Each is one agent this DAO owns, with its own dashboard.">
+      <Section title="Agents" description="The agent behind each prototype, as it stands now.">
         <div className="grid gap-4 sm:grid-cols-2">
           {gateway.agents.map((name) => (
             <AgentCard key={name} name={name} />
