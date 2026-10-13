@@ -4,7 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { ago, amountOf, client, describeRequest, fromUnits, queries, swaps, useAttempt } from "./lib";
 import { useIsOperator } from "./viewer";
 import { useAgent } from "./shell";
-import { Badge, Button, Card, ConfirmButton, ErrorBox, Section, Spinner, statusTone } from "./ui";
+import { Badge, Button, Card, ConfirmButton, CopyButton, Details, ErrorBox, Section, Spinner, statusTone } from "./ui";
 
 /**
  * Money actions without a proven outcome. Each blocks every new one, so the agent waits until they
@@ -33,8 +33,11 @@ export function Unresolved() {
             <li key={op.key} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-3 text-sm first:pt-0 last:pb-0">
               <span className="whitespace-nowrap text-muted-foreground sm:w-32">{ago(op.at)}</span>
               <span className="w-20 font-medium capitalize">{op.kind}</span>
-              <span className="flex-1 font-mono text-xs text-muted-foreground">{op.key}</span>
+              <span className="flex-1" />
               <Badge tone="warning">{op.sent ? (op.status?.toLowerCase() ?? "sent") : op.status === "PREPARED" ? "prepared, never submitted" : "submission outcome unknown"}</Badge>
+              <Details summary="Idempotency key" className="basis-full">
+                <span className="break-all font-mono text-xs text-muted-foreground">{op.key}</span>
+              </Details>
             </li>
           ))}
         </ul>
@@ -43,8 +46,10 @@ export function Unresolved() {
           <Button variant="outline" size="sm" disabled={busy} onClick={() => run()}>
             {busy && <Spinner />} Check status
           </Button>
-          <span className="text-xs text-muted-foreground">Replay is blocked. Missing operation IDs require review; they do not prove a payment was unsent.</span>
         </div>
+        <Details summary="Why it isn't simply sent again">
+          <p className="text-muted-foreground">Replay is blocked. Missing operation IDs require review; they do not prove a payment was unsent.</p>
+        </Details>
         <ErrorBox error={error} />
       </Card>
     </Section>
@@ -67,14 +72,16 @@ export function InvoiceReview() {
         </Badge>
       </div>
       <p className="text-sm text-muted-foreground">Reserved: {fromUnits(invoice.reservation, 6)} USDC · Filed {ago(invoice.at)}</p>
-      <p className="break-all font-mono text-xs text-muted-foreground">Invoice {invoice.id}<br />Payment {invoice.operation.idempotencyKey}</p>
       {invoice.revisions.map((r) => <p key={r.revision} className="text-sm">
         Revision {r.revision}: {fromUnits(r.amount, 6)} USDC{r.note ? ` · ${r.note}` : ""}{r.review ? " · Needs review; original payment unchanged" : ""}
       </p>)}
-      {invoice.operation.submissionState === "PREPARED" && <ConfirmButton
-        label="Cancel unsubmitted invoice" title="Cancel this unsubmitted invoice?"
-        description="This payment has never been submitted. Its reservation will be released. Its identity and revisions will remain in the records."
-        confirm="Cancel invoice" onConfirm={() => attempt(() => client.cancelPreparedInvoice({ id: invoice.id }))} />}
+      <Details summary="Identifiers and cancellation">
+        <p className="break-all font-mono text-xs text-muted-foreground">Invoice {invoice.id}<br />Payment {invoice.operation.idempotencyKey}</p>
+        {invoice.operation.submissionState === "PREPARED" && <div><ConfirmButton
+          label="Cancel unsubmitted invoice" title="Cancel this unsubmitted invoice?"
+          description="This payment has never been submitted. Its reservation will be released. Its identity and revisions will remain in the records."
+          confirm="Cancel invoice" onConfirm={() => attempt(() => client.cancelPreparedInvoice({ id: invoice.id }))} /></div>}
+      </Details>
     </Card>)}
   </Section>;
 }
@@ -101,26 +108,39 @@ export function Activity({ limit }: { limit?: number }) {
         <p className="text-sm text-muted-foreground">No actions yet.{swaps(overview) && " Preview a rebalance to get started."}</p>
       ) : (
         <ol className="flex flex-col">
-          {data.slice(0, limit).map((op) => (
-            <li key={`${op.at}-${op.kind}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b py-3 text-sm last:border-0">
-              <span className="whitespace-nowrap text-muted-foreground sm:w-32">{ago(op.at)}</span>
-              <span className="w-20 font-medium capitalize">{op.kind}</span>
-              <span className="order-last basis-full tabular-nums sm:order-none sm:basis-0 sm:flex-1">{describeRequest(op.request, overview.book)}</span>
-              <span className="ml-auto">
-                {op.refused ? (
-                  // A probe exists to be refused; any other refusal means the policy stopped the agent.
-                  // A probe refused for want of funds never reached the policy: it proves nothing.
-                  <Badge tone={op.kind !== "refusal" ? "warning" : op.refused === "insufficient_balance" ? "neutral" : "success"}>
-                    refused · <span className="font-mono">{op.refused}</span>
-                  </Badge>
-                ) : op.kind === "refusal" ? (
-                  <Badge tone="destructive">passed · {op.status?.toLowerCase() ?? "unsettled"}</Badge>
-                ) : (
-                  <Badge tone={statusTone(op.status)}>{op.status?.toLowerCase() ?? "unsettled"}</Badge>
+          {data.slice(0, limit).map((op) => {
+            // A probe sends on purpose to show the policy refusing it; older logs call it `verify-refusal`.
+            const probe = op.kind === "refusal" || op.kind === "verify-refusal";
+            return (
+              <li key={`${op.at}-${op.kind}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b py-3 text-sm last:border-0">
+                <span className="whitespace-nowrap text-muted-foreground sm:w-32">{ago(op.at)}</span>
+                <span className="w-20 font-medium capitalize">{probe ? "Policy test" : op.kind}</span>
+                <span className="order-last basis-full tabular-nums sm:order-none sm:basis-0 sm:flex-1">{describeRequest(op.request, overview.book)}</span>
+                <span className="ml-auto">
+                  {op.refused ? (
+                    // A probe exists to be refused; any other refusal means the policy stopped the agent.
+                    // A probe refused for want of funds never reached the policy: it proves nothing.
+                    <Badge tone={!probe ? "warning" : op.refused === "insufficient_balance" ? "neutral" : "success"}>
+                      refused · <span className="font-mono">{op.refused}</span>
+                    </Badge>
+                  ) : probe ? (
+                    <Badge tone="destructive">passed · {op.status?.toLowerCase() ?? "unsettled"}</Badge>
+                  ) : (
+                    <Badge tone={statusTone(op.status)}>{op.status?.toLowerCase() ?? "unsettled"}</Badge>
+                  )}
+                </span>
+                {op.policyDigest && (
+                  <Details summary={`Ran under policy revision ${op.policyRevision ?? "–"}`} className="order-last basis-full">
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="break-all font-mono text-xs text-muted-foreground">{op.policyDigest}</span>
+                      <CopyButton text={op.policyDigest} />
+                    </span>
+                    {op.planId && <span className="font-mono text-xs text-muted-foreground">plan {op.planId}</span>}
+                  </Details>
                 )}
-              </span>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ol>
       )}
     </Section>
@@ -151,11 +171,6 @@ export function Books() {
     <Section
       title="Books"
       description="Public balances checked against the chain, confidential ones against the API's recorded executions."
-      action={
-        <Button variant="outline" size="sm" onClick={downloadLedger}>
-          <DownloadSimple size={16} /> Ledger CSV
-        </Button>
-      }
     >
       {books.error ? (
         <p className="text-sm text-warning-muted-foreground">{books.error.message}</p>
@@ -184,6 +199,13 @@ export function Books() {
               </li>
             ))}
           </ul>
+          <Details summary="Export" className="border-t pt-3">
+            <div>
+              <Button variant="outline" size="sm" onClick={downloadLedger}>
+                <DownloadSimple size={16} /> Ledger CSV
+              </Button>
+            </div>
+          </Details>
         </Card>
       )}
     </Section>

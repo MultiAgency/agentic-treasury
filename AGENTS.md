@@ -8,7 +8,9 @@ Vocabulary is in `CONTEXT.md`: use its terms in code, tests, docs and conversati
 policy, grant, purpose, authorization, operation, unresolved, held payout, refusal). Read it first.
 
 ## Where things are
-- `README.md` — what runs, how to start it, mainnet evidence, and **Not done yet**.
+- `README.md` — what runs, how to start it, the first mainnet results, and **Not done yet**.
+- `docs/money-path.md` — the local safeguards: dispatch, journal, reconciliation, invoice storage,
+  checks before each send. `docs/mainnet-log.md` — later dated mainnet runs.
 - `docs/operations.md` — deployment, executor migration and state preservation.
 - `DEMO.md` — the hosted walkthrough (kept out of the app so copy edits don't redeploy `dao`).
 - `docs/enforcement.md` — what the signed envelope guarantees today and the sequence to close gaps;
@@ -16,7 +18,7 @@ policy, grant, purpose, authorization, operation, unresolved, held payout, refus
 - `docs/unattended-run.md` — how autopilot evidence is collected and reported.
 
 ## The money path
-Files: `src/agent.ts` (dispatch), `authorize.ts`, `lock.ts`, `ops.ts`, `plans.ts`, `autopilot.ts`,
+Files: `src/agent.ts` (dispatch), `authorize.ts`, `lock.ts`, `ops.ts`, `plans.ts`, `treasury.ts`, `autopilot.ts`,
 `invoices.ts`, `invoice-store.ts`, `payouts.ts`, `payment-approval.ts`, `owner-intents.ts`,
 `owner-requests.ts`, `owner.ts`, `recover.ts`, `reconcile.ts`, `probes.ts` (live refusal probes send
 for real). Invariants every change keeps:
@@ -69,4 +71,4 @@ Every sentence in README, DEMO.md and docs states exactly what was shown, and ho
 - `CONTEXT.md` updated when a concept is added or renamed.
 - README/DEMO/docs claims match the change (see Calibrated claims).
 - State-format changes ship with a migration that requires a stopped executor and preserves
-  `.ops/`, `.invoices/`, `.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`.
+  `.ops/`, `.invoices/`, `.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`, `.agreements/`.

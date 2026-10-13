@@ -22,7 +22,7 @@ export function Steward() {
     <Card>
       <CardHeader
         icon={<Robot size={20} weight="bold" />}
-        title="Steward"
+        title="Steward (experimental)"
         description="GLM 5.3 Flash on NEAR AI Cloud proposes a plan inside the policy. Each response is signed in a TEE and verified before its tool calls run. Executing runs the plan exactly as proposed."
       />
 

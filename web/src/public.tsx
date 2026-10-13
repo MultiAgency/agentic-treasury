@@ -1,6 +1,7 @@
-import { ArrowSquareOut, LockSimple, Receipt } from "@phosphor-icons/react";
+import { ArrowSquareOut, ChartPieSlice, HandCoins, LockSimple, Receipt } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import type { PublicProposal, PublicView } from "../../src/gateway/public.js";
+import { PROTOTYPES } from "./beats";
 import { ago, gw } from "./lib";
 import { SignIn } from "./session";
 import { Badge, Card, Section, Spinner, type Tone } from "./ui";
@@ -50,10 +51,9 @@ export function PublicHome({ dao, invoices }: { dao: string; invoices: string | 
         <p className="flex items-start gap-2 text-sm text-muted-foreground">
           <LockSimple size={16} className="mt-0.5 shrink-0" />
           <span>
-            A confidential treasury run by two agents this DAO owns: one keeps the treasury at its target allocation, the other pays the
-            DAO's payees. Every owner action, from creating an agent to changing its rules, is a proposal the council votes on. Balances,
-            payments, swaps and the agents' rules are visible to members only. Below is everything the DAO's contract shows to anyone,
-            read from chain.
+            A confidential treasury run by two agents this DAO owns, each a prototype below. Every owner action, from creating an agent to
+            changing its rules, is a proposal the council votes on. Balances, payments, swaps and the agents' rules are visible to members
+            only. Further down is everything the DAO's contract shows to anyone, read from chain.
           </span>
         </p>
         <a
@@ -66,19 +66,35 @@ export function PublicHome({ dao, invoices }: { dao: string; invoices: string | 
         </a>
       </header>
 
+      {/* Names and what each does, never data: this page shows nothing the chain doesn't. */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        {([["facilitator", HandCoins], ["treasury", ChartPieSlice]] as const).map(([kind, Icon]) => (
+          <Card key={kind}>
+            <div className="flex items-center gap-3">
+              <Icon size={20} />
+              <h2 className="text-xl font-semibold">{PROTOTYPES[kind].name}</h2>
+            </div>
+            <p className="text-sm text-muted-foreground">{PROTOTYPES[kind].tagline}</p>
+          </Card>
+        ))}
+      </div>
+
       <div className="grid gap-4 sm:grid-cols-2">
         <SignIn dao={dao} />
         {invoices && (
           <Card>
             <div className="flex flex-col gap-2">
-              <h2 className="text-xl font-semibold">Payees</h2>
-              <p className="text-sm text-muted-foreground">Agreed payees submit invoices on their own page, signed in with their NEAR account.</p>
+              <h2 className="text-xl font-semibold">Get paid</h2>
+              <p className="text-sm text-muted-foreground">
+                Anyone can ask the DAO to pay them, signed in with their NEAR account. An agreed payee files an invoice; anyone else
+                files a request the DAO answers.
+              </p>
             </div>
             <a
               className="inline-flex h-11 w-fit items-center gap-2 rounded-full border px-5 font-medium hover:bg-muted"
               href={invoices}
             >
-              <Receipt size={16} /> Submit an invoice
+              <Receipt size={16} /> Request a payment
             </a>
           </Card>
         )}

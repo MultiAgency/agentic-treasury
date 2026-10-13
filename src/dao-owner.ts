@@ -1,6 +1,6 @@
 import type { Intent, OwnerWallet } from "@near-intents-agent-api/sdk";
 import { encodeSignedDelegateAction, Near, parsePublicKey } from "near-kit";
-import { delegateTransaction, mainnet, transactionsApi } from "./chain.js";
+import { accountExists, delegateTransaction, mainnet, transactionsApi } from "./chain.js";
 import { nep413Hash, rawKey, verifyEd25519 } from "./nep413.js";
 
 /**
@@ -23,9 +23,7 @@ export async function daoOwner(dao: string): Promise<NearOwner> {
 }
 
 /** The owner account exists once funded; a delegate action needs its access key on chain. */
-export async function ownerFunded(owner: NearOwner) {
-  return near.accountExists(owner.account_id);
-}
+export const ownerFunded = (owner: NearOwner) => accountExists(owner.account_id);
 
 /**
  * NEP-366: the delegate action near-kit builds for `payload`, signed by a key store whose one key

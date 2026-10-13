@@ -5,7 +5,7 @@ import type { Tone } from "./ui";
 /** What a person must act on for one agent, each with the page to act on, relative to the agent's pages. */
 export type Attention = {
   tone: Extract<Tone, "destructive" | "warning" | "info">;
-  to: "/activity" | "/policy" | "/automations";
+  to: "/" | "/activity" | "/policy" | "/automations";
   action: string;
   text: string;
   /** The autopilot inbox entry this item shows, which the owner can dismiss. */
@@ -32,13 +32,15 @@ export function attentionOf({ setup, overview, held, unresolved, inbox }: Reads)
   }
   if (overview.policy.policy?.frozen)
     items.push({ tone: "destructive", to: "/policy", action: "Review", text: "The agent is frozen. Nothing moves until the owner unfreezes it." });
+  else if (overview.notInForce)
+    items.push({ tone: "destructive", to: "/policy", action: "Review", text: `The policy isn't in force: ${overview.notInForce}. Nothing moves until it is.` });
   const grant = setup.grant;
   if (!grant) items.push({ tone: "destructive", to: "/policy", action: "Issue", text: "No live grant: the agent can't send." });
   else if (Date.parse(grant.expiresAt) - Date.now() < GRANT_WARNING_DAYS * 86_400_000)
     items.push({ tone: "warning", to: "/policy", action: "Renew", text: `The agent's grant expires ${ago(grant.expiresAt)}. The owner signs a new one when it does.` });
   for (const h of held) {
     const r = h.request as { amount?: string; asset?: string; recipient?: string };
-    items.push({ tone: "warning", to: "/policy", action: "Approve",
+    items.push({ tone: "warning", to: "/", action: "Approve",
       text: `${r.amount && r.asset ? amountOf(r.amount, r.asset, overview.book) : "A payout"} to ${r.recipient ?? "a payee"} is held for the owner's approval (requested ${ago(h.at)}).` });
   }
   // What the autopilot raised while no one was watching, until the owner dismisses it.

@@ -4,7 +4,7 @@ These instructions describe the repository configuration. Deploys, restarts and 
 performed by the owner. For the product and recorded results, see [README](../README.md).
 
 Preserve the complete state when moving an executor: `.ops/`, `.invoices/` (including SQLite journals),
-`.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`, any legacy `.intake/` files, and its
+`.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`, `.agreements/`, any legacy `.intake/` files, and its
 settings file. Stop writers before copying state; never start the destination before stopping the
 source. The lease coordinates processes on one host only.
 
@@ -53,6 +53,13 @@ owner but never sends, reconciles or serves invoices. A lifetime lease prevents 
 current-version executor on the same host/user; it is not distributed fencing.
 For an existing `pnpm server` or gateway-managed worker, set `INVOICES_PORT=8791` in that worker's
 settings instead. A gateway can point at the already-running loopback worker without `envFile`.
+
+**Agreements across hosts.** Agreement requests and offers live with the invoice page, in the payout
+executor's `.agreements/`. The hosted dashboard's approve-only payout instance reads and answers them on
+that host: set the same random `AGREEMENTS_SECRET` (32+ characters) on the invoices service and in the
+dashboard's `.env.payout`, and `AGREEMENTS_URL=https://invoices.multiagency.ai` in `.env.payout`. Without
+the secret on the invoices service, its `/internal/agreements` endpoint doesn't exist; without both on
+the dashboard, its Agreements list reads its own (empty) store.
 
 ## Invoice migration and deployment
 

@@ -94,8 +94,10 @@ export type Decoded = {
   hash: string;
 } & (
   | { what: "agent"; agent: string; type: string; correlationId: string; expiresAt: string; state: DaoRequest["state"]; check: Check }
-  /** An agent-owner signature nothing here prepared: don't approve it without knowing where it's from. */
+  /** An agent-owner signature nothing here prepared, every agent having answered: don't approve it without knowing where it's from. */
   | { what: "unknown" }
+  /** An agent-owner signature no answering agent prepared, while `unanswered` agents couldn't be asked: not yet checkable. */
+  | { what: "unchecked"; unanswered: string[] }
   /** A finished agent-owner proposal: what it signed was submitted and is no longer waited for. */
   | { what: "past" }
   /** Trezu's own confidential payment, signed on the DAO's path rather than the agents'. */
@@ -103,9 +105,13 @@ export type Decoded = {
   | { what: "other"; path: string }
 );
 
-/** Every `v1.signer` proposal among `proposals`, newest first, matched against what the agents wait for. */
-export function decodeProposals(dao: string, proposals: DaoProposal[], requests: Record<string, DaoRequest[]>): Decoded[] {
-  const byHash = new Map(Object.entries(requests).flatMap(([agent, list]) => list.map((r) => [r.hash.toLowerCase(), { agent, request: r }] as const)));
+/**
+ * Every `v1.signer` proposal among `proposals`, newest first, matched against what the agents wait for.
+ * An agent's requests are `null` when it didn't answer: that is no evidence it prepared nothing.
+ */
+export function decodeProposals(dao: string, proposals: DaoProposal[], requests: Record<string, DaoRequest[] | null>): Decoded[] {
+  const byHash = new Map(Object.entries(requests).flatMap(([agent, list]) => (list ?? []).map((r) => [r.hash.toLowerCase(), { agent, request: r }] as const)));
+  const unanswered = Object.keys(requests).filter((agent) => requests[agent] === null);
   return proposals
     .flatMap((p): Decoded[] => {
       const sign = signRequestOf(p);
@@ -122,7 +128,10 @@ export function decodeProposals(dao: string, proposals: DaoProposal[], requests:
       if (sign.path === dao) return [{ ...base, what: "trezu" as const }];
       if (sign.path !== OWNER_PATH || sign.domainId !== 1) return [{ ...base, what: "other" as const, path: sign.path }];
       const match = byHash.get(sign.hash);
-      if (!match) return [{ ...base, what: p.status === "InProgress" ? ("unknown" as const) : ("past" as const) }];
+      if (!match) {
+        if (p.status !== "InProgress") return [{ ...base, what: "past" as const }];
+        return [unanswered.length ? { ...base, what: "unchecked" as const, unanswered } : { ...base, what: "unknown" as const }];
+      }
       const { correlationId, type, expiresAt, state } = match.request;
       return [{ ...base, what: "agent" as const, agent: match.agent, type, correlationId, expiresAt, state, check: checkRequest(match.request) }];
     })
@@ -131,11 +140,11 @@ export function decodeProposals(dao: string, proposals: DaoProposal[], requests:
 
 const near = new Near(mainnet);
 
-/** What an agent server waits for the DAO to sign, read over loopback; empty if it doesn't answer. */
-async function agentRequests(agent: AgentEntry): Promise<DaoRequest[]> {
+/** What an agent server waits for the DAO to sign, read over loopback; null if it doesn't answer. */
+async function agentRequests(agent: AgentEntry): Promise<DaoRequest[] | null> {
   const client: RouterClient<Router> = createORPCClient(new RPCLink({ origin: `http://127.0.0.1:${agent.port}`, url: "/rpc" }));
   // The server's `state` is a plain string in its type; it only ever holds DaoRequest's three.
-  return client.owner.pending(undefined, { signal: AbortSignal.timeout(10_000) }).then((r) => r as DaoRequest[], () => []);
+  return client.owner.pending(undefined, { signal: AbortSignal.timeout(10_000) }).then((r) => r as DaoRequest[], () => null);
 }
 
 /** The DAO's latest `limit` proposals that ask v1.signer to sign, decoded against every agent. */
@@ -145,5 +154,5 @@ export async function recentSignProposals(dao: string, agents: AgentEntry[], lim
     last ? near.view<DaoProposal[]>(dao, "get_proposals", { from_index: Math.max(0, last - limit), limit }) : [],
     ...agents.map(agentRequests),
   ]);
-  return decodeProposals(dao, proposals ?? [], Object.fromEntries(agents.map((a, i) => [a.name, requests[i]!])));
+  return decodeProposals(dao, proposals ?? [], Object.fromEntries(agents.map((a, i) => [a.name, requests[i] ?? null])));
 }

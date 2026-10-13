@@ -2,9 +2,10 @@ import { ArrowRight, CheckCircle, Robot, WarningOctagon } from "@phosphor-icons/
 import { useQueries, useQuery } from "@tanstack/react-query";
 import type { Decoded } from "../../src/gateway/proposals.js";
 import { type Attention, attentionOf } from "./attention";
-import { ago, bookValue, clientFor, gw, minutesSeconds, useCountdown, usd } from "./lib";
+import { PROTOTYPES } from "./beats";
+import { ago, bookValue, clientFor, gw, kindOf, minutesSeconds, useCountdown, usd } from "./lib";
 import { type Gateway, ViewerBadge } from "./session";
-import { Badge, Card, Section, Spinner, type Tone } from "./ui";
+import { Badge, Card, Details, Section, Spinner, type Tone } from "./ui";
 
 /**
  * The hosted dashboard's home: what the council is being asked to sign, and the agents the DAO owns.
@@ -35,6 +36,7 @@ function Window({ expiresAt }: { expiresAt: string }) {
 const VERDICT: Record<Decoded["what"], [Tone, string]> = {
   agent: ["success", "Verified"],
   unknown: ["destructive", "Not prepared by this dashboard"],
+  unchecked: ["warning", "Can't be checked yet"],
   past: ["neutral", "Done"],
   trezu: ["neutral", "Trezu confidential payment"],
   other: ["warning", "Signs for another key"],
@@ -78,6 +80,12 @@ function Proposal({ p, dao }: { p: Decoded; dao: string }) {
           It asks the DAO to sign as the agents' owner, but no agent here prepared it. Don't approve it unless you know where it comes from.
         </p>
       )}
+      {p.what === "unchecked" && (
+        <p className="text-sm text-warning-muted-foreground">
+          No agent that answered prepared it, and {p.unanswered.join(" and ")} didn't answer, so it can't be checked yet. Wait for this page to
+          refresh before voting.
+        </p>
+      )}
       {p.what === "agent" && p.check.kind === "mismatch" && <p className="text-sm text-destructive-muted-foreground">Don't approve: {p.check.reason}.</p>}
       {p.what === "agent" && p.state === "expired" && p.status === "InProgress" && (
         <p className="text-sm text-muted-foreground">
@@ -86,19 +94,18 @@ function Proposal({ p, dao }: { p: Decoded; dao: string }) {
         </p>
       )}
       {p.what === "agent" && p.check.kind === "verified" && (
-        <details className="text-sm">
-          <summary className="cursor-pointer text-muted-foreground">What the signature authorizes</summary>
+        <Details summary="What the signature authorizes">
           {p.check.standard === "nep413" ? (
-            <pre className="mt-2 overflow-x-auto rounded-xl bg-muted p-3 font-mono text-xs">{JSON.stringify(p.check.message, null, 2)}</pre>
+            <pre className="overflow-x-auto rounded-xl bg-muted p-3 font-mono text-xs">{JSON.stringify(p.check.message, null, 2)}</pre>
           ) : (
-            <p className="mt-2">
+            <p>
               A transaction to <span className="font-mono">{p.check.receiver}</span> calling{" "}
               <span className="font-mono">{p.check.methods.join(", ")}</span>. Its policy data is encrypted for the wallet provider, so only
               its target and methods can be checked.
             </p>
           )}
-          <p className="mt-2 break-all font-mono text-xs text-muted-foreground">hash {p.hash}</p>
-        </details>
+          <p className="break-all font-mono text-xs text-muted-foreground">hash {p.hash}</p>
+        </Details>
       )}
     </li>
   );
@@ -208,7 +215,10 @@ function AgentCard({ name }: { name: string }) {
       <Card className="h-full">
         <div className="flex items-center gap-3">
           <Robot size={20} />
-          <span className="flex-1 font-medium">{name}</span>
+          <span className="flex flex-1 flex-col">
+            <span className="font-medium">{d ? PROTOTYPES[kindOf(d.overview)].name : name}</span>
+            <span className="text-sm text-muted-foreground">{name} agent</span>
+          </span>
           <ArrowRight size={16} className="text-muted-foreground transition-transform group-hover:translate-x-0.5" />
         </div>
         {data.error ? (
@@ -219,21 +229,13 @@ function AgentCard({ name }: { name: string }) {
           <>
             <span className="font-heading text-2xl font-semibold tabular-nums">{usd(value)}</span>
             <div className="flex flex-wrap gap-2">
-              <Badge tone={d.overview.policy.policy?.frozen ? "destructive" : "success"}>{d.overview.policy.policy?.frozen ? "Frozen" : "Active"}</Badge>
+              <Badge tone={d.overview.notInForce ? "destructive" : "success"}>
+                {d.overview.policy.policy?.frozen ? "Frozen" : d.overview.notInForce ? "Not in force" : "Active"}
+              </Badge>
               {d.held.length > 0 && <Badge tone="warning">{d.held.length} held for approval</Badge>}
               {d.unresolved.length > 0 && <Badge tone="destructive">{d.unresolved.length} unresolved</Badge>}
               <Badge tone={d.autopilot.on ? "info" : "neutral"}>{d.autopilot.on ? `Autopilot to $${d.autopilot.maxUsd}` : "Autopilot off"}</Badge>
             </div>
-            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-              <dt className="text-muted-foreground">Grant</dt>
-              <dd className="truncate font-mono text-xs" title={d.setup.grant?.label}>
-                {d.setup.grant ? `${d.setup.grant.label}, expires ${ago(d.setup.grant.expiresAt)}` : "none"}
-              </dd>
-              <dt className="text-muted-foreground">Mandate</dt>
-              <dd className="truncate font-mono text-xs" title={d.overview.digest ?? undefined}>
-                {d.overview.digest ?? "no policy"}
-              </dd>
-            </dl>
           </>
         )}
       </Card>
@@ -257,7 +259,7 @@ export function DaoHome({ gateway }: { gateway: Gateway }) {
       </header>
       <NeedsAttention agents={gateway.agents} />
       <Proposals dao={gateway.dao} />
-      <Section title="Agents">
+      <Section title="Prototypes" description="Each is one agent this DAO owns, with its own dashboard.">
         <div className="grid gap-4 sm:grid-cols-2">
           {gateway.agents.map((name) => (
             <AgentCard key={name} name={name} />

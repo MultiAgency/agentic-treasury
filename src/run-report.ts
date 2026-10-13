@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type { Tick } from "./evidence.js";
-import { hostedRpc, required } from "./hosted.js";
+import { hostedRpc, required } from "./remote.js";
 import type { Row } from "./ledger.js";
 import { type Intervention, unattendedReport } from "./report.js";
 

@@ -4,7 +4,6 @@ import {
   ClockCounterClockwise,
   Lightning,
   type Icon,
-  Robot,
   ShieldCheck,
   SquaresFour,
   UsersThree,
@@ -13,13 +12,14 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { Link, type LinkProps, Outlet } from "@tanstack/react-router";
 import { createContext, type ReactNode, useContext } from "react";
-import { client, type Overview, swaps } from "./lib";
+import { client, kindOf, type Overview } from "./lib";
+import { type Kind, PROTOTYPES } from "./beats";
 import { ViewerBadge } from "./session";
 import { useViewer } from "./viewer";
 import { Onboarding } from "./onboarding";
 import { ownerName, type Setup, WalletButton } from "./owner";
 import type { Treasury } from "./treasury";
-import { Badge, Button, Spinner } from "./ui";
+import { Badge, Button, Details, Spinner } from "./ui";
 
 /** What every screen works from once onboarding is done. */
 type Agent = { setup: Setup; data: Overview; treasury: Treasury | null };
@@ -32,24 +32,31 @@ export function useAgent() {
   return agent;
 }
 
-/** The pages; `swaps` ones only for an agent whose policy lets it swap. */
-const NAV: { to: LinkProps["to"]; label: string; icon: Icon; swaps?: true }[] = [
-  { to: "/", label: "Overview", icon: SquaresFour },
-  { to: "/steward", label: "Steward", icon: Robot, swaps: true },
-  { to: "/automations", label: "Automations", icon: Lightning },
-  { to: "/treasury", label: "Treasury", icon: Bank },
-  { to: "/payees", label: "Payees", icon: UsersThree },
-  { to: "/policy", label: "Policy", icon: ShieldCheck },
-  { to: "/activity", label: "Activity", icon: ClockCounterClockwise },
-];
+/** Each prototype's pages, named for what they are in it. */
+const NAV: Record<Kind, { to: LinkProps["to"]; label: string; icon: Icon }[]> = {
+  facilitator: [
+    { to: "/", label: "Overview", icon: SquaresFour },
+    { to: "/payees", label: "Agreements", icon: UsersThree },
+    { to: "/activity", label: "Activity", icon: ClockCounterClockwise },
+    { to: "/policy", label: "Policy", icon: ShieldCheck },
+  ],
+  treasury: [
+    { to: "/", label: "Overview", icon: SquaresFour },
+    { to: "/automations", label: "Automations", icon: Lightning },
+    { to: "/treasury", label: "Funding", icon: Bank },
+    { to: "/payees", label: "Payees", icon: UsersThree },
+    { to: "/policy", label: "Policy", icon: ShieldCheck },
+    { to: "/activity", label: "Activity", icon: ClockCounterClockwise },
+  ],
+};
 
-function Brand() {
+function Brand({ data }: { data?: Overview }) {
   return (
     <div className="flex items-center gap-3">
       <div className="grid size-9 place-items-center rounded-xl bg-primary text-primary-foreground">
         <Wallet size={18} weight="bold" />
       </div>
-      <span className="hidden font-heading text-lg font-semibold whitespace-nowrap sm:inline">Agentic Treasury</span>
+      <span className="hidden font-heading text-lg leading-tight font-semibold sm:inline">{data ? PROTOTYPES[kindOf(data)].name : "Agentic Treasury"}</span>
     </div>
   );
 }
@@ -57,7 +64,7 @@ function Brand() {
 function Nav({ className, data }: { className: string; data?: Overview }) {
   return (
     <nav className={className}>
-      {NAV.filter((page) => !page.swaps || !data || swaps(data)).map(({ to, label, icon: Icon }) => (
+      {(data ? NAV[kindOf(data)] : NAV.treasury.slice(0, 1)).map(({ to, label, icon: Icon }) => (
         <Link
           key={to}
           to={to}
@@ -72,43 +79,36 @@ function Nav({ className, data }: { className: string; data?: Overview }) {
   );
 }
 
-/** Which agent this is, who owns it, and whether it may act. */
+/** Who owns the agent and whether it may act; its identifiers fold away. */
 function Identity({ setup, data }: { setup: Setup; data: Overview }) {
   const frozen = data.policy.policy?.frozen;
+  const ids: [string, string][] = [
+    ["Agent", data.agentId],
+    ...(setup.wallet ? [["Wallet account", setup.wallet] as [string, string]] : []),
+    ...(data.digest ? [["Mandate", data.digest] as [string, string]] : []),
+    ...(setup.grant ? [["Grant", setup.grant.label] as [string, string]] : []),
+  ];
   return (
     <div className="flex flex-col gap-3 text-sm">
-      <div className="flex flex-col gap-1">
-        <span className="text-muted-foreground">Agent</span>
-        <span className="font-mono" title={data.agentId}>
-          {data.agentId.slice(0, 6)}…{data.agentId.slice(-4)}
-        </span>
-      </div>
-      {setup.wallet && (
-        <div className="flex flex-col gap-1">
-          <span className="text-muted-foreground">Wallet account</span>
-          <span className="font-mono" title={setup.wallet}>
-            {setup.wallet.slice(0, 6)}…{setup.wallet.slice(-4)}
-          </span>
-        </div>
-      )}
       <div className="flex flex-col gap-1">
         <span className="text-muted-foreground">Owner</span>
         <span className="truncate" title={ownerName(setup)}>
           {ownerName(setup)}
         </span>
       </div>
-      {data.digest && (
-        <div className="flex flex-col gap-1">
-          <span className="text-muted-foreground">Mandate</span>
-          <span className="font-mono" title={data.digest}>
-            {data.digest.slice(7, 13)}…{data.digest.slice(-4)}
-          </span>
-        </div>
-      )}
       <div className="flex flex-wrap gap-2">
-        <Badge tone={frozen ? "destructive" : "success"}>{frozen ? "Frozen" : "Active"}</Badge>
-        {setup.grant && <Badge tone="info">{setup.grant.label}</Badge>}
+        <Badge tone={data.notInForce ? "destructive" : "success"}>{frozen ? "Frozen" : data.notInForce ? "Not in force" : "Active"}</Badge>
       </div>
+      <Details summary="Identifiers">
+        {ids.map(([label, value]) => (
+          <div key={label} className="flex flex-col gap-1">
+            <span className="text-muted-foreground">{label}</span>
+            <span className="truncate font-mono text-xs" title={value}>
+              {value}
+            </span>
+          </div>
+        ))}
+      </Details>
     </div>
   );
 }
@@ -167,7 +167,7 @@ export function Shell() {
     <div className="lg:grid lg:min-h-screen lg:grid-cols-[16rem_1fr]">
       <aside className="hidden flex-col gap-8 border-r px-4 py-8 lg:sticky lg:top-0 lg:flex lg:h-screen">
         <div className="px-4">
-          <Brand />
+          <Brand data={overview.data} />
         </div>
         <Nav className="flex flex-col gap-1" data={overview.data} />
         <div className="mt-auto flex flex-col gap-6 px-4">
@@ -187,7 +187,7 @@ export function Shell() {
 
       <header className="sticky top-0 z-10 flex flex-col gap-3 border-b bg-background/90 px-4 pt-4 backdrop-blur lg:hidden">
         <div className="flex items-center justify-between gap-3">
-          <Brand />
+          <Brand data={overview.data} />
           <div className="flex items-center gap-2">
             {refresh}
             <WalletButton />

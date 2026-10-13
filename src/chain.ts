@@ -1,5 +1,5 @@
 import type { Intent } from "@near-intents-agent-api/sdk";
-import { Near } from "near-kit";
+import { AccountDoesNotExistError, FunctionCallError, Near } from "near-kit";
 import { ASSETS } from "./policy.js";
 
 /** A FastNear API key, when set, goes in a header (not the URL) on RPC and indexer calls. */
@@ -84,23 +84,25 @@ type DaoProposal = {
 const threshold = (t: unknown) =>
   Array.isArray(t) ? `${t[0]}/${t[1]} of the role` : `${t} vote${t === "1" ? "" : "s"}`;
 
-/** A Sputnik DAO answers get_policy; any other account is treated as a plain NEAR account. */
-export async function daoPolicy(accountId: string) {
+/**
+ * A Sputnik DAO view, or null when the chain says the account can't answer it: no such account, no
+ * contract, or no such method (AccountDoesNotExistError, FunctionCallError; mainnet RPC, 2026-10-13).
+ * Any other failure, such as the RPC being unreachable, is no answer at all and throws.
+ */
+async function daoView<T>(accountId: string, method: string): Promise<T | null> {
   try {
-    return (await near.view<DaoPolicy>(accountId, "get_policy")) ?? null;
-  } catch {
-    return null;
+    return (await near.view<T>(accountId, method)) ?? null;
+  } catch (error) {
+    if (error instanceof AccountDoesNotExistError || error instanceof FunctionCallError) return null;
+    throw error;
   }
 }
 
-/** The id the DAO's next proposal will get; null if unreadable, so filing falls back to a plain proposal. */
-export async function nextProposalId(accountId: string) {
-  try {
-    return (await near.view<number>(accountId, "get_last_proposal_id")) ?? null;
-  } catch {
-    return null;
-  }
-}
+/** A Sputnik DAO's policy; null for any other account, which is treated as a plain NEAR account. */
+export const daoPolicy = (accountId: string) => daoView<DaoPolicy>(accountId, "get_policy");
+
+/** The id the DAO's next proposal will get (Sputnik's `get_last_proposal_id`); null for an account that isn't a DAO. */
+export const nextProposalId = (accountId: string) => daoView<number>(accountId, "get_last_proposal_id");
 
 export async function isDao(accountId: string) {
   return (await daoPolicy(accountId)) !== null;
@@ -150,8 +152,19 @@ export async function daoPayees(accountId: string) {
   return [...payees].map(([address, why]) => ({ address, ...why }));
 }
 
+/**
+ * Whether the account exists on chain: false only when the chain says it doesn't (AccountDoesNotExistError,
+ * mainnet RPC, 2026-10-13, an unfunded implicit account included). A failed read throws: near-kit's own
+ * `accountExists` answers false to any error.
+ */
 export async function accountExists(accountId: string) {
-  return near.accountExists(accountId);
+  try {
+    await near.getAccount(accountId);
+    return true;
+  } catch (error) {
+    if (error instanceof AccountDoesNotExistError) return false;
+    throw error;
+  }
 }
 
 const STORAGE_DEPOSIT = "1250000000000000000000"; // 0.00125 NEAR: one NEP-145 registration

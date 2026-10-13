@@ -101,8 +101,17 @@ export async function quoteLeg(leg: Leg): Promise<Quote> {
   const amountOut = typeof quote.amount_out === "string" ? quote.amount_out : undefined;
   const minAmountOut = typeof quote.min_amount_out === "string" ? quote.min_amount_out : undefined;
   if (!amountOut || !minAmountOut) throw new Error("quote has no amount_out/min_amount_out");
-  const cost = (raw: string) => Math.round(costBps(leg.usd, usdValue(raw, leg.to.decimals, leg.to.price)));
-  return { amountOut, minAmountOut, costBps: cost(amountOut), worstCostBps: cost(minAmountOut) };
+  return quoteOf(leg, amountOut, minAmountOut);
+}
+
+/**
+ * A leg's quote, with what it loses to fees and price impact in whole basis points. The worst case
+ * rounds up, since `authorize` compares it unrounded against the whole-bps cap: a leg over the cap by
+ * a fraction of a bps is left out of the plan, not refused after the plan is claimed.
+ */
+export function quoteOf(leg: Leg, amountOut: string, minAmountOut: string): Quote {
+  const cost = (raw: string) => costBps(leg.usd, usdValue(raw, leg.to.decimals, leg.to.price));
+  return { amountOut, minAmountOut, costBps: Math.round(cost(amountOut)), worstCostBps: Math.ceil(cost(minAmountOut)) };
 }
 
 /**

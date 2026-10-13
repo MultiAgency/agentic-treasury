@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { RPCHandler } from "@orpc/server/node";
 import { startAutopilot } from "./autopilot.js";
+import { startNotifications } from "./notify.js";
 import { startReconciliation } from "./recover.js";
 import { router } from "./router.js";
 import { executes } from "./env.js";
@@ -31,7 +32,7 @@ const dashboard = createServer(async (req, res) => {
   console.log(`Treasury dashboard on http://localhost:${PORT}`);
   resumeOwnerIntents();
   // Ticks only once the owner turns the autopilot on and an agent exists, and only on its executor.
-  if (process.env.AGENT_ID && executes()) { startReconciliation(); startAutopilot(); }
+  if (process.env.AGENT_ID && executes()) { startReconciliation(); startAutopilot(); startNotifications(); }
 });
 
 async function serveDashboard(req: IncomingMessage, res: ServerResponse) {

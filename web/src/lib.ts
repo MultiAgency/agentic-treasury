@@ -5,6 +5,7 @@ import { queryOptions, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { ASSETS } from "../../src/policy.js";
 import type { Router } from "../../src/router.js";
+import type { Kind } from "./beats";
 
 /**
  * Where this agent's pages live: "" when a local agent server serves them, "/a/<agent>" behind the
@@ -30,6 +31,7 @@ export const queries = {
   held: queryOptions({ queryKey: ["held"], queryFn: () => client.held(), refetchInterval: 15_000 }),
   inbox: queryOptions({ queryKey: ["inbox"], queryFn: () => client.inbox.list(), refetchInterval: 30_000 }),
   unresolved: queryOptions({ queryKey: ["unresolved"], queryFn: () => client.unresolved(), refetchInterval: 30_000 }),
+  agreements: queryOptions({ queryKey: ["agreements"], queryFn: () => client.agreements.list(), refetchInterval: 30_000 }),
 };
 
 export type Overview = Awaited<ReturnType<typeof client.overview>>;
@@ -37,6 +39,9 @@ export type Holding = Overview["book"][number];
 
 /** Whether the policy lets the agent swap. The target allocation, rebalancing and the steward apply only then. */
 export const swaps = (data: Overview) => Boolean(data.policy.policy?.actions.includes("swap"));
+
+/** Which prototype an agent is: one that may swap manages a treasury; one that only pays facilitates payments. */
+export const kindOf = (data: Overview): Kind => (swaps(data) ? "treasury" : "facilitator");
 
 export const units = (raw: bigint | string, decimals: number) => Number(raw) / 10 ** decimals;
 

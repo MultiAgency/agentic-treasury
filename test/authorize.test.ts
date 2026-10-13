@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Policy } from "@near-intents-agent-api/sdk";
 import type { Action } from "../src/agent.js";
-import { agreedPayees, authorize, type Facts, type Purpose } from "../src/authorize.js";
+import { agreedPayees, authorize, type Facts, notInForce, type Purpose } from "../src/authorize.js";
 import { mandateDigest } from "../src/mandate.js";
 import type { Plan } from "../src/plans.js";
 import { ASSETS, payoutPolicy, treasuryPolicy } from "../src/policy.js";
@@ -63,6 +63,15 @@ test("a policy not in force is refused for every purpose", () => {
     for (const change of [{ status: "PENDING" }, { provider_policy_synced: false }, { policy: { ...view.view.policy, frozen: true } }, { policy: null }])
       assert.equal(code(purpose, actionFor(purpose), { view: { ...view.view, ...change } }), "policy_not_in_force", `${purpose} ${Object.keys(change)}`);
   }
+});
+
+test("the dashboard reads why a policy isn't in force from the same predicate authorize refuses with", () => {
+  const { view } = common(treasury, null);
+  assert.equal(notInForce(view), null);
+  assert.equal(notInForce({ ...view, policy: null }), "no policy is applied");
+  assert.equal(notInForce({ ...view, status: "SIGNED" }), "revision 11 is not applied (SIGNED)");
+  assert.equal(notInForce({ ...view, provider_policy_synced: false }), "revision 11 is not yet synchronized with the provider");
+  assert.equal(notInForce({ ...view, policy: { ...view.policy!, frozen: true } }), "the agent is frozen");
 });
 
 test("sends need a live grant whose label allows the purpose; approval votes need none", () => {

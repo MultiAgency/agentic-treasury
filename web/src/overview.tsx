@@ -3,9 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { Activity } from "./activity";
 import { attentionOf } from "./attention";
-import { ASSET_COLOR, ago, amount, bookValue, client, type Holding, type Overview as Book, queries, swaps, units, usd, useAttempt } from "./lib";
-import { useAgent } from "./shell";
+import { Held } from "./held";
 import { destinationsOf } from "./payout";
+import { WhatThisShows } from "./showcase";
+import { ASSET_COLOR, ago, amount, bookValue, client, type Holding, kindOf, type Overview as Book, queries, swaps, units, usd, useAttempt } from "./lib";
+import { useAgent } from "./shell";
 import { ErrorBox, Section } from "./ui";
 
 function Figure({ label, value, children }: { label: string; value: string; children?: React.ReactNode }) {
@@ -31,7 +33,6 @@ function Figures({ data }: { data: Book }) {
   const shielded = data.book.reduce((sum, h) => sum + units(h.confidential, h.decimals) * h.price, 0);
   const monthly = data.policy.usage.budget.monthly;
   const limit = Number(monthly.limit_usd ?? 0);
-  const grant = data.grants[0];
   return (
     <div className="grid gap-10 sm:grid-cols-3">
       <Figure label="Book value" value={usd(total)}>
@@ -46,7 +47,7 @@ function Figures({ data }: { data: Book }) {
       <Figure label="Held privately" value={total ? `${Math.round((shielded / total) * 100)}%` : "—"}>
         <Meter value={total ? shielded / total : 0} className="bg-chart-3" />
         <span className="text-sm text-muted-foreground">
-          {usd(shielded)} in the confidential balance{grant && ` · grant expires ${ago(grant.expires_at)}`}
+          {usd(shielded)} in the confidential balance
         </span>
       </Figure>
     </div>
@@ -68,23 +69,28 @@ function useAttention(dismissing: ReturnType<typeof useAttempt>): Item[] {
   const held = useQuery(queries.held).data ?? [];
   const inbox = useQuery(queries.inbox).data ?? [];
   const unresolved = useQuery(queries.unresolved).data ?? [];
-  const items: Item[] = attentionOf({ setup, overview: data, held, unresolved, inbox }).map(({ to, text, inboxId }) => ({
-    to,
-    text,
-    dismiss: inboxId ? () => dismissing.attempt(() => client.inbox.dismiss({ id: inboxId })) : undefined,
-  }));
+  // Held payouts head this page in their own section; the DAO home lists them as attention items.
+  const items: Item[] = attentionOf({ setup, overview: data, held, unresolved, inbox })
+    .filter(({ to }) => to !== "/")
+    .map(({ to, text, inboxId }) => ({
+      to,
+      text,
+      dismiss: inboxId ? () => dismissing.attempt(() => client.inbox.dismiss({ id: inboxId })) : undefined,
+    }));
 
   const policy = data.policy.policy;
-  const agreed = new Set(destinationsOf(data).map((d) => d.address));
-  const candidates = (treasury?.payees ?? []).filter((p) => !agreed.has(p.address));
+  // One predicate with the Payees page: a payee the DAO voted to pay that the policy doesn't list yet.
+  const listed = new Set(destinationsOf(data).map((d) => d.address));
+  const candidates = (treasury?.payees ?? []).filter((p) => !listed.has(p.address));
+  const asked = (useQuery({ ...queries.agreements, enabled: kindOf(data) === "facilitator" }).data ?? []).filter((a) => a.status === "requested");
   const exposed = data.book.filter((h) => BigInt(h.public) > 0n);
   const gap = drift(data);
-  if (data.policy.status !== "APPLIED")
-    items.push({ to: "/policy", text: `Policy revision ${data.policy.revision} is ${data.policy.status.toLowerCase()}, not yet in force.` });
   if (bookValue(data) === 0) items.push({ to: "/treasury", text: "The book is empty. Fund it to give the agent something to manage." });
   if (!treasury) items.push({ to: "/treasury", text: "No treasury linked. Link the account this agent works for." });
+  if (asked.length)
+    items.push({ to: "/payees", text: `${asked.length} account${asked.length === 1 ? " asks" : "s ask"} to be paid and ${asked.length === 1 ? "isn't" : "aren't"} agreed yet.` });
   if (candidates.length)
-    items.push({ to: "/payees", text: `${treasury?.accountId} approved ${candidates.length} payee${candidates.length === 1 ? "" : "s"} not yet in the agreement.` });
+    items.push({ to: "/payees", text: `${treasury?.accountId} approved ${candidates.length} payee${candidates.length === 1 ? "" : "s"} the policy doesn't list yet.` });
   if (exposed.length)
     items.push({ to: "/automations", text: `${exposed.map((h) => amount(h.public, h)).join(", ")} sit${exposed.length === 1 ? "s" : ""} in the public balance, visible to anyone. Sweep shields it.` });
   for (const u of data.unmanaged) {
@@ -173,8 +179,6 @@ function Allocation({ data }: { data: Book }) {
           <thead className="text-left text-muted-foreground">
             <tr className="border-b">
               <th className="py-3 pr-4 font-medium">Asset</th>
-              <th className="hidden py-3 pr-4 text-right font-medium sm:table-cell">Public</th>
-              <th className="hidden py-3 pr-4 text-right font-medium sm:table-cell">Private</th>
               <th className="py-3 pr-4 text-right font-medium">Value</th>
               <th className="py-3 text-right font-medium">Weight · target</th>
             </tr>
@@ -193,8 +197,6 @@ function Allocation({ data }: { data: Book }) {
                       <span className="hidden text-muted-foreground sm:inline">{usd(h.price)}</span>
                     </div>
                   </td>
-                  <td className="hidden py-4 pr-4 text-right sm:table-cell">{amount(h.public, h)}</td>
-                  <td className="hidden py-4 pr-4 text-right sm:table-cell">{amount(h.confidential, h)}</td>
                   <td className="py-4 pr-4 text-right font-medium">{usd(h.usd)}</td>
                   <td className="py-4 text-right">
                     {(weight * 100).toFixed(1)}% · {(target * 100).toFixed(0)}%{" "}
@@ -214,9 +216,11 @@ function Allocation({ data }: { data: Book }) {
 }
 
 export function Overview() {
-  const { data } = useAgent();
+  const { data, setup } = useAgent();
   return (
     <>
+      <Held data={data} setup={setup} />
+      <WhatThisShows kind={kindOf(data)} />
       <Figures data={data} />
       <Attention />
       {swaps(data) && <Allocation data={data} />}

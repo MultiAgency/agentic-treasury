@@ -3,7 +3,8 @@ import { test } from "node:test";
 import type { Holding } from "../src/holdings.js";
 import { DEFAULT_STRATEGY } from "../src/strategy-digest.js";
 import { ASSETS } from "../src/policy.js";
-import { type Leg, planLegs, planSteps } from "../src/treasury.js";
+import { type Leg, planLegs, planSteps, quoteOf } from "../src/treasury.js";
+import { costBps, usdValue } from "../src/value.js";
 
 const MAX_COST_BPS = DEFAULT_STRATEGY.maxCostBps;
 
@@ -28,6 +29,18 @@ test("a leg costing more than it is worth is left out, and later steps keep thei
     ["2", "3"],
   );
   assert.deepEqual(steps, [undefined, 0, 1]);
+});
+
+test("a leg is planned only if authorize would send it at the same prices: its worst cost rounds up", () => {
+  // $10,000 in for a floor worth $9,749.60: 250.4 bps at worst, over a 250 bps cap.
+  const from = { asset: "usdc", decimals: 0, price: 1 } as Holding;
+  const to = { asset: "wnear", decimals: 1, price: 1 } as Holding;
+  const swap: Leg = { from, to, usd: 10_000, amount: 10_000n };
+  const quoted = quoteOf(swap, "97600", "97496");
+  // authorize's own reckoning of the same leg (src/authorize.ts, swap_cost_exceeded).
+  assert.ok(costBps(usdValue(swap.amount, from.decimals, from.price), usdValue(quoted.minAmountOut, to.decimals, to.price)) > 250);
+  assert.equal(quoted.worstCostBps, 251);
+  assert.deepEqual(planSteps([swap], [quoted], 250).actions, []);
 });
 
 test("the cost cap holds at the swap's guaranteed floor, not only at its expected price", () => {

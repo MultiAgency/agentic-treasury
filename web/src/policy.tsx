@@ -1,15 +1,14 @@
 import { PencilSimple } from "@phosphor-icons/react";
 import { useState } from "react";
 import { Grants, Mandate } from "./grants";
-import { Held } from "./held";
 import { amountOf, usd } from "./lib";
 import { OwnerControls, ownerName, useSigner } from "./owner";
 import { BUDGET, type Window, WINDOWS } from "./policy-draft";
 import { Editor } from "./policy-editor";
 import { useAgent } from "./shell";
-import { Badge, Button, Section, statusTone } from "./ui";
+import { Badge, Button, Details, Section, statusTone } from "./ui";
 
-/** The policy envelope the owner signed, the owner's controls over it, and what waits for the owner. */
+/** The policy the owner signed and the owner's controls over it. */
 export function Policy() {
   const { data, setup } = useAgent();
   const { canSign } = useSigner(setup);
@@ -27,21 +26,32 @@ export function Policy() {
     ["Assets", policy.assets === "any" ? "Any" : policy.assets.map((a) => data.book.find((h) => h.asset === a)?.symbol ?? a).join(", ")],
     ...WINDOWS.map(([window, label]): [string, string] => [`Caps ${label.toLowerCase()}`, caps(window)]),
     ["USD budget", budget || "None"],
-    ["Rate", policy.max_actions_per_hour ? `${policy.max_actions_per_hour} actions an hour` : "No cap"],
     [
       "Destinations",
       policy.destinations?.mode === "only" && policy.destinations.list.length === 0
         ? "None. Funds never leave the account."
         : `${policy.destinations?.mode}: ${policy.destinations?.list.map((d) => d.address).join(", ")}`,
     ],
-    ["Owner approval", policy.owner_approval ? "Every payment" : "Not required inside the envelope"],
+  ];
+  const more: [string, string][] = [
+    ["Rate", policy.max_actions_per_hour ? `${policy.max_actions_per_hour} actions an hour` : "No cap"],
+    ["Owner approval", policy.owner_approval ? "Every payment" : "Not required inside the policy"],
     ["Confidential", policy.confidential ? "Enabled" : "Disabled"],
   ];
+  const list = (entries: [string, string][]) => (
+    <dl className="grid gap-x-10 gap-y-5 text-sm sm:grid-cols-2">
+      {entries.map(([term, detail]) => (
+        <div key={term} className="flex flex-col gap-1">
+          <dt className="text-muted-foreground">{term}</dt>
+          <dd>{detail}</dd>
+        </div>
+      ))}
+    </dl>
+  );
   return (
     <>
-      <Held data={data} setup={setup} />
       <Section
-        title="Policy envelope"
+        title="Policy"
         description="Signed by the owner and enforced by the API. The agent's grant can act only inside it."
         action={
           <div className="flex flex-wrap items-start gap-3">
@@ -60,14 +70,10 @@ export function Policy() {
         {editing ? (
           <Editor policy={policy} data={data} setup={setup} onDone={() => setEditing(false)} />
         ) : (
-          <dl className="grid gap-x-10 gap-y-5 text-sm sm:grid-cols-2">
-            {rows.map(([term, detail]) => (
-              <div key={term} className="flex flex-col gap-1">
-                <dt className="text-muted-foreground">{term}</dt>
-                <dd>{detail}</dd>
-              </div>
-            ))}
-          </dl>
+          <>
+            {list(rows)}
+            <Details summary="Rate, owner approval, confidentiality">{list(more)}</Details>
+          </>
         )}
       </Section>
       <Grants data={data} setup={setup} />

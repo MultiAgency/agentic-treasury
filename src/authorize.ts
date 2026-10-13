@@ -37,7 +37,8 @@ type PlanFacts = { plan: Plan; leg: PlannedAction } | null;
 type TreasuryFacts = Common & { plan: PlanFacts; strategy: Strategy; tokens: Token[] };
 /**
  * What a payout may still spend, in the asset's smallest unit: the confidential balance less payouts of
- * that asset already held for approval (the provider holds a payment without reserving funds for it).
+ * that asset already held for approval. The reported balance still includes held payouts (mainnet,
+ * 2026-10-13: op_-PNz_6ZYk… held, balance unchanged; docs/mainnet-log.md), so they are subtracted here.
  */
 type Funds = { available: string };
 
@@ -70,13 +71,22 @@ function grantAllows(purpose: Purpose, label: string, strategy?: Strategy) {
   }
 }
 
+/** Why the agent's policy is not in force (missing, unapplied, unsynchronized or frozen), or null when it is. */
+export function notInForce(view: PolicyView) {
+  if (!view.policy) return "no policy is applied";
+  if (view.status !== "APPLIED") return `revision ${view.revision} is not applied (${view.status})`;
+  if (!view.provider_policy_synced) return `revision ${view.revision} is not yet synchronized with the provider`;
+  if (view.policy.frozen) return "the agent is frozen";
+  return null;
+}
+
 export function authorize(action: Action, c: Case): Refusal | null {
   const { purpose } = c;
   const { view, grant, now } = c.facts;
 
-  const policy = view.policy;
-  if (!policy || view.status !== "APPLIED" || !view.provider_policy_synced || policy.frozen)
-    return refuse("policy_not_in_force", "The policy is missing, frozen, unapplied or unsynchronized");
+  const unenforced = notInForce(view);
+  if (unenforced) return refuse("policy_not_in_force", `The policy is not in force: ${unenforced}`);
+  const policy = view.policy!; // notInForce refuses a missing policy
 
   if (purpose !== "approval") {
     // Without one this instance holds no token, and the send would fail locally after it was recorded.
@@ -106,7 +116,8 @@ export function authorize(action: Action, c: Case): Refusal | null {
     if (purpose !== "payout" && (!policy.owner_approval || !policy.confidential))
       return refuse("owner_approval_required", "Invoices and approvals need a confidential policy holding every payment for the owner");
     // The provider holds a payment for the owner's vote without checking the balance, and fails it
-    // only after the vote: an unfunded payout is refused before anyone is asked to approve it.
+    // only after the vote (mainnet, 2026-10-12: op_v5cnpSsa6u3…, docs/mainnet-log.md): an unfunded payout is refused
+    // before anyone is asked to approve it.
     if ((c.purpose === "payout" || c.purpose === "invoice") && BigInt(action.request.amount) > BigInt(c.facts.available))
       return refuse("insufficient_balance", `Only ${c.facts.available} of ${action.request.asset} isn't already held for approval, less than ${action.request.amount}: fund the wallet first`);
     if (c.purpose === "payout") {

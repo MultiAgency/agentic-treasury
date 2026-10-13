@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { hostedRpc, required } from "./hosted.js";
+import { hostedRpc, required } from "./remote.js";
 
 /**
  * Checks a deployed dashboard and invoice page from outside, changing nothing: health, security

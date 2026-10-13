@@ -12,6 +12,7 @@ import { ticks } from "./evidence.js";
 import { agentId, executes, saveEnv } from "./env.js";
 import { dismiss, readInbox } from "./inbox.js";
 import { ledger, ledgerCsv, reconcileBooks } from "./ledger.js";
+import { agreedPayees, notInForce } from "./authorize.js";
 import { mandateDigest } from "./mandate.js";
 import { adoptStagedGrant, GRANT_LABELS, isLive, liveGrant } from "./grants.js";
 import { blocksDispatch, readOps } from "./ops.js";
@@ -24,11 +25,22 @@ import { MIN_EVERY_MIN } from "./strategy-digest.js";
 import { rebalance, sweep, targets } from "./treasury.js";
 import { daoRequests, prepare, status, submit } from "./owner-intents.js";
 import { cancelPreparedInvoice, listInvoices } from "./invoice-store.js";
+import { type AgreementStore, localStore, remoteStore } from "./agreements.js";
+import { agreed } from "./invoices.js";
 
-/** The agent's ops log, one row per action, newest first: the request as sent and how it settled or was refused. */
+const agreementId = z.string().regex(/^[0-9a-f]{32}$/);
+
+/** This host's agreements when it serves the invoice page; otherwise the invoice host's, if configured. */
+function agreementStore(): AgreementStore {
+  const { INVOICES_PORT, AGREEMENTS_URL, AGREEMENTS_SECRET } = process.env;
+  return !INVOICES_PORT && AGREEMENTS_URL && AGREEMENTS_SECRET ? remoteStore(AGREEMENTS_URL, AGREEMENTS_SECRET) : localStore(agreed);
+}
+
+/** The agent's ops log, one row per action, newest first: the request as sent, the mandate (policy revision and digest) and plan it ran under, and how it settled or was refused. */
 const activity = () =>
   readOps()
-    .map(({ at, kind, request, correlationId, status, refused }) => ({ at, kind, request, correlationId, status, refused }))
+    .map(({ at, kind, request, correlationId, status, refused, policyRevision, policyDigest, planId }) =>
+      ({ at, kind, request, correlationId, status, refused, policyRevision, policyDigest, planId }))
     .reverse();
 
 /**
@@ -157,6 +169,9 @@ export const router = {
       rebalance: { minLegUsd: strategy.minLegUsd, maxCostBps: strategy.maxCostBps },
       policy,
       digest,
+      /** Why the policy isn't in force, by the rule `authorize` refuses with; null when it is. */
+      notInForce: notInForce(policy),
+      agreed: policy.policy ? [...agreedPayees(policy.policy)] : [],
       grants: grants.filter((g) => !g.revoked_at),
     };
   }),
@@ -220,6 +235,18 @@ export const router = {
     .input(z.object({ recipient: account, asset: z.string(), amount: units, confidential: z.boolean() }))
     .handler(({ input }) => pay(input)),
   activity: os.handler(() => activity()),
+  /**
+   * Agreements with terms (agreements.ts): requested by payees on the invoice page, or offered by the
+   * owner. Proposing terms or offering only records them; agreeing is the owner's policy update.
+   */
+  agreements: {
+    list: os.handler(() => agreementStore().list()),
+    propose: os.input(z.object({ id: agreementId, until: z.iso.datetime() }))
+      .handler(({ input }) => agreementStore().propose(input.id, new Date(input.until))),
+    offer: os.input(z.object({ payee: account, amount: z.string(), note: z.string().max(200), until: z.iso.datetime() }))
+      .handler(async ({ input }) => ({ id: await agreementStore().offer({ ...input, until: new Date(input.until) }) })),
+    decline: os.input(z.object({ id: agreementId })).handler(({ input }) => agreementStore().decline(input.id)),
+  },
   /** Operator review reads the same durable invoice records; it never initiates a second payout. */
   invoices: os.handler(() => listInvoices()),
   cancelPreparedInvoice: os.input(z.object({ id: z.string().regex(/^[0-9a-f]{32}$/) }))

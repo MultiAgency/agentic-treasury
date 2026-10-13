@@ -29,7 +29,7 @@ export function useDestinations(data: Overview, setup: Setup) {
   return {
     current,
     action,
-    blocked: !isOwner ? "Only the owner can change the agreement." : cooldown ? `The policy can change again in ${cooldown}.` : null,
+    blocked: !isOwner ? "Only the owner can change the agreed payees." : cooldown ? `The policy can change again in ${cooldown}.` : null,
     add: (destination: Destination) =>
       action.run({ type: "policy_update", changes: { destinations: [...current, destination] } }),
     remove: (address: string) =>
@@ -59,8 +59,8 @@ export function PayoutResult({ result }: { result?: Awaited<ReturnType<typeof cl
       Refused · <span className="font-mono">{result.code}</span>
     </Badge>
   ) : result.status === "PENDING_APPROVAL" ? (
-    <Link to="/policy">
-      <Badge tone="info">Held for the owner's approval · approve under Policy</Badge>
+    <Link to="/">
+      <Badge tone="info">Held for the owner's approval · approve on Overview</Badge>
     </Link>
   ) : (
     <StatusBadge status={result.status} failureCode={result.failureCode} />

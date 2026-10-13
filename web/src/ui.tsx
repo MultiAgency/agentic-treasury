@@ -228,6 +228,16 @@ export function CopyButton({ text }: { text: string }) {
   );
 }
 
+/** Detail most readers skip, such as identifiers and rare controls, folded under a one-line summary. */
+export function Details({ summary, className = "", children }: { summary: string; className?: string; children: ReactNode }) {
+  return (
+    <details className={`text-sm ${className}`}>
+      <summary className="cursor-pointer text-muted-foreground">{summary}</summary>
+      <div className="mt-2 flex flex-col gap-2">{children}</div>
+    </details>
+  );
+}
+
 /** A card's heading: its icon, title and what it does. */
 export function CardHeader({ icon, title, description }: { icon: ReactNode; title: string; description: string }) {
   return (

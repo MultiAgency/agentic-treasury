@@ -56,7 +56,7 @@ export type TickStart = {
   kind: "start";
   id: string;
   at: string;
-  /** `schedule`: the autopilot's timer; `operator`: "Run now" or `pnpm autopilot`. */
+  /** `schedule`: the autopilot's timer; `operator`: "Run now". */
   trigger: "schedule" | "operator";
   /** The scheduler's settings when the tick started; `lastRun` is the tick the schedule counts from. */
   schedule: { on: boolean; everyMin: number; maxUsd: number; lastRun: string | null };

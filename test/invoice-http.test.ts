@@ -8,22 +8,25 @@ import { payoutPolicy } from "../src/policy.js";
 import { getInvoice, invoiceId } from "../src/invoice-store.js";
 import { mayCall } from "../src/gateway/allowlist.js";
 import { freshDirectory } from "./fixtures/harness.js";
+import { remoteStore } from "../src/agreements.js";
 
 const secret = "test-only-invoice-session-secret";
 process.env.INVOICES_SESSION_SECRET = secret;
 process.env.INVOICES_PUBLIC_HOST = "localhost:8791";
+process.env.AGREEMENTS_SECRET = "test-only-agreements-secret";
 const { invoiceHandler } = await import("../src/invoice-http.js");
 const server = createServer(invoiceHandler);
 let origin: string;
 const sent: { recipient: string; amount: string }[] = [];
+const payees = ["alice.near", "bob.near"];
 freshDirectory("invoice-http", { per: "suite" });
 before(async () => {
   process.env.AGENT_GRANT_TOKEN = "ngt_test";
   Object.assign(api, {
     ...authorityFixture(),
-    getPolicy: async () => policyView(payoutPolicy(["alice.near", "bob.near"])),
+    getPolicy: async () => policyView(payoutPolicy(payees)),
     forGrant: () => ({ transfer: async (_id: string, request: { recipient: string; amount: string }) => {
-      sent.push(request); return { correlation_id: "invoice-http" };
+      sent.push(request); return { correlation_id: `invoice-http-${sent.length}` };
     } }),
     getStatus: async (correlation_id: string) => ({ correlation_id, status: "SUCCESS" }),
   });
@@ -62,7 +65,7 @@ test("retries retain identity and another signed-in payee cannot read it", async
   assert.equal(response.status, 200);
   assert.equal(sent.length, 1);
   const other = await fetch(`${origin}/api/invoices`, { headers: { cookie: cookie("bob.near") } });
-  assert.deepEqual(await other.json(), { invoices: [] });
+  assert.deepEqual(await other.json(), { invoices: [], agreements: [] });
   const mine = await fetch(`${origin}/api/invoices`, { headers: { cookie: cookie("alice.near") } });
   const text = await mine.text();
   assert.equal((JSON.parse(text) as { invoices: unknown[] }).invoices.length, 1);
@@ -74,4 +77,44 @@ test("invoice review and cancellation are operator-only at the gateway", () => {
     assert.equal(mayCall("member", path), false);
     assert.equal(mayCall("operator", path), true);
   }
+});
+
+const request = { submission: "cccccccc-dddd-eeee-ffff-000000000001", amount: "2.5", note: "Bounty: docs" };
+
+test("an account not yet agreed files an agreement request: recorded, visible only to it, never paid", async () => {
+  const response = await submit({ cookie: cookie("carol.near") }, request);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json() as { status: string }).status, "requested");
+  assert.equal(sent.length, 1, "nothing was sent");
+  assert.equal(getInvoice(invoiceId({ payee: "carol.near", submission: request.submission })), undefined, "no invoice or reservation");
+  const own = await (await fetch(`${origin}/api/invoices`, { headers: { cookie: cookie("carol.near") } })).json() as { agreements: { status: string; amount: string }[] };
+  assert.deepEqual(own.agreements.map((a) => [a.status, a.amount]), [["requested", "2500000"]]);
+  const other = await (await fetch(`${origin}/api/invoices`, { headers: { cookie: cookie("bob.near") } })).json() as { agreements: unknown[] };
+  assert.deepEqual(other.agreements, [], "another payee never sees it");
+});
+
+test("the internal endpoint answers only the shared secret, and the dashboard's store works through it", async () => {
+  for (const authorization of [undefined, "Bearer wrong", "Bearer test-only-agreements-secre"])
+    assert.equal((await fetch(`${origin}/internal/agreements`, { headers: authorization ? { authorization } : {} })).status, 404);
+  const store = remoteStore(origin, "test-only-agreements-secret");
+  const [carol] = (await store.list()).filter((a) => a.payee === "carol.near");
+  assert.equal(carol?.status, "requested");
+  await store.propose(carol!.id, new Date(Date.now() + 86_400_000));
+  assert.equal((await store.list()).find((a) => a.id === carol!.id)?.status, "proposed");
+  await assert.rejects(store.offer({ payee: "not an account!", amount: "1", note: "", until: new Date(Date.now() + 1000) }), /payee/);
+  await assert.rejects(store.offer({ payee: "dana.near", amount: "1", note: "", until: new Date(Date.now() - 1000) }), /future/);
+  const offered = await store.offer({ payee: "dana.near", amount: "5", note: "Award", until: new Date(Date.now() + 86_400_000) });
+  await store.decline(offered);
+  assert.equal((await store.list()).find((a) => a.id === offered)?.status, "declined");
+});
+
+test("once agreed, the payee files the request as an invoice: same identity, paid through the one send path", async () => {
+  payees.push("carol.near");
+  const response = await submit({ cookie: cookie("carol.near") }, request);
+  assert.equal((await response.json() as { status: string }).status, "paid");
+  assert.equal(sent.at(-1)?.recipient, "carol.near");
+  assert.equal(sent.at(-1)?.amount, "2500000");
+  const own = await (await fetch(`${origin}/api/invoices`, { headers: { cookie: cookie("carol.near") } })).json() as { agreements: unknown[]; invoices: unknown[] };
+  assert.deepEqual(own.agreements, [], "a filed agreement shows as its invoice");
+  assert.equal(own.invoices.length, 1);
 });

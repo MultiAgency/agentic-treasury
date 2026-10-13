@@ -25,6 +25,10 @@ const MEMBER = new Set([
   "owner/status",
   "owner/pending",
   "owner/prepare",
+  "agreements/list",
+  // Recording terms beside an agreement a member files as a proposal; nothing is agreed without the vote.
+  "agreements/propose",
+  "agreements/offer",
 ]);
 
 /** Whether `role` may call the procedure at `path` (`owner/prepare`, without the `/rpc/` prefix). */

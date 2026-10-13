@@ -189,14 +189,9 @@ async function prepareLocked(action: OwnerAction, signer: Signer) {
   hold(generated.correlation_id, { type: generated.type, expiresAt: generated.expires_at, grantToken, releases, dao, paymentApproval });
   watch();
   const daoId = process.env.TREASURY_ACCOUNT!;
-  const [policy, nextId] = await Promise.all([daoPolicy(daoId), nextProposalId(daoId)]);
-  const description = [
-    `* Proposal Action: ${generated.preview.summary}`,
-    `* Agent: ${process.env.AGENT_ID ?? "a new agent"}`,
-    `* Signing window closes: ${generated.expires_at} (approve before then, or the signature can't be used)`,
-    `* Signs: hash ${dao.hash} as the agents' owner (v1.signer, path agent-owner)`,
-    "* Notes: Filed from the DAO dashboard, where the hash can be checked against this action before voting.",
-  ].join(" <br>");
+  // The intent is already held: a failed read only drops the one-click filings, leaving filing in Trezu.
+  const [policy, nextId] = await Promise.all([daoPolicy(daoId).catch(() => null), nextProposalId(daoId).catch(() => null)]);
+  const description = proposalDescription({ type: generated.type, summary: generated.preview.summary, expiresAt: generated.expires_at, hash: dao.hash });
   return {
     ...base,
     dao: {
@@ -208,6 +203,22 @@ async function prepareLocked(action: OwnerAction, signer: Signer) {
       proposalAndVote: policy && nextId !== null ? proposalAndVote(daoId, dao.hash, description, policy.proposal_bond, nextId) : null,
     },
   };
+}
+
+/**
+ * What a DAO proposal says it does; proposals are public. A policy update's provider summary may name
+ * the payees it adds, so it gets fixed wording and the dashboard shows what it does. Approvals already
+ * read generically ("Approve the pending confidential request", #46–#53 on chain).
+ */
+export function proposalDescription(intent: { type: string; summary: string; expiresAt: string; hash: string }) {
+  const action = intent.type === "policy_update" ? "Change the agent's policy (check it on the dashboard before voting)" : intent.summary;
+  return [
+    `* Proposal Action: ${action}`,
+    `* Agent: ${process.env.AGENT_ID ?? "a new agent"}`,
+    `* Signing window closes: ${intent.expiresAt} (approve before then, or the signature can't be used)`,
+    `* Signs: hash ${intent.hash} as the agents' owner (v1.signer, path agent-owner)`,
+    "* Notes: Filed from the DAO dashboard, where the hash can be checked against this action before voting.",
+  ].join(" <br>");
 }
 
 /**

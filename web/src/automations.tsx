@@ -88,7 +88,7 @@ function Rebalance() {
       <div className="mt-auto flex flex-wrap items-center justify-between gap-3">
         <span className="text-sm text-muted-foreground">
           {saved
-            ? `Plan ${saved.plan.id.slice(0, 8)} · valid until ${new Date(saved.plan.expiresAt).toLocaleTimeString()} · budget remaining ${usd(plan?.budget)}`
+            ? `Valid until ${new Date(saved.plan.expiresAt).toLocaleTimeString()} · budget remaining ${usd(plan?.budget)}`
             : plan && plan.legs.length > 0 && preview.state === "done"
               ? "Every leg costs more than it is worth: nothing to execute."
               : plan && `Budget remaining ${usd(plan.budget)}`}

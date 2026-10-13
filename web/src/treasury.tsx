@@ -4,7 +4,7 @@ import { ago, client, fromUnits, type Overview, short, toUnits, useAttempt } fro
 import type { Setup } from "./owner";
 import { AssetAmount, PayoutResult, useDestinations, usePayout } from "./payout";
 import { useAgent } from "./shell";
-import { Badge, Button, Card, CopyButton, ErrorBox, input, Section, Spinner } from "./ui";
+import { Badge, Button, Card, CopyButton, Details, ErrorBox, input, Section, Spinner } from "./ui";
 import { connect, dao, type Transaction, send, useWallet } from "./wallet";
 
 export type Treasury = NonNullable<Awaited<ReturnType<typeof client.treasury.get>>>;
@@ -28,8 +28,8 @@ function LinkTreasury() {
   return (
     <Card>
       <p className="text-sm text-muted-foreground">
-        Link the account this agent works for. Funds come from it, can return to it, and its payees form the agent's
-        agreement. A DAO votes on each step through Trezu.
+        Link the account this agent works for. Funds come from it, can return to it, and its payees become the agent's
+        agreed payees. A DAO votes on each step through Trezu.
       </p>
       <div className="flex flex-wrap gap-3">
         <Button
@@ -192,7 +192,6 @@ function Return({ treasury, data, setup }: { treasury: Treasury; data: Overview;
 
   return (
     <div className="flex flex-col gap-3">
-      <h3 className="text-lg font-medium">Return funds</h3>
       {entry ? (
         <>
           <p className="text-sm text-muted-foreground">
@@ -311,15 +310,7 @@ export function TreasurySection() {
     <Section
       title="Treasury"
       description="The account this agent works for: any NEAR account, or a DAO that votes on funding and payees."
-      action={
-        treasury && (
-          <Button variant="ghost" size="sm" disabled={unlink.busy} onClick={() => unlink.attempt(() => client.treasury.unlink())}>
-            Unlink
-          </Button>
-        )
-      }
     >
-      <ErrorBox error={unlink.error} />
       {!treasury ? (
         <LinkTreasury />
       ) : (
@@ -332,28 +323,38 @@ export function TreasurySection() {
               </span>
             </div>
             {treasury.dao ? (
-              <div className="flex flex-col items-end gap-1 text-sm">
-                <Badge tone="info">
-                  <UsersThree size={12} weight="bold" /> DAO · {treasury.dao.members.length} member
-                  {treasury.dao.members.length === 1 ? "" : "s"}
-                </Badge>
-                <span className="text-muted-foreground">
-                  {treasury.dao.approvers.map((a) => `${a.role}: ${a.threshold}`).join(" · ")}
-                </span>
-                <ConfidentialSetting treasury={treasury} />
-              </div>
+              <Badge tone="info">
+                <UsersThree size={12} weight="bold" /> DAO · {treasury.dao.members.length} member
+                {treasury.dao.members.length === 1 ? "" : "s"}
+              </Badge>
             ) : (
               <Badge>NEAR account</Badge>
             )}
           </div>
-          <div className="grid grid-cols-1 gap-8 border-t pt-6 lg:grid-cols-2">
+          <div className="border-t pt-6">
             {treasury.dao && treasury.confidential && setup.wallet ? (
               <ConfidentialFund treasury={treasury} wallet={setup.wallet} />
             ) : (
               <Fund treasury={treasury} />
             )}
-            <Return treasury={treasury} data={data} setup={setup} />
           </div>
+          <Details summary="Return funds to the treasury" className="border-t pt-4">
+            <Return treasury={treasury} data={data} setup={setup} />
+          </Details>
+          <Details summary="Treasury settings">
+            {treasury.dao && (
+              <>
+                <span className="text-muted-foreground">Approvers: {treasury.dao.approvers.map((a) => `${a.role} ${a.threshold}`).join(" · ")}</span>
+                <ConfidentialSetting treasury={treasury} />
+              </>
+            )}
+            <div>
+              <Button variant="outline" size="sm" disabled={unlink.busy} onClick={() => unlink.attempt(() => client.treasury.unlink())}>
+                Unlink this treasury
+              </Button>
+            </div>
+            <ErrorBox error={unlink.error} />
+          </Details>
         </Card>
       )}
     </Section>

@@ -6,6 +6,7 @@ import { DelegateAction, encodeSignedDelegateAction, generateKey, parsePublicKey
 import { checkRequest, type DaoRequest, decodeProposals, readDelegate } from "../src/gateway/proposals.js";
 import type { DaoProposal } from "../src/gateway/sign-requests.js";
 import { proposalAndVote, proposalTransaction } from "../src/dao-owner.js";
+import { proposalDescription } from "../src/owner-intents.js";
 import { nep413Hash } from "../src/nep413.js";
 
 const DAO = "agentic.sputnik-dao.near";
@@ -121,6 +122,20 @@ test("each v1.signer proposal is matched, flagged or labelled", () => {
   assert.equal(matched?.what === "agent" && matched.check.kind, "verified");
 });
 
+test("an open proposal is not called foreign while an agent that may have prepared it didn't answer", () => {
+  const known = nep413Request();
+  const open = proposal(43, "ab".repeat(32));
+  // The payout agent was restarting: what it waits for is unknown, not nothing.
+  const [unchecked] = decodeProposals(DAO, [open], { treasury: [known], payout: null });
+  assert.deepEqual(unchecked?.what === "unchecked" && unchecked.unanswered, ["payout"]);
+  // Once every agent answers and none prepared it, it is flagged.
+  const [flagged] = decodeProposals(DAO, [open], { treasury: [known], payout: [] });
+  assert.equal(flagged?.what, "unknown");
+  // A finished proposal stays past either way, and a match needs no other agent's answer.
+  assert.equal(decodeProposals(DAO, [proposal(44, "cd".repeat(32), { status: "Approved" })], { payout: null })[0]?.what, "past");
+  assert.equal(decodeProposals(DAO, [proposal(45, known.hash)], { treasury: [known], payout: null })[0]?.what, "agent");
+});
+
 test("a proposal a member files with a description asks for exactly the signature Trezu would", () => {
   const hash = "ab".repeat(32);
   const { receiverId, actions } = proposalTransaction(DAO, hash, "* Proposal Action: Freeze the agent", "100000000000000000000000");
@@ -147,4 +162,13 @@ test("a member who may vote files and approves a proposal in one transaction, vo
   assert.equal(vote.deposit, "0");
   // One transaction carries at most 300 Tgas.
   assert.ok(actions.reduce((sum, a) => sum + BigInt(a.params.gas), 0n) <= 300_000_000_000_000n);
+});
+
+test("a policy update's public proposal never names the payees it adds", () => {
+  const summary = "Allow confidential transfers to carol.near";
+  const update = proposalDescription({ type: "policy_update", summary, expiresAt: "2026-10-13T00:00:00Z", hash: "ab" });
+  assert.ok(!update.includes("carol.near"), update);
+  assert.match(update, /Change the agent's policy/);
+  const freeze = proposalDescription({ type: "agent_freeze", summary: "Freeze the agent", expiresAt: "2026-10-13T00:00:00Z", hash: "ab" });
+  assert.match(freeze, /Proposal Action: Freeze the agent/, "other actions keep their summary");
 });

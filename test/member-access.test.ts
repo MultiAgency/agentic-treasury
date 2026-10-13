@@ -17,9 +17,13 @@ function paths(node: object, prefix = ""): string[] {
 
 /** What members may call: reads, plus filing owner actions as proposals. */
 const READS = ["setup", "overview", "policyHistory", "treasury/get", "activity", "unresolved", "held", "autopilot/get", "autopilot/evidence",
-  "inbox/list", "ledger", "ledgerCsv", "reconcileBooks", "owner/status", "owner/pending"];
-/** Member-callable but not read-only: it creates a provider intent and holds it on the server. */
-const PROPOSES = ["owner/prepare"];
+  "inbox/list", "ledger", "ledgerCsv", "reconcileBooks", "owner/status", "owner/pending", "agreements/list"];
+/**
+ * Member-callable but not read-only: `owner/prepare` creates a provider intent and holds it on the
+ * server; the agreement terms are recorded beside a proposal the member files. None of it is agreed
+ * or paid without the DAO's vote.
+ */
+const PROPOSES = ["owner/prepare", "agreements/propose", "agreements/offer"];
 
 const policy = {
   proposal_bond: "0",
@@ -46,6 +50,6 @@ test("a plain member reaches exactly the reads and owner/prepare; every other pr
 
 test("money and settings procedures are refused to members", () => {
   for (const path of ["pay", "sweep", "rebalance", "executePlan", "recover", "autopilot/set", "autopilot/tick",
-    "inbox/dismiss", "owner/submit", "treasury/link", "deposit", "steward/propose", "cancelPreparedInvoice", "refusals"])
+    "inbox/dismiss", "owner/submit", "treasury/link", "deposit", "steward/propose", "cancelPreparedInvoice", "refusals", "agreements/decline"])
     assert.ok(!mayCall("member", path), path);
 });

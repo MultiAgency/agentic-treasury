@@ -14,10 +14,12 @@ One Agent API agent with its own wallet, policy and grant, run by one instance o
 _Avoid_: bot, worker
 
 **Treasury agent**:
-An agent that swaps and shields toward a strategy without a vote per action.
+An agent that swaps and shields toward a strategy without a vote per action. The **Agentic Treasury
+Management** prototype (docs/treasury.md).
 
 **Payout agent**:
 An agent that only makes confidential USDC transfers to agreed payees, each held for the owner's approval.
+The **Confidential Treasury Facilitator** prototype (docs/facilitator.md).
 
 **Executor**:
 The one instance that sends, reconciles and serves invoices for an agent. Any other instance of the same
@@ -62,12 +64,28 @@ A recipient listed as a confidential transfer destination in a policy whose dest
 `only`. A policy in `except` mode has no agreed payees.
 _Avoid_: allowlisted address, destination
 
+**Agreement**:
+An owner's consent to pay a payee, with **terms**: an amount ceiling per invoice and a deadline. A payee
+*requests* one from the invoice page (an **agreement request**), or the owner *offers* one first (a
+purchase order, a bounty or grant award). Agreeing makes the payee an agreed payee by policy update;
+the terms are this server's record, shown beside each held payout, and enforced by the vote on it.
+_Avoid_: whitelist entry, PO (unless it is one)
+
 **Strategy**:
 The owner's target allocation and limits for a treasury agent. The autopilot acts only while its live
 grant's label carries the digest of the strategy in force.
 
 **Plan**:
 A saved, expiring list of swaps and shields, bound to the policy and strategy it was made under.
+
+**Rebalance**:
+Planning swaps toward the strategy's target allocation: legs under its minimum are left alone, legs that
+could cost more than its cap at their floor are left out, and the rest are saved as a plan. Nothing moves
+until the plan is executed.
+
+**Steward**:
+An experimental LLM that proposes a plan in conversation, its responses verified against its TEE. It only
+proposes; the plan executes like any other.
 
 ## Money actions
 
@@ -79,7 +97,8 @@ without an outcome remains unresolved. Legacy records without this distinction r
 _Avoid_: transaction, job
 
 **Unresolved operation**:
-An operation without a proven outcome. While one exists, no new operation may be sent.
+An operation without a proven outcome that blocks new sends: any but a held payout or a prepared
+invoice, which are open but can't be lost. While one exists, no new operation may be sent.
 _Avoid_: pending, stuck
 
 **Held payout**:
@@ -89,6 +108,9 @@ _Avoid_: pending approval (as a noun)
 
 **Refusal**:
 A proven outcome that nothing was sent, recorded with a code.
+
+**Sweep**:
+Shielding every public balance into the confidential one: the agent keeps nothing public.
 
 **Money lock**:
 The lock every money action runs under: one money-moving run at a time across this host's processes,
@@ -101,3 +123,24 @@ by the owner's wallet or a DAO vote, kept `prepared → submitted → settled` s
 **Invoice**:
 A payee's request to be paid, which becomes one payout operation with a stable key and immutable terms. Until it is
 submitted it is **prepared**: nothing is in flight, so it is not an unresolved operation.
+
+## Autopilot and records
+
+**Autopilot**:
+The treasury agent acting on its own schedule, off by default: each **tick** reads the status of open
+operations, sweeps, and executes a rebalance only up to the strategy's auto-execute limit. A tick whose
+start can't be recorded does not run; a missing end means it was interrupted or its outcome is unknown.
+_Avoid_: bot, cron job
+
+**Inbox**:
+What the agent tells its owner while no one is watching: a record of each tick, and warnings or
+requests that stay open until the owner dismisses them.
+
+**Books**:
+The agent's balances checked against outside records: public balances against chain transfers,
+confidential balances against the API's recorded executions. A difference is unexplained: it can reflect
+outside credits or incomplete records.
+
+**Intervention**:
+An operator call through the hosted dashboard beyond what a member may do, recorded before it runs
+(or not run). The unattended-run report counts them.

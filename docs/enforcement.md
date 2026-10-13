@@ -1,7 +1,8 @@
 # Enforcement: what the signed envelope guarantees today
 
 What this prototype can claim about staying inside the owner's policy, the gaps, and the smallest sequence
-to close them. Evidence and source pins are in the release record (proto-releases/…/GUARANTEE.md).
+to close them. Evidence and source pins are in the release record (proto-releases/…/GUARANTEE.md), which is kept
+outside this repository.
 
 The [signed-envelope verification plan](signed-envelope.md) defines the threat model, accounting
 obligations and delivery gates. The [2026-10-12 verification record](envelope/VERIFICATION.md)
@@ -57,7 +58,8 @@ A missing operation ID on a claimed or legacy operation cannot be repaired by st
 
 ## Local crash and concurrency recovery
 
-Offline process tests cover two fixes in the current source; deployment correspondence is not established:
+Offline process tests cover two fixes, in source commit `a23f0e1`, which the deployer reports as the
+deployment of 2026-10-13 (dao `2713d2ea`, invoices `07a35af2`); the deployed source itself isn't verified:
 
 - Journal v2 distinguishes a durable preparation from a submission claim. The sole send site writes
   the claim before the provider call. The next money-lock holder resolves only unclaimed v2
