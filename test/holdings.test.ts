@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { allHoldings } from "../src/agent.js";
+import { allHoldings } from "../src/holdings.js";
 import { api } from "../src/api.js";
 import { ASSETS } from "../src/policy.js";
 

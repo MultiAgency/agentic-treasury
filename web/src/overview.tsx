@@ -1,11 +1,11 @@
 import { ArrowRight, CheckCircle, WarningCircle, X } from "@phosphor-icons/react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { Activity } from "./activity";
-import { ASSET_COLOR, ago, amount, client, type Holding, type Overview as Book, swaps, units, usd } from "./lib";
+import { ASSET_COLOR, ago, amount, bookValue, client, type Holding, type Overview as Book, queries, swaps, units, usd, useAttempt } from "./lib";
 import { useAgent } from "./shell";
-import { destinationsOf } from "./treasury";
-import { Section } from "./ui";
+import { destinationsOf } from "./payout";
+import { ErrorBox, Section } from "./ui";
 
 function Figure({ label, value, children }: { label: string; value: string; children?: React.ReactNode }) {
   return (
@@ -24,8 +24,6 @@ function Meter({ value, className = "bg-brand" }: { value: number; className?: s
     </div>
   );
 }
-
-const bookValue = (data: Book) => data.book.reduce((sum, h) => sum + h.usd, 0);
 
 function Figures({ data }: { data: Book }) {
   const total = bookValue(data);
@@ -62,19 +60,18 @@ function drift(data: Book) {
 }
 
 /** Everything that stops the agent working, or that the owner should decide on, each with where to act. */
-function useAttention() {
+function useAttention(dismissing: ReturnType<typeof useAttempt>) {
   const { setup, data, treasury } = useAgent();
   const policy = data.policy.policy;
   const agreed = new Set(destinationsOf(data).map((d) => d.address));
   const candidates = (treasury?.payees ?? []).filter((p) => !agreed.has(p.address));
   const gap = drift(data);
   const exposed = data.book.filter((h) => BigInt(h.public) > 0n);
-  const held = useQuery({ queryKey: ["held"], queryFn: () => client.held(), refetchInterval: 15_000 }).data ?? [];
+  const held = useQuery(queries.held).data ?? [];
   const grantMs = setup.grant ? new Date(setup.grant.expiresAt).getTime() - Date.now() : Infinity;
-  const inbox = useQuery({ queryKey: ["inbox"], queryFn: () => client.inbox.list(), refetchInterval: 30_000 });
-  const queryClient = useQueryClient();
+  const inbox = useQuery(queries.inbox);
   const open = (inbox.data ?? []).filter((e) => e.level !== "run" && !e.dismissed);
-  const unresolved = useQuery({ queryKey: ["unresolved"], queryFn: () => client.unresolved(), refetchInterval: 30_000 }).data ?? [];
+  const unresolved = useQuery(queries.unresolved).data ?? [];
   const oldest = unresolved.map((op) => op.at).sort()[0];
   const items: { when: unknown; to?: LinkProps["to"]; text: string; dismiss?: () => void }[] = [
     // What the autopilot raised while no one was watching, until the owner dismisses it.
@@ -82,7 +79,7 @@ function useAttention() {
       when: true,
       to: "/automations" as const,
       text: `${e.text} (${ago(e.at)})`,
-      dismiss: () => void client.inbox.dismiss({ id: e.id }).then(() => queryClient.invalidateQueries({ queryKey: ["inbox"] })),
+      dismiss: () => dismissing.attempt(() => client.inbox.dismiss({ id: e.id })),
     })),
     {
       when: unresolved.length,
@@ -138,9 +135,11 @@ function useAttention() {
 }
 
 function Attention() {
-  const items = useAttention();
+  const dismissing = useAttempt();
+  const items = useAttention(dismissing);
   return (
     <Section title="Needs attention">
+      <ErrorBox error={dismissing.error} />
       {items.length === 0 ? (
         <p className="flex items-center gap-3 text-sm text-muted-foreground">
           <CheckCircle size={18} className="text-success" /> Nothing. The agent is working inside its policy.
@@ -165,7 +164,7 @@ function Attention() {
                   <div className="flex flex-1 items-center gap-3 py-3 text-sm">{body}</div>
                 )}
                 {item.dismiss && (
-                  <button type="button" onClick={item.dismiss} className="shrink-0 p-1 text-muted-foreground hover:text-foreground" aria-label="Dismiss">
+                  <button type="button" disabled={dismissing.busy} onClick={item.dismiss} className="shrink-0 p-1 text-muted-foreground hover:text-foreground" aria-label="Dismiss">
                     <X size={16} />
                   </button>
                 )}

@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { hostedRpc, required } from "./hosted.js";
 
 /**
  * Checks a deployed dashboard and invoice page from outside, changing nothing: health, security
@@ -26,12 +27,6 @@ const ELSEWHERE = "https://elsewhere.example";
 /** Procedures whose handlers write nothing: the only ones this script calls. */
 const PROBES = ["overview", "ledger", "autopilot/get", "owner/pending"];
 
-function required(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`Set ${name}`);
-  return value;
-}
-
 let failed = 0;
 function check(name: string, ok: boolean, detail = "") {
   if (!ok) failed++;
@@ -42,11 +37,7 @@ const at = (base: URL, path: string) => new URL(path, base);
 const get = (url: URL, headers: Record<string, string> = {}) => fetch(url, { headers, redirect: "manual" });
 const post = (url: URL, headers: Record<string, string> = {}, body = "{}") =>
   fetch(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body, redirect: "manual" });
-const rpc = async <T>(agent: string, path: string) => {
-  const res = await post(at(DASHBOARD, `/a/${agent}/rpc/${path}`), { cookie: COOKIE! });
-  if (!res.ok) throw new Error(`${agent} ${path}: ${res.status} ${await res.text()}`);
-  return ((await res.json()) as { json: T }).json;
-};
+const rpc = <T>(agent: string, path: string) => hostedRpc<T>(DASHBOARD, COOKIE!, agent, path);
 
 // The dashboard, without a session.
 {

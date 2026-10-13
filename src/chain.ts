@@ -1,22 +1,38 @@
+import type { Intent } from "@near-intents-agent-api/sdk";
 import { Near } from "near-kit";
 import { ASSETS } from "./policy.js";
 
 /** A FastNear API key, when set, goes in a header (not the URL) on RPC and indexer calls. */
-export const fastnearHeaders: Record<string, string> = process.env.FASTNEAR_API_KEY
+const fastnearHeaders: Record<string, string> = process.env.FASTNEAR_API_KEY
   ? { Authorization: `Bearer ${process.env.FASTNEAR_API_KEY}` }
   : {};
 
-/** FastNear's Transactions API: an account's transactions, relayed ones included, with their receipts. */
-export async function transactionsApi<T>(path: "/account" | "/transactions", body: object) {
-  const response = await fetch(`https://tx.main.fastnear.com/v0${path}`, {
+/**
+ * One POST to a FastNear indexer API, keyed when there is a key; throws on any error it reports, and
+ * after 30 seconds without an answer, so a stalled indexer never holds up a caller (or a lock it holds).
+ */
+export async function fastnearPost<T>(url: string, body: object) {
+  const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json", ...fastnearHeaders },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000),
   });
-  const result = (await response.json()) as T & { error?: string; message?: string };
-  if (!response.ok || result.error) throw new Error(`FastNear ${path}: ${result.message ?? result.error ?? response.status}`);
+  const result = (await response.json().catch(() => ({}))) as T & { error?: string; message?: string };
+  if (!response.ok || result.error) throw new Error(`FastNear ${new URL(url).pathname}: ${result.message ?? result.error ?? response.status}`);
   return result;
 }
+
+/** FastNear's Transactions API: an account's transactions, relayed ones included, with their receipts. */
+export const transactionsApi = <T>(path: "/account" | "/transactions", body: object) =>
+  fastnearPost<T>(`https://tx.main.fastnear.com/v0${path}`, body);
+
+/** The transaction a NEP-366 payload asks for, from `signerId`, ready to sign as a delegate action. */
+export const delegateTransaction = (near: Near, signerId: string, { receiverId, actions }: Extract<Intent, { standard: "nep366" }>["payload"]) =>
+  actions.reduce(
+    (tx, { params }) => tx.functionCall(receiverId, params.methodName, params.args, { gas: params.gas as never, attachedDeposit: BigInt(params.deposit) }),
+    near.transaction(signerId),
+  );
 
 /** How every `Near` client here reaches mainnet: the keyed FastNear host when there is a key. */
 export const mainnet = {

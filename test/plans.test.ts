@@ -1,13 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { after, before, test } from "node:test";
+import { test } from "node:test";
 import { checkPlan, claimPlan, loadPlan, type PlannedAction, savePlan, type Snapshot } from "../src/plans.js";
+import { freshDirectory } from "./fixtures/harness.js";
 
-const home = process.cwd();
-before(() => process.chdir(mkdtempSync(join(tmpdir(), "plans-"))));
-after(() => process.chdir(home));
+freshDirectory("plans", { per: "suite" });
 
 const state: Snapshot = {
   agentId: "a".repeat(64),

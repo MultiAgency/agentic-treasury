@@ -5,6 +5,35 @@ import { extname, join } from "node:path";
 /** A body the client got wrong: answered 400, unlike a failure on this side. */
 export class BadRequest extends Error {}
 
+/** A JSON answer, never cached: every one may carry a member's or payee's data. */
+export const sendJson = (res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) =>
+  res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", ...headers }).end(JSON.stringify(body));
+
+/** What every public answer says to browsers about itself; see the gateway for why each matters. */
+export const SECURITY_HEADERS = {
+  "Content-Security-Policy": "frame-ancestors 'none'",
+  "X-Frame-Options": "DENY",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+  "Strict-Transport-Security": "max-age=31536000",
+};
+
+/** A request a page on another site sent: its Origin names another host, or is malformed (`null`). */
+export const crossSite = (req: IncomingMessage, host = req.headers.host) =>
+  req.headers.origin !== undefined && URL.parse(req.headers.origin)?.host !== host;
+
+/**
+ * The answer to a request that failed: the client's own mistake as a 400 with its reason, anything
+ * else as a 500 that shows no internals (they stay in this process's log).
+ */
+export function sendFailure(res: ServerResponse, error: unknown) {
+  // A failure after the answer started can't change it: end it rather than crash the server.
+  if (res.headersSent) return void res.end();
+  if (error instanceof BadRequest) return sendJson(res, 400, { error: error.message });
+  console.error(error);
+  sendJson(res, 500, { error: "Something went wrong. Try again later." });
+}
+
 /** A request's JSON object body, at most 16 KB; anything but an object reads as `{}`. */
 export async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   let text = "";

@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { parseEnv } from "node:util";
+import { writeAtomic } from "./synced.js";
 
 /**
  * This instance's settings file. The default instance keeps everything in `.env`. Another
@@ -28,8 +29,23 @@ export function saveEnv(values: Record<string, string>) {
     .trimEnd();
   const added = Object.entries(values).map(([key, value]) => `${key}=${value}`);
   const file = existsSync(ENV_FILE) ? realpathSync(ENV_FILE) : ENV_FILE;
-  rmSync(`${file}.tmp`, { force: true }); // a leftover from a crash would keep its own mode
-  writeFileSync(`${file}.tmp`, `${[kept, ...added].filter(Boolean).join("\n")}\n`, { mode: 0o600 });
-  renameSync(`${file}.tmp`, file);
+  writeAtomic(file, `${[kept, ...added].filter(Boolean).join("\n")}\n`, 0o600);
   Object.assign(process.env, values);
 }
+
+/**
+ * The agent this process runs, read on use: the server starts before onboarding creates one,
+ * and onboarding or `pnpm create-agent` / `pnpm issue-grant` save it to the instance's settings file.
+ */
+export function agentId() {
+  const id = process.env.AGENT_ID;
+  if (!id) throw new Error("AGENT_ID is not set: create an agent first");
+  return id;
+}
+
+/**
+ * Whether this instance sends money actions for its agent. One host is an agent's executor; another
+ * instance of the same agent (the owner's local dashboard, while the executor runs elsewhere) sets
+ * `EXECUTOR=off`: it still reads, and approves as the owner, but never sends or reconciles.
+ */
+export const executes = () => process.env.EXECUTOR !== "off";

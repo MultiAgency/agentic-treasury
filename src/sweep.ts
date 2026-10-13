@@ -1,4 +1,4 @@
-import { format } from "./agent.js";
+import { format } from "./holdings.js";
 import { sweep } from "./treasury.js";
 
 const execute = process.argv.includes("--execute");

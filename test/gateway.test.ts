@@ -3,7 +3,8 @@ import { test } from "node:test";
 import { generateKey, Near, type PrivateKey } from "near-kit";
 import { mayCall } from "../src/gateway/allowlist.js";
 import { childEnv, hostOf, loadConfig } from "../src/gateway/config.js";
-import { CHALLENGE_TTL_MS, issueChallenge, type KeyLookup, SESSION_TTL_MS, sessionAccount, sessions, sessionToken, verifySignIn } from "../src/signin.js";
+import { BadRequest } from "../src/http.js";
+import { CHALLENGE_TTL_MS, issueChallenge, type KeyLookup, parseSignIn, SESSION_TTL_MS, sessionAccount, sessions, sessionToken, verifySignIn } from "../src/signin.js";
 import { accessOf } from "../src/gateway/roles.js";
 
 const HOST = "dao.test";
@@ -34,6 +35,22 @@ test("a wallet that signs a callback URL on this site signs in; one elsewhere is
   // The callback is part of what was signed: dropping or changing it breaks the signature.
   const signed = await signIn("alice.near", HOST, `https://${HOST}/`);
   await assert.rejects(verifySignIn({ ...signed, callbackUrl: null }, HOST, fullAccess), /doesn't match/);
+});
+
+test("a wallet that signs the page's URL as NEP-413 callbackUrl verifies with it (real sign-in, 2026-10-12)", async () => {
+  const { nep413Hash, signatureBytes, verifyEd25519 } = await import("../src/nep413.js");
+  const key = "ed25519:7g2kKQYuRXPVhn8HTLiRdBfJTF1fd7UZ8xASAcrht3nk";
+  const signature = signatureBytes("uu24iawRTfSXfM4A5gFcO4XRt0l9ZaVJw8UI7ARMFSV0kuTDxAarmhliRjJBDD7UwD3+sKroBOX75NmeuihNDw==");
+  const nonce = Buffer.from("m8M+4IBj1wrjbIOG8NW7WNWNzJcfOzWL4dMw0FUN06s=", "base64");
+  const message = "Sign in to localhost:8791";
+  assert.equal(verifyEd25519(key, nep413Hash(message, nonce, "localhost:8791"), signature), false);
+  assert.equal(verifyEd25519(key, nep413Hash(message, nonce, "localhost:8791", "http://localhost:8791/"), signature), true);
+});
+
+test("a sign-in body is read strictly: four strings, and at most three offered callback URLs", () => {
+  const body = { accountId: "alice.near", publicKey: "ed25519:k", signature: "s", nonce: "n" };
+  assert.deepEqual(parseSignIn({ ...body, callbackUrls: ["a", 1, "b", "c", "d"], extra: true }), { ...body, callbackUrls: ["a", "b", "c"] });
+  assert.throws(() => parseSignIn({ ...body, nonce: 1 }), BadRequest);
 });
 
 test("a challenge signs in once", async () => {
@@ -103,7 +120,7 @@ test("members come from the DAO's groups, operators from the configuration, ever
 
 test("members read and file proposals; money and settings are for operators", () => {
   for (const path of ["overview", "activity", "held", "ledgerCsv", "owner/pending", "owner/prepare"]) assert.ok(mayCall("member", path), path);
-  for (const path of ["pay", "sweep", "steward/execute", "autopilot/set", "autopilot/tick", "recover", "treasury/link", "owner/submit", "someFutureProcedure"])
+  for (const path of ["pay", "sweep", "steward/propose", "executePlan", "autopilot/set", "autopilot/tick", "recover", "treasury/link", "owner/submit", "someFutureProcedure"])
     assert.ok(!mayCall("member", path), path);
   assert.ok(mayCall("operator", "pay"));
 });

@@ -1,6 +1,7 @@
 import { grantCommitment, type Policy } from "@near-intents-agent-api/sdk";
 import { ASSETS } from "../../src/policy.js";
-import { loadStrategy, strategyLabelSuffix } from "../../src/strategy.js";
+import { loadStrategy } from "../../src/strategy.js";
+import { strategyLabelSuffix } from "../../src/strategy-digest.js";
 import { mock } from "node:test";
 import { api } from "../../src/api.js";
 

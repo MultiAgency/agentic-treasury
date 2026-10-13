@@ -1,25 +1,27 @@
 import { AgentApiError } from "@near-intents-agent-api/sdk";
 import { ORPCError, os as base } from "@orpc/server";
 import { z } from "zod";
-import { agentId, allHoldings, depositAddress, executes, held, pay } from "./agent.js";
+import { depositAddress, pay } from "./agent.js";
+import { allHoldings } from "./holdings.js";
+import { held } from "./payouts.js";
 import { api } from "./api.js";
 import { accountExists, daoPayees, describeTreasury, fundingTransaction, isDao } from "./chain.js";
 import { daoOwner, ownerFunded } from "./dao-owner.js";
 import { MIN_EVERY_MIN, saveSettings, status as autopilotStatus, tick } from "./autopilot.js";
 import { ticks } from "./evidence.js";
-import { saveEnv } from "./env.js";
+import { agentId, executes, saveEnv } from "./env.js";
 import { dismiss, readInbox } from "./inbox.js";
 import { ledger, ledgerCsv, reconcileBooks } from "./ledger.js";
 import { mandateDigest } from "./mandate.js";
-import { adoptStagedGrant, liveGrant } from "./intents.js";
-import { isHeld, readOps } from "./ops.js";
-import { recover, unresolved } from "./recover.js";
+import { adoptStagedGrant, GRANT_LABELS, isLive, liveGrant } from "./grants.js";
+import { blocksDispatch, readOps } from "./ops.js";
+import { recover } from "./recover.js";
 import { steward } from "./llm.js";
 import { executePlan } from "./plans.js";
 import { ASSETS } from "./policy.js";
 import { loadStrategy } from "./strategy.js";
-import { rebalance, refusals, sweep, targets } from "./treasury.js";
-import { daoRequests, prepare, status, submit } from "./wallet-intents.js";
+import { rebalance, sweep, targets } from "./treasury.js";
+import { daoRequests, prepare, status, submit } from "./owner-intents.js";
 import { cancelPreparedInvoice, listInvoices } from "./invoice-store.js";
 
 /** The agent's ops log, one row per action, newest first: the request as sent and how it settled or was refused. */
@@ -29,8 +31,9 @@ const activity = () =>
     .reverse();
 
 /**
- * Errors reach the page with their message: this server answers only its own page on loopback.
- * An Agent API refusal keeps its code (`policy_change_throttled`, ...) for the page to branch on.
+ * Errors reach the page with their message: this server answers only its own page on loopback, and
+ * behind the hosted gateway only signed-in members (operators, for anything beyond reads). An Agent
+ * API refusal keeps its code (`policy_change_throttled`, ...) for the page to branch on.
  */
 function toClientError(error: unknown) {
   if (error instanceof ORPCError) return error;
@@ -82,12 +85,12 @@ const ownerAction = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("agent_create"),
     owner: z.object({ type: z.literal("near"), account_id: z.string(), public_key: z.string() }).optional(),
-    kind: z.enum(["treasury", "payout"]).optional(),
+    role: z.enum(["treasury", "payout"]).optional(),
     payees: z.array(account).max(256).optional(),
   }),
   z.object({
     type: z.literal("grant_issue"),
-    purpose: z.enum(["treasury", "payout", "invoices"]).optional(),
+    label: z.enum(GRANT_LABELS).optional(),
     suffix: z.string().min(1).max(64).optional(),
   }),
   z.object({ type: z.literal("grant_revoke"), grantId: z.string().min(1) }),
@@ -130,7 +133,7 @@ export const router = {
     // An approve-only copy holds no grant token: it shows the executor's grant, read from the API.
     const grant = executes()
       ? liveGrant(grants, process.env.AGENT_GRANT_TOKEN)
-      : grants.filter((g) => !g.revoked_at && Date.parse(g.expires_at) > Date.now()).sort((a, b) => b.expires_at.localeCompare(a.expires_at))[0];
+      : grants.filter((g) => isLive(g)).sort((a, b) => b.expires_at.localeCompare(a.expires_at))[0];
     return {
       agentId: id,
       // The NEAR account that holds the agent's balances: where a treasury pays it.
@@ -212,16 +215,16 @@ export const router = {
     .handler(({ input }) => cancelPreparedInvoice(input.id)),
   /**
    * Money actions without a proven outcome: each blocks every new one until resolved. Those held for
-   * the owner's approval are listed by `held` instead.
+   * the owner's approval are listed by `held`, and invoices prepared but never sent by `invoices`.
    */
   unresolved: os.handler(() =>
-    unresolved()
-      .filter((op) => !isHeld(op))
+    readOps()
+      .filter(blocksDispatch)
       .map((op) => ({ key: op.idempotencyKey, at: op.at, kind: op.kind, request: op.request, status: op.status ?? null, sent: Boolean(op.correlationId) })),
   ),
-  /** Reads existing operation statuses. Legacy resend requests cannot replay ambiguous submissions. */
-  recover: os.input(z.object({ resend: z.boolean() })).handler(async ({ input }) =>
-    (await recover(input)).map(({ op, outcome, status, detail }) => ({ key: op.idempotencyKey, outcome, status: status ?? null, detail: detail ?? null })),
+  /** Reads existing operation statuses; sends nothing. */
+  recover: os.handler(async () =>
+    (await recover()).map(({ op, outcome, status, detail }) => ({ key: op.idempotencyKey, outcome, status: status ?? null, detail: detail ?? null })),
   ),
   /** The agent working on its own (src/autopilot.ts): off until the owner turns it on. */
   autopilot: {
@@ -250,7 +253,6 @@ export const router = {
   /** Previews a rebalance and saves it as a plan; `executePlan` runs it. */
   rebalance: os.handler(() => rebalance()),
   sweep: os.input(run).handler(({ input }) => sweep(input)),
-  refusals: os.handler(() => refusals()),
   steward: {
     /** The model proposes; the result is a saved plan, and nothing moves. */
     propose: os

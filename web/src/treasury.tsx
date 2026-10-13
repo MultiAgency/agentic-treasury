@@ -1,80 +1,21 @@
-import { ArrowUUpLeft, Bank, Copy, LockKey, PaperPlaneTilt, Plus, UsersThree, X } from "@phosphor-icons/react";
-import { useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { ArrowUUpLeft, Bank, LockKey, UsersThree } from "@phosphor-icons/react";
 import { useState } from "react";
-import { ago, client, type Overview, toUnits } from "./lib";
-import { ActionError, type Destination, type Setup, useCanSign, useOwnerAction } from "./owner";
+import { ago, client, fromUnits, type Overview, short, toUnits, useAttempt } from "./lib";
+import type { Setup } from "./owner";
+import { AssetAmount, PayoutResult, useDestinations, usePayout } from "./payout";
 import { useAgent } from "./shell";
-import { Badge, Button, Card, input, Section, Spinner, statusTone } from "./ui";
+import { Badge, Button, Card, CopyButton, ErrorBox, input, Section, Spinner } from "./ui";
 import { connect, dao, type Transaction, send, useWallet } from "./wallet";
 
 export type Treasury = NonNullable<Awaited<ReturnType<typeof client.treasury.get>>>;
 
-const short = (id: string) => (id.length > 24 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id);
-
-/** The policy's transfer destinations: where the agent may send funds at all. */
-export function destinationsOf(data: Overview): Destination[] {
-  return (data.policy.policy?.destinations.list ?? []).flatMap((d) =>
-    d.action === "transfer" ? [{ address: d.address, confidential: d.confidential }] : [],
-  );
-}
-
-/** Policy edits share a 10-minute cooldown per agent; freezing is exempt. */
-function cooldownLeft(data: Overview) {
-  const at = data.policy.cooldowns.policy_change_available_at;
-  const ms = at ? new Date(at).getTime() - Date.now() : 0;
-  return ms > 0 ? `${Math.ceil(ms / 60_000)} min` : null;
-}
-
-function useMessage() {
-  const [message, setMessage] = useState<string>();
-  const [error, setError] = useState<string>();
-  const [busy, setBusy] = useState(false);
-  async function attempt(work: () => Promise<string>) {
-    setBusy(true);
-    setError(undefined);
-    setMessage(undefined);
-    try {
-      setMessage(await work());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-  return { message, error, busy, attempt };
-}
-
-/** Owner-signed edits to the destination list, shared by returns and payees. */
-function useDestinations(data: Overview, setup: Setup) {
-  const action = useOwnerAction(setup);
-  const isOwner = useCanSign(setup);
-  const current = destinationsOf(data);
-  const cooldown = cooldownLeft(data);
-  return {
-    current,
-    action,
-    blocked: !isOwner ? "Only the owner can change the agreement." : cooldown ? `The policy can change again in ${cooldown}.` : null,
-    add: (destination: Destination) =>
-      action.run({ type: "policy_update", changes: { destinations: [...current, destination] } }),
-    remove: (address: string) =>
-      action.run({ type: "policy_update", changes: { destinations: current.filter((d) => d.address !== address) } }),
-  };
-}
-
 function LinkTreasury() {
-  const queryClient = useQueryClient();
   const wallet = useWallet();
   const daoWallet = dao.use();
   const [accountId, setAccountId] = useState("");
-  const link = useMessage();
+  const link = useAttempt();
 
-  const linkTo = (id: string) =>
-    link.attempt(async () => {
-      await client.treasury.link({ accountId: id });
-      await queryClient.invalidateQueries();
-      return "";
-    });
+  const linkTo = (id: string) => link.attempt(() => client.treasury.link({ accountId: id }));
 
   return (
     <Card>
@@ -88,7 +29,7 @@ function LinkTreasury() {
           disabled={link.busy || wallet.status !== "connected"}
           onClick={() => wallet.accountId && linkTo(wallet.accountId)}
         >
-          <Bank size={18} /> {wallet.accountId ? `Use ${short(wallet.accountId)}` : "Use my account"}
+          <Bank size={18} /> {wallet.accountId ? `Use ${short(wallet.accountId, 24)}` : "Use my account"}
         </Button>
         <Button
           variant="outline"
@@ -99,8 +40,6 @@ function LinkTreasury() {
               const id = (await dao.connector.getConnectedWallet()).accounts[0]?.accountId;
               if (!id) throw new Error("Trezu returned no DAO account");
               await client.treasury.link({ accountId: id });
-              await queryClient.invalidateQueries();
-              return "";
             })
           }
         >
@@ -124,7 +63,7 @@ function LinkTreasury() {
           {link.busy && <Spinner />} Link
         </Button>
       </form>
-      <ActionError error={link.error} />
+      <ErrorBox error={link.error} />
     </Card>
   );
 }
@@ -159,7 +98,7 @@ function Fund({ treasury }: { treasury: Treasury }) {
   const signer = useTreasurySigner(treasury);
   const [asset, setAsset] = useState<"USDC" | "NEAR">("USDC");
   const [value, setValue] = useState("");
-  const fund = useMessage();
+  const fund = useAttempt();
   const amount = toUnits(value, asset === "USDC" ? 6 : 24);
 
   return (
@@ -202,11 +141,11 @@ function Fund({ treasury }: { treasury: Treasury }) {
       </form>
       {signer.connected && !signer.ready && (
         <p className="text-sm text-warning-muted-foreground">
-          Connected as {short(signer.connected)}, not {short(treasury.accountId)}.
+          Connected as {short(signer.connected, 24)}, not {short(treasury.accountId, 24)}.
         </p>
       )}
       {fund.message && <p className="text-sm text-success-muted-foreground">{fund.message}</p>}
-      <ActionError error={fund.error} />
+      <ErrorBox error={fund.error} />
     </div>
   );
 }
@@ -229,9 +168,7 @@ function ConfidentialFund({ treasury, wallet }: { treasury: Treasury; wallet: st
         <code className="min-w-0 flex-1 truncate rounded-xl bg-muted px-4 py-3" title={recipient}>
           {recipient}
         </code>
-        <Button variant="ghost" size="sm" onClick={() => navigator.clipboard.writeText(recipient)}>
-          <Copy size={16} /> Copy
-        </Button>
+        <CopyButton text={recipient} />
       </div>
       <p className="text-sm text-warning-muted-foreground">
         Keep the <code>nearcom:</code> prefix. Without it the payment leaves the private side and lands publicly.
@@ -240,69 +177,6 @@ function ConfidentialFund({ treasury, wallet }: { treasury: Treasury; wallet: st
         Open payment in Trezu
       </Button>
     </div>
-  );
-}
-
-/** Sends one transfer and reports it the way the policy answered: settled, or refused. */
-function usePayout() {
-  const queryClient = useQueryClient();
-  const [result, setResult] = useState<Awaited<ReturnType<typeof client.pay>>>();
-  const run = useMessage();
-  return {
-    result,
-    ...run,
-    pay: (request: Parameters<typeof client.pay>[0]) =>
-      run.attempt(async () => {
-        setResult(undefined);
-        setResult(await client.pay(request));
-        await queryClient.invalidateQueries();
-        return "";
-      }),
-  };
-}
-
-function PayoutResult({ result }: { result?: Awaited<ReturnType<typeof client.pay>> }) {
-  if (!result) return null;
-  return result.outcome === "refused" ? (
-    <Badge tone="warning">
-      Refused · <span className="font-mono">{result.code}</span>
-    </Badge>
-  ) : result.status === "PENDING_APPROVAL" ? (
-    <Link to="/policy">
-      <Badge tone="info">Waiting for the owner's approval · approve under Policy</Badge>
-    </Link>
-  ) : (
-    <Badge tone={statusTone(result.status)}>
-      {result.status.toLowerCase()}
-      {result.failureCode ? ` · ${result.failureCode}` : ""}
-    </Badge>
-  );
-}
-
-function AssetAmount({
-  book,
-  asset,
-  setAsset,
-  value,
-  setValue,
-}: {
-  book: Overview["book"];
-  asset: string;
-  setAsset: (asset: string) => void;
-  value: string;
-  setValue: (value: string) => void;
-}) {
-  return (
-    <>
-      <input className={`${input} w-36`} inputMode="decimal" placeholder="Amount" value={value} onChange={(e) => setValue(e.target.value)} />
-      <select className={`${input} pr-8`} value={asset} onChange={(e) => setAsset(e.target.value)}>
-        {book.map((h) => (
-          <option key={h.asset} value={h.asset}>
-            {h.symbol}
-          </option>
-        ))}
-      </select>
-    </>
   );
 }
 
@@ -337,7 +211,7 @@ function Return({ treasury, data, setup }: { treasury: Treasury; data: Overview;
             </Button>
             <PayoutResult result={payout.result} />
           </form>
-          <ActionError error={payout.error} />
+          <ErrorBox error={payout.error} />
         </>
       ) : (
         <>
@@ -355,7 +229,7 @@ function Return({ treasury, data, setup }: { treasury: Treasury; data: Overview;
             </Button>
             <span className="text-sm text-muted-foreground">{destinations.action.label ?? destinations.blocked}</span>
           </div>
-          <ActionError error={destinations.action.error} />
+          <ErrorBox error={destinations.action.error} />
         </>
       )}
     </div>
@@ -365,20 +239,8 @@ function Return({ treasury, data, setup }: { treasury: Treasury; data: Overview;
 /** A deposit address for NEAR-native USDC; anyone can fund the account, no signature needed. */
 function Deposit() {
   const [deposit, setDeposit] = useState<Awaited<ReturnType<typeof client.deposit>>>();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string>();
-
-  async function request() {
-    setLoading(true);
-    setError(undefined);
-    try {
-      setDeposit(await client.deposit());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }
+  const { busy, error, attempt } = useAttempt();
+  const request = () => attempt(async () => setDeposit(await client.deposit()));
 
   return (
     <Section title="Fund the account" description="The book is empty. Send USDC on NEAR to a one-time deposit address.">
@@ -389,9 +251,7 @@ function Deposit() {
               <span className="text-muted-foreground">Deposit address</span>
               <div className="flex items-center gap-2">
                 <code className="min-w-0 flex-1 truncate rounded-xl bg-muted px-4 py-3">{deposit.address}</code>
-                <Button variant="ghost" size="sm" onClick={() => navigator.clipboard.writeText(deposit.address)}>
-                  <Copy size={16} /> Copy
-                </Button>
+                <CopyButton text={deposit.address} />
               </div>
             </div>
             {deposit.memo && (
@@ -400,7 +260,7 @@ function Deposit() {
               </p>
             )}
             <p className="text-muted-foreground">
-              {deposit.minAmount && `At least ${Number(deposit.minAmount) / 1e6} USDC. `}
+              {deposit.minAmount && `At least ${fromUnits(deposit.minAmount, 6)} USDC. `}
               {deposit.expiresAt && `Expires ${ago(deposit.expiresAt)}. `}
               The book updates once it lands.
             </p>
@@ -408,9 +268,9 @@ function Deposit() {
         ) : (
           <div className="flex flex-col items-start gap-4">
             <p className="text-sm text-muted-foreground">Incoming funds need no grant and no owner signature.</p>
-            <ActionError error={error} />
-            <Button disabled={loading} onClick={request}>
-              {loading && <Spinner />} Get a deposit address
+            <ErrorBox error={error} />
+            <Button disabled={busy} onClick={request}>
+              {busy && <Spinner />} Get a deposit address
             </Button>
           </div>
         )}
@@ -424,32 +284,26 @@ function Deposit() {
  * whether its public proposals are a source of payees: a confidential DAO pays out of public view.
  */
 function ConfidentialSetting({ treasury }: { treasury: Treasury }) {
-  const queryClient = useQueryClient();
-  const [busy, setBusy] = useState(false);
+  const { busy, error, attempt } = useAttempt();
   return (
-    <label className="flex items-center gap-2 text-muted-foreground">
-      <input
-        type="checkbox"
-        checked={treasury.confidential}
-        disabled={busy}
-        onChange={async (e) => {
-          setBusy(true);
-          try {
-            await client.treasury.setConfidential({ confidential: e.target.checked });
-            await queryClient.invalidateQueries({ queryKey: ["treasury"] });
-          } finally {
-            setBusy(false);
-          }
-        }}
-      />
-      <LockKey size={14} /> Confidential in Trezu
-    </label>
+    <>
+      <label className="flex items-center gap-2 text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={treasury.confidential}
+          disabled={busy}
+          onChange={(e) => attempt(() => client.treasury.setConfidential({ confidential: e.target.checked }))}
+        />
+        <LockKey size={14} /> Confidential in Trezu
+      </label>
+      <ErrorBox error={error} />
+    </>
   );
 }
 
 export function TreasurySection() {
   const { treasury, data, setup } = useAgent();
-  const queryClient = useQueryClient();
+  const unlink = useAttempt();
   const empty = data.book.every((h) => h.usd === 0);
   return (
     <>
@@ -458,19 +312,13 @@ export function TreasurySection() {
       description="The account this agent works for: any NEAR account, or a DAO that votes on funding and payees."
       action={
         treasury && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={async () => {
-              await client.treasury.unlink();
-              await queryClient.invalidateQueries();
-            }}
-          >
+          <Button variant="ghost" size="sm" disabled={unlink.busy} onClick={() => unlink.attempt(() => client.treasury.unlink())}>
             Unlink
           </Button>
         )
       }
     >
+      <ErrorBox error={unlink.error} />
       {!treasury ? (
         <LinkTreasury />
       ) : (
@@ -479,7 +327,7 @@ export function TreasurySection() {
             <div className="flex flex-col gap-1">
               <span className="font-mono text-lg">{treasury.accountId}</span>
               <span className="text-sm text-muted-foreground">
-                {treasury.balances.near} NEAR · {Number(treasury.balances.usdc) / 1e6} USDC in the account
+                {treasury.balances.near} NEAR · {fromUnits(treasury.balances.usdc, 6)} USDC in the account
               </span>
             </div>
             {treasury.dao ? (
@@ -510,125 +358,5 @@ export function TreasurySection() {
     </Section>
     {!treasury && empty && <Deposit />}
     </>
-  );
-}
-
-/**
- * The agreement: the payees the agent may pay. The owner signs each into the policy; for a DAO,
- * payees its members already voted to pay are offered first. Anyone else is refused at the API.
- */
-export function PayeesSection() {
-  const { treasury, data, setup } = useAgent();
-  const destinations = useDestinations(data, setup);
-  const payees = destinations.current.filter((d) => d.address !== treasury?.accountId);
-  const candidates = (treasury?.payees ?? []).filter((c) => !destinations.current.some((d) => d.address === c.address));
-  const [newPayee, setNewPayee] = useState("");
-  const [recipient, setRecipient] = useState("");
-  const [asset, setAsset] = useState(data.book[0]?.asset ?? "");
-  const [value, setValue] = useState("");
-  const payout = usePayout();
-  const holding = data.book.find((h) => h.asset === asset);
-  const amount = holding ? toUnits(value, holding.decimals) : null;
-  const agreed = payees.find((p) => p.address === recipient.trim());
-  const editable = !destinations.action.busy && !destinations.blocked;
-
-  return (
-    <Section
-      title="Payees"
-      description="Who the agent may pay. A payee outside this agreement, or a payment over the policy's caps, is refused before anything moves."
-    >
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <h3 className="text-lg font-medium">Agreement</h3>
-          {payees.length === 0 && <p className="text-sm text-muted-foreground">No payees yet.</p>}
-          <ul className="flex flex-col gap-2">
-            {payees.map((p) => (
-              <li key={p.address} className="flex items-center justify-between gap-3 text-sm">
-                <span className="truncate font-mono" title={p.address}>
-                  {short(p.address)}
-                </span>
-                <span className="flex items-center gap-2">
-                  {p.confidential && <Badge tone="info">confidential</Badge>}
-                  <Button variant="ghost" size="sm" disabled={!editable} onClick={() => destinations.remove(p.address)} aria-label={`Remove ${p.address}`}>
-                    <X size={14} />
-                  </Button>
-                </span>
-              </li>
-            ))}
-          </ul>
-
-          {candidates.length > 0 && (
-            <div className="flex flex-col gap-2 border-t pt-4">
-              <span className="text-sm text-muted-foreground">Approved by {treasury?.accountId} in past proposals</span>
-              {candidates.map((c) => (
-                <div key={c.address} className="flex items-center justify-between gap-3 text-sm">
-                  <span className="min-w-0 truncate">
-                    <span className="font-mono">{short(c.address)}</span>{" "}
-                    <span className="text-muted-foreground">· #{c.proposalId}</span>
-                  </span>
-                  <Button variant="outline" size="sm" disabled={!editable} onClick={() => destinations.add({ address: c.address, confidential: true })}>
-                    <Plus size={14} /> Add
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <form
-            className="flex gap-3 border-t pt-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (newPayee.trim()) destinations.add({ address: newPayee.trim(), confidential: Boolean(treasury?.dao) });
-            }}
-          >
-            <input className={`${input} flex-1`} placeholder="Payee's NEAR account" value={newPayee} onChange={(e) => setNewPayee(e.target.value)} />
-            <Button type="submit" variant="outline" disabled={!editable || !newPayee.trim()}>
-              <Plus size={16} /> Add
-            </Button>
-          </form>
-          <span className="text-sm text-muted-foreground">{destinations.action.label ?? destinations.blocked}</span>
-          <ActionError error={destinations.action.error} />
-        </Card>
-
-        <Card>
-          <h3 className="text-lg font-medium">Pay</h3>
-          <p className="text-sm text-muted-foreground">
-            The agent sends under its grant. Try someone outside the agreement to watch the policy refuse.
-          </p>
-          <form
-            className="flex flex-col gap-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (amount && recipient.trim())
-                payout.pay({ recipient: recipient.trim(), asset, amount, confidential: agreed?.confidential ?? true });
-            }}
-          >
-            <input
-              className={input}
-              list="payees"
-              placeholder="Recipient's NEAR account"
-              value={recipient}
-              onChange={(e) => setRecipient(e.target.value)}
-            />
-            <datalist id="payees">
-              {payees.map((p) => (
-                <option key={p.address} value={p.address} />
-              ))}
-            </datalist>
-            <div className="flex flex-wrap items-center gap-3">
-              <AssetAmount book={data.book} asset={asset} setAsset={setAsset} value={value} setValue={setValue} />
-              <Button type="submit" disabled={payout.busy || !amount || !recipient.trim()}>
-                {payout.busy ? <Spinner /> : <PaperPlaneTilt size={18} />} Pay
-              </Button>
-              <PayoutResult result={payout.result} />
-            </div>
-            {recipient.trim() && !agreed && (
-              <span className="text-sm text-warning-muted-foreground">Not in the agreement: expect a refusal.</span>
-            )}
-          </form>
-          <ActionError error={payout.error} />
-        </Card>
-      </div>
-    </Section>
   );
 }

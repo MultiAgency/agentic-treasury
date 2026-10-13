@@ -16,7 +16,8 @@ import { createContext, type ReactNode, useContext } from "react";
 import { client, type Overview, swaps } from "./lib";
 import { ViewerBadge } from "./session";
 import { useViewer } from "./viewer";
-import { Onboarding, ownerName, type Setup, WalletButton } from "./owner";
+import { Onboarding } from "./onboarding";
+import { ownerName, type Setup, WalletButton } from "./owner";
 import type { Treasury } from "./treasury";
 import { Badge, Button, Spinner } from "./ui";
 

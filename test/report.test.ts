@@ -116,3 +116,29 @@ test("reading the evidence is listed as an operator read, not an intervention", 
   assert.match(criterion(text, "No operator interventions in the gateway's record"), /yes \(0 recorded calls/);
   assert.match(text, /Operator reads \(recorded by the gateway, not interventions\):\n- [^\n]*autopilot\/evidence/);
 });
+
+test("a long tick doesn't make the next on-time tick a gap: the scheduler counts the interval from a tick's end", () => {
+  // The first tick swaps for 5 minutes; the scheduler runs the next one 60 minutes after it ended.
+  const text = report([tick(1, {}, { ...swap("op_1"), endedAt: at(6) }), tick(66), tick(126)], { ledger: [row(1, "op_1")], until: at(180) });
+  assert.match(criterion(text, "Scheduled ticks"), /yes/);
+});
+
+test("a tick that sent money counts as executed even when a later leg was refused, and the refusal is still listed", () => {
+  const partly = tick(61, {}, { ...swap("op_1"), rejected: ["leg 2: swap_cost_exceeded"] });
+  assert.equal(outcomeOf(partly), "executed");
+  const text = report([tick(1), partly, tick(121)], { ledger: [row(61, "op_1")] });
+  assert.match(text, /1 executed/);
+  assert.match(text, /Refusals[^\n]*\n- [^\n]*swap_cost_exceeded/);
+});
+
+test("a failed shield is a failure even when the rebalance after it was refused", () => {
+  const failed = tick(61, {}, { shields: [{ status: "FAILED", correlationId: "op_s", amount: "1", asset: "a" }] as never, refusal: "strategy_changed" });
+  assert.equal(outcomeOf(failed), "failed");
+  assert.match(criterion(report([tick(1), failed, tick(121)]), "No failed executions"), /\*\*no\*\*/);
+});
+
+test("a non-refusal failure after a settled leg is a failure, not an execution", () => {
+  const failedAfter = tick(61, {}, { ...swap("op_1"), outcome: "Failed: Outcome unknown for op_x" });
+  assert.equal(outcomeOf(failedAfter), "failed");
+  assert.match(criterion(report([tick(1), failedAfter, tick(121)], { ledger: [row(61, "op_1")] }), "No failed executions"), /\*\*no\*\*/);
+});

@@ -102,29 +102,49 @@ and votes, and the agent pays confidentially.
 window closes about five minutes later; the proposal's description says when. Vote in Trezu right after filing.
 In the 2026-10-12 rehearsal, a payment approved after an hour failed and one approved after 4 minutes succeeded.
 
-**Recovery.** Before creating a replacement payment or invoice, the original must have a definitive unpaid outcome,
-reconciled with the API: FAILED, or refused before anything was sent. A fresh submission is a new payment, so it
-could pay twice if the original later succeeds.
-- **A vote missed the window:** release the same held payment again rather than voting on the old proposal. That
-  prepares a new approval for the same payment, so the payment itself isn't duplicated. The old proposal can be left
-  to expire.
+**Recovery.** A fresh invoice creates a new payment. Before replacing one, establish that the original
+was refused before submission or that provider execution evidence proves it cannot pay the recipient.
+A generic `FAILED` status, an expired approval or an empty wallet is insufficient on its own. The current
+code treats `FAILED` as terminal; it does not independently establish that replacement is safe.
+See the [recorded limitation](docs/enforcement.md#recovery-limitation).
+
+- **A vote missed the window:** check the existing approval first. An attempted signature is poll-only
+  after an ambiguous response or restart. Prepare a fresh approval for the same held payment only after
+  establishing the prior request cannot execute; expiry alone must not trigger resubmission.
 - **The payout agent refused an invoice** (for example, a payee the DAO no longer agrees to pay): it is resolved as
   refused, and nothing was sent. The payee may submit a new one.
-- **A payment failed at the provider after the vote:** confirm the status is FAILED (`pnpm reconcile` on the payout
-  agent's executor), fix the cause, then the payee submits a new invoice. Example: op_9rM_JoIh…, 2026-10-12 22:17Z.
-  The provider reported FAILED with the reason redacted. The wallet was empty when checked afterwards, which
-  supports, but doesn't prove, insufficient funds.
-- **Unknown outcome:** a payment whose outcome the server couldn't prove shows as unknown, and the payout agent sends
-  nothing more until an operator runs `pnpm reconcile`. Never resubmit an unknown payment; wait for reconciliation
-  to make it definitive.
+- **A payment failed at the provider after the vote:** reconcile the original operation and inspect
+  its execution evidence before deciding whether a new invoice is safe. For op_9rM_JoIh…
+  (2026-10-12 22:17Z), the provider reported `FAILED` with the reason redacted. The empty wallet
+  afterwards suggested insufficient funds but did not prove non-execution.
+- **Unknown outcome:** the payout agent blocks new sends until the original outcome is established.
+  Reconciliation polls a known operation ID; without one, provider/operator investigation is required.
+  Never resubmit an unknown payment.
 
 **Next release (not deployed): balance check.** A payment or invoice is refused with `insufficient_balance` when the
-payout wallet's confidential balance at that moment is below its amount, so it never goes to a vote. The refusal is
-final and nothing was sent: funding the wallet doesn't revive that invoice. Fund the wallet, then have the payee
+payout wallet's confidential balance, less payments this executor holds for approval, is below its amount, so it never
+goes to a vote. The refusal is final and nothing was sent: funding the wallet doesn't revive that invoice. Fund the wallet, then have the payee
 submit a new invoice. It's a limited check:
-- It doesn't count other held payments against the balance, so two payments that each fit can together exceed it.
-- It isn't repeated at approval, so a payment can still fail after the vote if the balance drops in between.
+- It isn't checked again at approval: a wallet emptied while a payment is held still fails after the vote. Whether
+  the provider's reported balance already leaves out payments held for approval is unverified: confirm it on mainnet
+  before relying on this.
+- It counts only payments held in this executor's own log. Payments held before that log existed, or by another
+  instance, show in Activity as `remote` but don't reduce the balance it checks.
 - It doesn't guarantee settlement after approval.
+
+## The autopilot moment: a rebalance inside the limits
+
+Balances in, a plan out, two quoted swaps inside the caps, and the budget meter dropping. Three assets need at
+most two swaps to rebalance, so two is the honest number. Nothing signed changes.
+
+1. Pick a day with budget room: the daily USD budget is $25, and the run needs about $5 of it.
+2. Just before, send about 9.50 USDC from the DAO to the treasury agent (Treasury → Fund the agent). USDC is now
+   about $4.75 over its 50% target.
+3. Automations → preview: the plan should show two legs, USDC → wNEAR and USDC → ETH, each at least $2, totalling
+   $5 or less, each with its quote's worst cost under the 250 bps cap. Prices move: if the total is over $5, the
+   autopilot would leave it for the owner, so adjust the top-up and preview again.
+4. Run now. Both swaps settle in about a minute; Overview's "Monthly budget left" drops by their USD value, and
+   the books list both with the mandate they ran under.
 
 ## What keeps it safe
 
@@ -135,23 +155,22 @@ submit a new invoice. It's a limited check:
   only.
 - Sign-in is bound to each site's host: a signature made for another site can't be used.
 - State lives on each service's volume and survives a restart. To check, run `pnpm smoke` with `SMOKE_COOKIE_FILE`
-  (and `SMOKE_INVOICES_COOKIE_FILE` for a payee) and `SMOKE_SNAPSHOT` before and after (see `src/smoke.ts`).
+  and `SMOKE_SNAPSHOT` before and after (see `src/smoke.ts`).
 
 ## What it doesn't guarantee
 
 Say "autonomous rebalancing with application checks and provider-enforced limits", not "the agent can never exceed
 its signed policy". At the custody level:
 - What a swap buys is checked only by this server, not by the provider.
-- The provider's cumulative per-asset limits are best-effort under concurrent sends.
+- The provider serializes spends per wallet (per its own tests), but whether that holds until usage is recorded,
+  for swaps that settle later, is unconfirmed: strict per-asset limits aren't established.
 - The provider's USD-budget atomicity hasn't been independently verified.
 
 The plan is in `docs/enforcement.md`.
 
-Two known correctness gaps have regression tests marked todo, so the suite doesn't fail on them:
-- **A send that crashes between its write-ahead record and its claim** (`test/journal.test.ts`). A process dying
-  mid-send (a deploy, restart or crash) leaves the action unresolved even though nothing reached the provider. That
-  agent then sends nothing until an operator runs `pnpm reconcile`. In the demo, this only happens if a service
-  restarts during a payment or an autopilot trade.
-- **Two processes preparing owner actions on one instance** (`test/owner-intents-race.test.ts`). A command-line owner
-  action run in the same container as the server can make one of them lose its held request. Its proposal then can't
-  be completed and has to be prepared again. The dashboard alone doesn't trigger it.
+**Local fixes, deployment not established:** the former TODO regressions now pass as required tests.
+New journal v2 preparations abandoned before their submission claim are resolved as `never_submitted`
+when the money lock is next acquired. A crash after the claim remains ambiguous and blocks new sends;
+legacy records without a claim distinction still require investigation. Owner-action storage now locks
+and reloads before each update, preserving concurrent requests and settled results across processes.
+These are offline crash/concurrency results, not observations of the deployed build above.

@@ -1,6 +1,6 @@
 import { Near } from "near-kit";
 import { type DaoPolicy, mainnet } from "../chain.js";
-import { type DaoProposal, signRequestOf } from "./proposals.js";
+import { type DaoProposal, signRequestOf } from "./sign-requests.js";
 
 /**
  * What anyone may see without signing in: only what the DAO's contract already shows to everyone,

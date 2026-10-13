@@ -1,23 +1,20 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { after, beforeEach, test } from "node:test";
+import { writeFileSync } from "node:fs";
+import { beforeEach, test } from "node:test";
 import { AgentApiError } from "@near-intents-agent-api/sdk";
 import { api } from "../src/api.js";
 import { acquireMoneyLock, UnresolvedOperations } from "../src/lock.js";
 import { opsLog, readOps } from "../src/ops.js";
 import { recover } from "../src/recover.js";
+import { freshDirectory } from "./fixtures/harness.js";
 
 // Offline: the API's status reads and the grant's sends are replaced per test.
-const home = process.cwd();
 const sent: string[] = [];
+freshDirectory("recover");
 beforeEach(() => {
-  process.chdir(mkdtempSync(join(tmpdir(), "recover-")));
   process.env.AGENT_GRANT_TOKEN = "ngt_test";
   sent.length = 0;
 });
-after(() => process.chdir(home));
 
 /** The API's answer to a resend; `null` means the grant must not be used at all. */
 function grant(answer: (() => Promise<{ correlation_id: string }>) | null) {
@@ -57,11 +54,11 @@ test("one still moving stays unresolved, its latest status recorded", async () =
   await blocked();
 });
 
-test("ambiguous replay stays blocked even when explicitly requested", async () => {
+test("an operation without an id stays unknown and is never resent", async () => {
   log(request("swap:lost", ago(60_000)));
   grant(async () => { throw new Error("must not send"); });
-  for (const resend of [false, true]) {
-    const [r] = await recover({ resend });
+  for (let pass = 0; pass < 2; pass++) {
+    const [r] = await recover();
     assert.equal(r?.outcome, "unknown");
     assert.match(r!.detail!, /unverified/);
     assert.deepEqual(sent, []);
@@ -75,7 +72,7 @@ test("a later potential policy refusal cannot erase original uncertainty", async
   grant(async () => {
     throw new AgentApiError(409, { errors: [{ status: "409", code: "policy_denied", title: "Policy denied" }] } as never);
   });
-  const [r] = await recover({ resend: true });
+  const [r] = await recover();
   assert.equal(r?.outcome, "unknown");
   assert.deepEqual(sent, []);
   assert.equal(readOps()[0]?.refused, undefined);

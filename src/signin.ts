@@ -2,6 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { Near } from "near-kit";
 import { mainnet } from "./chain.js";
+import { BadRequest } from "./http.js";
 import { nep413Hash, signatureBytes, verifyEd25519 } from "./nep413.js";
 
 /**
@@ -15,7 +16,7 @@ import { nep413Hash, signatureBytes, verifyEd25519 } from "./nep413.js";
 export const CHALLENGE_TTL_MS = 5 * 60_000;
 export const SESSION_TTL_MS = 12 * 60 * 60_000;
 
-export const signInMessage = (host: string) => `Sign in to ${host}`;
+const signInMessage = (host: string) => `Sign in to ${host}`;
 
 /** Nonces issued and not yet used, with when each expires. */
 const challenges = new Map<string, number>();
@@ -104,6 +105,29 @@ export async function verifySignIn(
   if (permission === null) throw new Error(`${publicKey} is not a key of ${accountId}`);
   if (permission !== "FullAccess") throw new Error("Sign in with a full-access key of the account");
   return accountId;
+}
+
+/**
+ * A sign-in request's body, checked: the four signed fields as strings, and at most three callback
+ * URLs the page offers (some wallets sign the page's URL as NEP-413's callbackUrl without saying so).
+ */
+export function parseSignIn(body: Record<string, unknown>): SignIn {
+  const { accountId, publicKey, signature, nonce } = body;
+  if (typeof accountId !== "string" || typeof publicKey !== "string" || typeof signature !== "string" || typeof nonce !== "string")
+    throw new BadRequest("Sign in with your wallet.");
+  const callbackUrls = Array.isArray(body.callbackUrls) ? body.callbackUrls.filter((u): u is string => typeof u === "string").slice(0, 3) : [];
+  return { accountId, publicKey, signature, nonce, callbackUrls };
+}
+
+/** The answer to a request for a sign-in challenge: a fresh one, or 429 while a limit is reached. */
+export function challengeAnswer(host: string, allowed: boolean): [number, object] {
+  if (!allowed) return [429, { error: "Too many sign-in attempts. Try again later." }];
+  try {
+    return [200, issueChallenge(host)];
+  } catch (error) {
+    if (error instanceof ChallengeLimit) return [429, { error: error.message }];
+    throw error;
+  }
 }
 
 const mac = (secret: string, payload: string) => createHmac("sha256", secret).update(payload).digest("base64url");

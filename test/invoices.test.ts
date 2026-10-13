@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { invoiceId, usdcUnits, validate } from "../src/invoices.js";
+import { invoiceId } from "../src/invoice-store.js";
+import { usdcUnits, validate } from "../src/invoices.js";
 
 test("amounts are positive USDC with at most 6 decimals", () => {
   assert.equal(usdcUnits("250"), "250000000");
@@ -35,14 +36,4 @@ test("one submission is one invoice: retries match, a new form doesn't", () => {
   assert.match(invoiceId(invoice), /^[0-9a-f]{32}$/);
   assert.notEqual(invoiceId(invoice), invoiceId({ ...invoice, submission: "0f6b2c1e-9d7a-4c3b-8e2f-1a2b3c4d5e6f" }));
   assert.notEqual(invoiceId(invoice), invoiceId({ ...invoice, payee: "b.near" }));
-});
-
-test("a wallet that signs the page's URL as NEP-413 callbackUrl verifies with it (real sign-in, 2026-10-12)", async () => {
-  const { nep413Hash, signatureBytes, verifyEd25519 } = await import("../src/nep413.js");
-  const key = "ed25519:7g2kKQYuRXPVhn8HTLiRdBfJTF1fd7UZ8xASAcrht3nk";
-  const signature = signatureBytes("uu24iawRTfSXfM4A5gFcO4XRt0l9ZaVJw8UI7ARMFSV0kuTDxAarmhliRjJBDD7UwD3+sKroBOX75NmeuihNDw==");
-  const nonce = Buffer.from("m8M+4IBj1wrjbIOG8NW7WNWNzJcfOzWL4dMw0FUN06s=", "base64");
-  const message = "Sign in to localhost:8791";
-  assert.equal(verifyEd25519(key, nep413Hash(message, nonce, "localhost:8791"), signature), false);
-  assert.equal(verifyEd25519(key, nep413Hash(message, nonce, "localhost:8791", "http://localhost:8791/"), signature), true);
 });

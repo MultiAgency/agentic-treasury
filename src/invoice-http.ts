@@ -1,9 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { agentId } from "./agent.js";
+import { agentId } from "./env.js";
 import { agreed, file, mine, validate } from "./invoices.js";
-import { BadRequest, readJson } from "./http.js";
-import { chainKeyLookup, clientAddress, hourlyLimit, issueChallenge, sessions, verifySignIn, ChallengeLimit } from "./signin.js";
+import { BadRequest, readJson, SECURITY_HEADERS, sendFailure, sendJson as send } from "./http.js";
+import { chainKeyLookup, challengeAnswer, clientAddress, hourlyLimit, parseSignIn, sessions, verifySignIn } from "./signin.js";
 
 /**
  * The public invoice listener in the payout executor process. It uses the same grant, database,
@@ -33,15 +33,9 @@ const session = sessions({ cookie: "invoices_session", secret: SECRET, secure: !
 const LIMITS = { signin: hourlyLimit(10), file: hourlyLimit(10) };
 const allowed = (kind: keyof typeof LIMITS, who: string) => LIMITS[kind](who);
 
-const address = clientAddress;
-
-const send = (res: ServerResponse, code: number, value: unknown, headers: Record<string, string> = {}) =>
-  res.writeHead(code, { "content-type": "application/json", "cache-control": "no-store", ...headers }).end(JSON.stringify(value));
-
 export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) => {
-  res.setHeader("x-content-type-options", "nosniff");
-  res.setHeader("referrer-policy", "no-referrer");
-  const ip = address(req);
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
+  const ip = clientAddress(req);
   try {
     // A malformed request target (`GET http://[/`) throws here: answered 400 below, never a crash.
     const url = URL.parse(req.url ?? "/", ORIGIN);
@@ -52,7 +46,7 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
       // scripts must be allowed. The page never writes untrusted text as HTML (textContent only).
       res.setHeader(
         "content-security-policy",
-        "default-src 'self'; script-src 'unsafe-inline' https://cdn.jsdelivr.net https:; connect-src 'self' https: wss:; frame-src https:; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'",
+        "frame-ancestors 'none'; default-src 'self'; script-src 'unsafe-inline' https://cdn.jsdelivr.net https:; connect-src 'self' https: wss:; frame-src https:; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'",
       );
       return res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(page());
     }
@@ -63,29 +57,16 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
 
     if (req.method === "GET" && url.pathname === "/api/session") return send(res, 200, { account: session.account(req) });
 
-    if (req.method === "POST" && url.pathname === "/api/signin/challenge") {
-      if (!allowed("signin", ip)) return send(res, 429, { error: "Too many attempts. Try again later." });
-      try {
-        return send(res, 200, issueChallenge(PUBLIC_HOST));
-      } catch (error) {
-        if (error instanceof ChallengeLimit) return send(res, 429, { error: error.message });
-        throw error;
-      }
-    }
+    if (req.method === "POST" && url.pathname === "/api/signin/challenge") return send(res, ...challengeAnswer(PUBLIC_HOST, allowed("signin", ip)));
 
     // A signature by a full-access key of an agreed payee opens a session; anyone else is told why not.
     if (req.method === "POST" && url.pathname === "/api/signin") {
-      const input = await readJson(req);
-      const signIn = { accountId: input.accountId, publicKey: input.publicKey, signature: input.signature, nonce: input.nonce };
-      if (Object.values(signIn).some((v) => typeof v !== "string")) return send(res, 400, { error: "Sign in with your wallet." });
-      // Some wallets also sign the page's URL as NEP-413's callbackUrl without saying so: the page
-      // offers the URLs it may have used, and signin.ts accepts only ones on this site.
-      const callbackUrls = Array.isArray(input.callbackUrls) ? input.callbackUrls.filter((u): u is string => typeof u === "string").slice(0, 3) : [];
+      const signIn = parseSignIn(await readJson(req));
       let account: string;
       try {
-        account = await verifySignIn({ ...(signIn as Record<keyof typeof signIn, string>), callbackUrls }, PUBLIC_HOST, chainKeyLookup);
+        account = await verifySignIn(signIn, PUBLIC_HOST, chainKeyLookup);
       } catch (error) {
-        // Everything here is public (account, public key, signature, nonce): kept to diagnose wallets.
+        // Everything here is public (account, public key, signature, nonce, URLs): kept to diagnose wallets.
         console.warn("sign-in refused", JSON.stringify({ ...signIn, host: PUBLIC_HOST, reason: String(error) }));
         return send(res, 403, { error: error instanceof Error ? error.message : "Sign-in failed." });
       }
@@ -113,10 +94,8 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
     if (req.method === "GET" && url.pathname === "/api/invoices") return send(res, 200, { invoices: await mine(payee!) });
     send(res, 404, { error: "Not found." });
   } catch (error) {
-    if (error instanceof BadRequest) return send(res, 400, { error: error.message });
     // Payees see no internals: accounts, policy and API errors stay in this process's log.
-    console.error(error);
-    send(res, 500, { error: "Something went wrong. Try again later." });
+    sendFailure(res, error);
   }
 };
 

@@ -1,14 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { after, before, test } from "node:test";
+import { test } from "node:test";
 import { ATTESTATION, MODEL, saveProvenance } from "../src/llm.js";
 import { loadPlan, savePlan, type Snapshot } from "../src/plans.js";
+import { freshDirectory } from "./fixtures/harness.js";
 
-const home = process.cwd();
-before(() => process.chdir(mkdtempSync(join(tmpdir(), "provenance-"))));
-after(() => process.chdir(home));
+freshDirectory("provenance", { per: "suite" });
 
 const state: Snapshot = { agentId: "a".repeat(64), policyRevision: 1, policyDigest: "sha256:aa", strategyDigest: "sha256:cc", balances: {} };
 

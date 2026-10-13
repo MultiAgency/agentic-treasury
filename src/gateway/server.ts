@@ -4,8 +4,8 @@ import { createServer, type IncomingMessage, request, type ServerResponse } from
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mayCall } from "./allowlist.js";
-import { readJson, serveStatic } from "../http.js";
-import { chainKeyLookup, ChallengeLimit, clientAddress, hourlyLimit, issueChallenge, sessions, verifySignIn } from "../signin.js";
+import { BadRequest, crossSite, readJson, SECURITY_HEADERS, sendFailure, sendJson as json, serveStatic } from "../http.js";
+import { chainKeyLookup, challengeAnswer, clientAddress, hourlyLimit, parseSignIn, sessions, verifySignIn } from "../signin.js";
 import { type AgentEntry, childEnv, hostOf, loadConfig } from "./config.js";
 import { recentSignProposals } from "./proposals.js";
 import { readPublicView } from "./public.js";
@@ -40,9 +40,6 @@ function interventions(since: string) {
   }).filter((i) => i.at >= since);
 }
 
-const json = (res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) =>
-  res.writeHead(status, { "content-type": "application/json", ...headers }).end(JSON.stringify(body));
-
 /** The signed-in account and what it may do, or null. */
 async function viewer(req: IncomingMessage) {
   const account = session.account(req);
@@ -71,40 +68,23 @@ function forward(req: IncomingMessage, res: ServerResponse, agent: AgentEntry, p
 const CHALLENGES_PER_HOUR = 20;
 const mayChallenge = hourlyLimit(CHALLENGES_PER_HOUR);
 
-/**
- * On every answer: no other site may frame these pages (they trigger wallet signatures, so a hidden
- * frame could trick a click), types are taken as declared, no address leaks to linked sites, and
- * browsers keep to HTTPS once they have seen it.
- */
-const SECURITY_HEADERS = {
-  "Content-Security-Policy": "frame-ancestors 'none'",
-  "X-Frame-Options": "DENY",
-  "X-Content-Type-Options": "nosniff",
-  "Referrer-Policy": "no-referrer",
-  "Strict-Transport-Security": "max-age=31536000",
-};
-
 createServer(async (req, res) => {
+  // On every answer: no other site may frame these pages (they trigger wallet signatures, so a hidden
+  // frame could trick a click), types are taken as declared, no address leaks to linked sites, and
+  // browsers keep to HTTPS once they have seen it.
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
   try {
-    const { pathname } = new URL(req.url ?? "/", "http://gateway");
+    const url = URL.parse(req.url ?? "/", "http://gateway");
+    if (!url) throw new BadRequest("Malformed request.");
+    const { pathname } = url;
     // State-changing requests must come from this site's own pages.
-    const origin = req.headers.origin;
-    if (req.method !== "GET" && origin && new URL(origin).host !== req.headers.host) return json(res, 403, { error: "Cross-site request" });
+    if (req.method !== "GET" && crossSite(req)) return json(res, 403, { error: "Cross-site request" });
 
     if (pathname === "/health") return json(res, 200, { ok: true });
 
-    if (pathname === "/gw/challenge" && req.method === "GET") {
-      if (!mayChallenge(clientAddress(req))) return json(res, 429, { error: "Too many sign-in attempts. Try again later." });
-      try {
-        return json(res, 200, issueChallenge(HOST));
-      } catch (error) {
-        if (error instanceof ChallengeLimit) return json(res, 429, { error: error.message });
-        throw error;
-      }
-    }
+    if (pathname === "/gw/challenge" && req.method === "GET") return json(res, ...challengeAnswer(HOST, mayChallenge(clientAddress(req))));
     if (pathname === "/gw/session" && req.method === "POST") {
-      const account = await verifySignIn((await readJson(req)) as never, HOST, chainKeyLookup).catch((error: Error) => error);
+      const account = await verifySignIn(parseSignIn(await readJson(req)), HOST, chainKeyLookup).catch((error: Error) => error);
       if (account instanceof Error) return json(res, 401, { error: account.message });
       const access = await resolveAccess(account, config.dao, config.operators);
       if (!access) return json(res, 403, { error: `${account} is not a member of ${config.dao}` });
@@ -130,7 +110,7 @@ createServer(async (req, res) => {
     if (pathname === "/gw/interventions") {
       const me = await viewer(req);
       if (me?.role !== "operator") return json(res, me ? 403 : 401, { error: "Operators only" });
-      const since = new URL(req.url ?? "/", "http://gateway").searchParams.get("since") ?? "";
+      const since = url.searchParams.get("since") ?? "";
       return json(res, 200, interventions(since));
     }
 
@@ -155,9 +135,7 @@ createServer(async (req, res) => {
 
     return serveStatic(res, DIST, pathname.replace(/^\/a\/[a-z0-9-]+/, "") || "/");
   } catch (error) {
-    // A failure after the answer started can't change it: end it rather than crash the gateway.
-    if (res.headersSent) return void res.end();
-    json(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    sendFailure(res, error);
   }
 }).listen(PORT, () => console.log(`DAO dashboard for ${config.dao} on port ${PORT}, signing in to ${HOST}`));
 

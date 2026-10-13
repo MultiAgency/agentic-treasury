@@ -1,24 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { after, beforeEach, test } from "node:test";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { test } from "node:test";
 import { ASSETS } from "../src/policy.js";
-import {
-  DEFAULT_STRATEGY,
-  grantApproves,
-  loadStrategy,
-  saveStrategy,
-  STRATEGY_FILE,
-  type Strategy,
-  strategyDigest,
-  strategyLabelSuffix,
-} from "../src/strategy.js";
+import { loadStrategy, saveStrategy, STRATEGY_FILE } from "../src/strategy.js";
+import { DEFAULT_STRATEGY, grantApproves, type Strategy, strategyDigest, strategyLabelSuffix } from "../src/strategy-digest.js";
+import { freshDirectory } from "./fixtures/harness.js";
 
 // Every test gets an empty directory: the strategy file is read from the working directory.
-const home = process.cwd();
-beforeEach(() => process.chdir(mkdtempSync(join(tmpdir(), "strategy-"))));
-after(() => process.chdir(home));
+freshDirectory("strategy");
 
 const save = (strategy: unknown) => {
   mkdirSync(".strategy", { recursive: true });
@@ -74,12 +63,12 @@ test("a saved strategy is what loads next, and an inconsistent one is never writ
 });
 
 test("a treasury grant carries the strategy in force, so the owner's signature approves it", async () => {
-  const { grantRequest } = await import("../src/intents.js");
+  const { grantRequest } = await import("../src/grants.js");
   saveStrategy({ ...DEFAULT_STRATEGY, autopilot: { everyMin: 60, maxUsd: 3 } });
-  const treasury = (await grantRequest({ purpose: "treasury" })).request.label;
+  const treasury = (await grantRequest({ label: "treasury" })).request.label;
   assert.equal(treasury, `treasury:${strategyLabelSuffix(loadStrategy())}`);
   assert.ok(grantApproves(treasury, loadStrategy()));
   // Other grants don't run the strategy; a suffix named explicitly is kept as given.
-  assert.equal((await grantRequest({ purpose: "payout" })).request.label, "payout");
-  assert.equal((await grantRequest({ purpose: "treasury", suffix: "x" })).request.label, "treasury:x");
+  assert.equal((await grantRequest({ label: "payout" })).request.label, "payout");
+  assert.equal((await grantRequest({ label: "treasury", suffix: "x" })).request.label, "treasury:x");
 });

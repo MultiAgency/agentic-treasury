@@ -54,9 +54,7 @@ function database<T>(run: (db: DatabaseSync) => T): T {
       CREATE TABLE IF NOT EXISTS reservations (payment_key TEXT PRIMARY KEY REFERENCES payments(key),
         asset TEXT NOT NULL, amount TEXT NOT NULL, released INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS legacy (id TEXT PRIMARY KEY, entry TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS imports (path TEXT PRIMARY KEY, digest TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS execution_evidence (id INTEGER PRIMARY KEY, payment_key TEXT NOT NULL,
-        evidence TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS imports (path TEXT PRIMARY KEY, digest TEXT NOT NULL);`);
     db.exec("PRAGMA user_version = 1");
     // Preserve filed history and identity without inventing missing operation links. Each legacy
     // file is imported, then moved aside, so an old writer still running (a deploy overlapping the

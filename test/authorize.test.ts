@@ -6,7 +6,7 @@ import { agreedPayees, authorize, type Facts, type Purpose } from "../src/author
 import { mandateDigest } from "../src/mandate.js";
 import type { Plan } from "../src/plans.js";
 import { ASSETS, payoutPolicy, treasuryPolicy } from "../src/policy.js";
-import { DEFAULT_STRATEGY, strategyDigest, strategyLabelSuffix } from "../src/strategy.js";
+import { DEFAULT_STRATEGY, strategyDigest, strategyLabelSuffix } from "../src/strategy-digest.js";
 import { fixtureGrant, policyView, timedPrices } from "./fixtures/authority.js";
 
 /** The single authorization rule, purpose by rule. Pure: no network, no clock, no files. */
@@ -43,8 +43,8 @@ function facts(purpose: Purpose, change: Record<string, unknown> = {}): never {
   const base = {
     treasury: { ...common(treasury, "treasury:anything"), plan: null, strategy, tokens },
     autopilot: { ...common(treasury, `treasury:${strategyLabelSuffix(strategy)}`), plan: null, strategy, tokens },
-    payout: { ...common(payout, "payout"), balance: USDC(100), heldPayouts: [] },
-    invoice: { ...common(payout, "invoices"), balance: USDC(100) },
+    payout: { ...common(payout, "payout"), available: USDC(100), heldPayouts: [] },
+    invoice: { ...common(payout, "invoices"), available: USDC(100) },
     approval: common(payout, null),
   }[purpose];
   return { ...base, ...change } as never;
@@ -126,9 +126,9 @@ test("invoices and approvals need a policy that holds every payment for the owne
 
 test("a payout or invoice the wallet can't cover is refused before it goes to a vote", () => {
   for (const purpose of ["payout", "invoice"] as const) {
-    assert.equal(code(purpose, pay("payee.near", USDC(100)), { balance: USDC(100) }), "ok", purpose);
-    assert.equal(code(purpose, pay("payee.near", USDC(1)), { balance: "999999" }), "insufficient_balance", purpose);
-    assert.equal(code(purpose, pay(), { balance: "0" }), "insufficient_balance", purpose);
+    assert.equal(code(purpose, pay("payee.near", USDC(100)), { available: USDC(100) }), "ok", purpose);
+    assert.equal(code(purpose, pay("payee.near", USDC(1)), { available: "999999" }), "insufficient_balance", purpose);
+    assert.equal(code(purpose, pay(), { available: "0" }), "insufficient_balance", purpose);
   }
 });
 

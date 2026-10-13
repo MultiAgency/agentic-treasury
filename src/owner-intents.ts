@@ -1,23 +1,18 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import lockfile from "proper-lockfile";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { type OwnerWallet, type SubmitIntentRequest } from "@near-intents-agent-api/sdk";
-import { api, checkedStatus } from "./api.js";
+import { api, readStatus } from "./api.js";
 import { completeSigning, type DaoSigning, daoOwner, findSignature, latestBlock, proposalAndVote, proposalTransaction, signingRequest, signTransaction } from "./dao-owner.js";
-import { ENV_FILE, saveEnv } from "./env.js";
-import { agentId, executes } from "./agent.js";
-import {
-  type GrantPurpose,
-  grantRequest,
-  ownerRequests,
-  type PolicyChanges,
-  policyRequest,
-  promoteGrantToken,
-  stageGrantToken,
-} from "./intents.js";
-import type { AgentKind } from "./policy.js";
+import { agentId, ENV_FILE, executes, saveEnv } from "./env.js";
+import { appendSynced, writeAtomic } from "./synced.js";
+
+import { type GrantLabel, grantRequest, promoteGrantToken, stageGrantToken } from "./grants.js";
+import { ownerRequests, type PolicyChanges, policyRequest } from "./owner-requests.js";
+import type { AgentRole } from "./policy.js";
 import { daoPolicy, nextProposalId } from "./chain.js";
 import { mandateDigest } from "./mandate.js";
-import { settle } from "./ops.js";
+import { isTerminal, settle } from "./ops.js";
 import { checkPaymentApproval, type PaymentApproval } from "./payment-approval.js";
 import { acquireMoneyLock, assertMoneyLock } from "./lock.js";
 
@@ -29,8 +24,8 @@ import { acquireMoneyLock, assertMoneyLock } from "./lock.js";
  */
 
 export type OwnerAction =
-  | { type: "agent_create"; owner?: OwnerWallet; kind?: AgentKind; payees?: string[] }
-  | { type: "grant_issue"; purpose?: GrantPurpose; suffix?: string }
+  | { type: "agent_create"; owner?: OwnerWallet; role?: AgentRole; payees?: string[] }
+  | { type: "grant_issue"; label?: GrantLabel; suffix?: string }
   /** Stops one grant at once; operations it already committed still finish. */
   | { type: "grant_revoke"; grantId: string }
   | { type: "agent_freeze" }
@@ -51,9 +46,39 @@ type Prepared = { stage?: "prepared" | "submitted" | "settled"; result?: { statu
  * The file holds grant tokens: it is as private as the settings file.
  */
 const PENDING_FILE = join(".owner-intents", `${basename(ENV_FILE)}.json`);
-const pending = new Map<string, Prepared>(
+const readPending = () => new Map<string, Prepared>(
   existsSync(PENDING_FILE) ? Object.entries(JSON.parse(readFileSync(PENDING_FILE, "utf8")) as Record<string, Prepared>) : [],
 );
+let pending = new Map<string, Prepared>();
+let assertOwnerLock: () => void = () => { throw new Error("Owner-intent storage requires its lock"); };
+let ownerQueue: Promise<unknown> = Promise.resolve();
+
+/** Serialize the full read/modify/write lifecycle, including async status/signature checks.
+ * Reload only after acquiring the cross-process lock. Atomic rename alone cannot merge stale maps.
+ * Like the money lock this is single-host coordination, not distributed fencing. */
+function withOwnerLock<T>(run: () => Promise<T>): Promise<T> {
+  const next = ownerQueue.then(async () => {
+    mkdirSync(dirname(PENDING_FILE), { recursive: true, mode: 0o700 });
+    let held = true;
+    const release = await lockfile.lock(PENDING_FILE, {
+      realpath: false, stale: 10_000,
+      retries: { retries: 100, minTimeout: 100, maxTimeout: 100 },
+      onCompromised: () => { held = false; },
+    });
+    assertOwnerLock = () => { if (!held) throw new Error("Owner-intent storage lock lost"); };
+    try {
+      pending = readPending();
+      if (expire() || [...pending.values()].some((p) => p.grantToken && (p.ownerSucceeded || p.stage === "settled"))) savePending();
+      return await run();
+    } finally {
+      const owned = held;
+      held = false;
+      if (owned) await release();
+    }
+  });
+  ownerQueue = next.catch(() => undefined);
+  return next;
+}
 
 /** How each DAO-signed intent ended, for the page to follow. */
 const outcomes = new Map<
@@ -62,13 +87,12 @@ const outcomes = new Map<
 >();
 
 function savePending() {
+  assertOwnerLock();
   // A grant token is kept only until it is in the settings file (promoted) or can no longer be (settled):
   // after that, a copy here would only be one more place a live credential could leak from.
   for (const prepared of pending.values()) if (prepared.ownerSucceeded || prepared.stage === "settled") delete prepared.grantToken;
   mkdirSync(dirname(PENDING_FILE), { recursive: true });
-  // Written whole, then renamed over the old file: a crash mid-write leaves the previous version.
-  writeFileSync(`${PENDING_FILE}.tmp`, JSON.stringify(Object.fromEntries(pending)), { mode: 0o600 });
-  renameSync(`${PENDING_FILE}.tmp`, PENDING_FILE);
+  writeAtomic(PENDING_FILE, JSON.stringify(Object.fromEntries(pending)), 0o600);
 }
 
 /** Drops intents past the API's signing window, a DAO's recorded as expired for the page; true if any. */
@@ -82,7 +106,7 @@ function expire() {
       outcomes.set(correlationId, { stage: "expired" });
       // Kept so a proposal filed for it can still be recognised once its signing window has closed.
       mkdirSync(dirname(EXPIRED_FILE), { recursive: true });
-      appendFileSync(EXPIRED_FILE, `${JSON.stringify({ correlationId, type, expiresAt, hash: dao.hash, intent: dao.intent, delegate: dao.delegate ?? null })}\n`);
+      appendSynced(EXPIRED_FILE, { correlationId, type, expiresAt, hash: dao.hash, intent: dao.intent, delegate: dao.delegate ?? null });
     }
     dropped = true;
   }
@@ -93,6 +117,8 @@ function expire() {
 const EXPIRED_FILE = join(".owner-intents", `${basename(ENV_FILE)}.expired.jsonl`);
 
 function hold(correlationId: string, prepared: Prepared) {
+  assertOwnerLock();
+  if (pending.has(correlationId)) throw new Error("Owner intent identity already recorded");
   expire();
   pending.set(correlationId, { ...prepared, stage: "prepared" });
   savePending();
@@ -106,11 +132,11 @@ async function build(
       // Onboarding creates the server's one agent; it never replaces a configured one.
       if (process.env.AGENT_ID) throw new Error("An agent is already configured");
       if (!action.owner) throw new Error("agent_create needs an owner");
-      return { request: ownerRequests.agent_create(action.owner, action.kind, action.payees) };
+      return { request: ownerRequests.agent_create(action.owner, action.role, action.payees) };
     case "grant_issue": {
       // The new grant's token is saved where it is prepared: only the agent's executor may hold it.
       if (!executes()) throw new Error("This copy only reads and approves: issue the grant from the agent's executor, which must hold its token");
-      const { token, request } = await grantRequest({ purpose: action.purpose, suffix: action.suffix });
+      const { token, request } = await grantRequest({ label: action.label, suffix: action.suffix });
       return { request, grantToken: token };
     }
     case "grant_revoke":
@@ -134,7 +160,11 @@ async function treasuryOwner() {
   return daoOwner(dao);
 }
 
-export async function prepare(action: OwnerAction, signer: Signer = "wallet") {
+export function prepare(action: OwnerAction, signer: Signer = "wallet") {
+  return withOwnerLock(() => prepareLocked(action, signer));
+}
+
+async function prepareLocked(action: OwnerAction, signer: Signer) {
   const paymentApproval = action.type === "approval_vote" ? (await checkPaymentApproval(action)).binding : undefined;
   const owner = signer === "dao" ? await treasuryOwner() : undefined;
   const { request, grantToken, releases } = await build(action.type === "agent_create" && owner ? { ...action, owner } : action);
@@ -180,8 +210,6 @@ export async function prepare(action: OwnerAction, signer: Signer = "wallet") {
   };
 }
 
-const FINAL = new Set(["SUCCESS", "FAILED", "REFUNDED"]);
-
 /**
  * Apply local effects before marking settled; each effect is safe to repeat after a crash. An intent
  * the API still holds as `PENDING_SIGNATURE` never received the signature: it is sent again while the
@@ -190,7 +218,7 @@ const FINAL = new Set(["SUCCESS", "FAILED", "REFUNDED"]);
  */
 async function reconcileOne(correlationId: string, prepared: Prepared) {
   if (prepared.stage === "settled") return prepared.result!;
-  let owner = prepared.ownerSucceeded && prepared.releases ? undefined : checkedStatus(correlationId, await api.getStatus(correlationId, { signal: AbortSignal.timeout(30_000) }));
+  let owner = prepared.ownerSucceeded && prepared.releases ? undefined : await readStatus(correlationId);
   if (owner?.status === "PENDING_SIGNATURE") {
     if (Date.now() >= Date.parse(prepared.expiresAt)) {
       prepared.stage = "settled";
@@ -201,9 +229,10 @@ async function reconcileOne(correlationId: string, prepared: Prepared) {
     // Submitted before signatures were kept: nothing to send again, so it is polled until the window closes.
     if (prepared.signedData && prepared.type !== "approval_vote") {
       await sendSignature(correlationId, prepared, prepared.signedData);
-      owner = checkedStatus(correlationId, await api.getStatus(correlationId, { signal: AbortSignal.timeout(30_000) }));
+      owner = await readStatus(correlationId);
     }
   }
+  assertOwnerLock();
   if (owner?.status === "SUCCESS" && !prepared.ownerSucceeded) {
     if (prepared.type === "agent_create") {
       if (!owner.agent_id) throw new Error("Successful creation has no agent id; recovery remains blocked");
@@ -214,12 +243,13 @@ async function reconcileOne(correlationId: string, prepared: Prepared) {
     savePending();
   }
   const result = prepared.ownerSucceeded && prepared.releases
-    ? checkedStatus(prepared.releases, await api.getStatus(prepared.releases, { signal: AbortSignal.timeout(30_000) }))
+    ? await readStatus(prepared.releases)
     : owner;
   if (!result) throw new Error("Missing owner outcome");
+  assertOwnerLock();
   if (prepared.ownerSucceeded && prepared.releases) settle(prepared.releases, result.status);
   const answer = { status: result.status, failureCode: result.failure_code };
-  if (FINAL.has(result.status)) {
+  if (isTerminal(result.status)) {
     prepared.stage = "settled";
     prepared.result = answer;
     savePending();
@@ -228,6 +258,7 @@ async function reconcileOne(correlationId: string, prepared: Prepared) {
 }
 
 const sendSignature = async (correlationId: string, prepared: Prepared, signedData: Record<string, unknown>) => {
+  assertOwnerLock();
   if (prepared.type !== "approval_vote") return api.submitIntent({ type: prepared.type, correlation_id: correlationId, signed_data: signedData } as SubmitIntentRequest);
   if (!prepared.paymentApproval) throw new Error("Legacy approval has no exact payment binding; prepare a new vote");
   const lock = await acquireMoneyLock({ reconcile: true });
@@ -248,7 +279,12 @@ const sendSignature = async (correlationId: string, prepared: Prepared, signedDa
  * Persist before the request, signature included: after a crash or lost response, polling decides.
  * The signature is sent again only if the API says it never arrived (see `reconcileOne`).
  */
-export async function submit(correlationId: string, signedData: Record<string, unknown>) {
+export function submit(correlationId: string, signedData: Record<string, unknown>) {
+  return withOwnerLock(() => submitLocked(correlationId, signedData));
+}
+
+async function submitLocked(correlationId: string, signedData: Record<string, unknown>) {
+  assertOwnerLock();
   const prepared = pending.get(correlationId);
   if (!prepared) throw new Error("Unknown intent");
   if (prepared.stage === "settled") return prepared.result!;
@@ -266,7 +302,11 @@ export async function submit(correlationId: string, signedData: Record<string, u
 }
 
 /** One bounded polling pass. A failed read cannot prevent recovery of another intent. */
-export async function reconcileOwnerIntents() {
+export function reconcileOwnerIntents() {
+  return withOwnerLock(reconcileLocked);
+}
+
+async function reconcileLocked() {
   const results = [];
   for (const [correlationId, prepared] of pending) {
     if (prepared.stage !== "submitted") continue;
@@ -281,12 +321,12 @@ export async function reconcileOwnerIntents() {
 
 /** Where a DAO-signed intent stands: waiting for the vote, or how it ended. */
 export function status(correlationId: string) {
-  const saved = pending.get(correlationId);
+  const saved = readPending().get(correlationId);
   if (saved?.stage === "settled") return { stage: "submitted" as const, ...saved.result };
   if (saved?.stage === "submitted") return { stage: "submitting" as const };
   const outcome = outcomes.get(correlationId);
   if (outcome) return outcome;
-  const waiting = pending.get(correlationId);
+  const waiting = saved;
   if (waiting?.dao) return { stage: "voting" as const, expiresAt: waiting.expiresAt };
   return { stage: "unknown" as const };
 }
@@ -298,7 +338,7 @@ export function status(correlationId: string) {
  * signature.
  */
 export function daoRequests(now = Date.now()) {
-  const kept = [...pending].flatMap(([correlationId, { type, expiresAt, dao, stage }]) => {
+  const kept = [...readPending()].flatMap(([correlationId, { type, expiresAt, dao, stage }]) => {
     if (!dao) return [];
     const state = stage === "submitted" || stage === "settled" ? "done" : now <= new Date(expiresAt).getTime() ? "waiting" : "expired";
     return [{ correlationId, type, expiresAt, hash: dao.hash, intent: dao.intent, delegate: dao.delegate ?? null, state }];
@@ -321,23 +361,26 @@ function watch() {
     if (busy) return;
     busy = true;
     try {
-      if (expire()) savePending();
-      await reconcileOwnerIntents();
-      for (const [correlationId, prepared] of pending) {
-        const { dao, stage } = prepared;
-        if (!dao || stage === "submitted" || stage === "settled") continue;
-        const daoId = process.env.TREASURY_ACCOUNT;
-        const signature = daoId ? await findSignature(daoId, dao).catch(() => null) : null;
-        if (!signature) continue;
-        outcomes.set(correlationId, { stage: "submitting" });
-        try {
-          outcomes.set(correlationId, { stage: "submitted", ...(await submit(correlationId, completeSigning(dao, signature))) });
-        } catch (error) {
-          // The durable submitted state prevents the next tick from sending again.
-          if (pending.has(correlationId)) outcomes.delete(correlationId);
-          else outcomes.set(correlationId, { stage: "failed", error: error instanceof Error ? error.message : String(error) });
+      await withOwnerLock(async () => {
+        await reconcileLocked();
+        for (const [correlationId, prepared] of pending) {
+          const { dao, stage } = prepared;
+          if (!dao || stage === "submitted" || stage === "settled") continue;
+          const daoId = process.env.TREASURY_ACCOUNT;
+          const signature = daoId ? await findSignature(daoId, dao).catch(() => null) : null;
+          if (!signature) continue;
+          outcomes.set(correlationId, { stage: "submitting" });
+          try {
+            outcomes.set(correlationId, { stage: "submitted", ...(await submitLocked(correlationId, completeSigning(dao, signature))) });
+          } catch (error) {
+            // The durable submitted state prevents the next tick from sending again.
+            if (pending.has(correlationId)) outcomes.delete(correlationId);
+            else outcomes.set(correlationId, { stage: "failed", error: error instanceof Error ? error.message : String(error) });
+          }
         }
-      }
+      });
+    } catch (error) {
+      console.error("Owner reconciliation deferred:", String(error));
     } finally {
       busy = false;
     }
@@ -345,7 +388,11 @@ function watch() {
   watching.unref();
 }
 
-// A DAO vote that was in progress when the server stopped is followed again.
-// At start: drop expired intents, and grant tokens kept by records written before they were dropped on save.
-if (expire() || [...pending.values()].some((p) => p.grantToken && (p.ownerSucceeded || p.stage === "settled"))) savePending();
-if ([...pending.values()].some((p) => p.dao || p.stage === "submitted")) watch();
+// At load: drop expired intents, and grant tokens kept by records written before they were dropped on save.
+await withOwnerLock(async () => undefined);
+
+/** At server start: a DAO vote that was in progress when the server stopped is followed again. */
+export function resumeOwnerIntents() {
+  // Another process may prepare a DAO action after this server starts.
+  watch();
+}

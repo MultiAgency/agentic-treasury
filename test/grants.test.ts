@@ -1,15 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { after, beforeEach, test } from "node:test";
+import { readFileSync } from "node:fs";
+import { test } from "node:test";
 import { createGrantCredential } from "@near-intents-agent-api/sdk";
-import { adoptStagedGrant, promoteGrantToken, stageGrantToken } from "../src/intents.js";
+import { adoptStagedGrant, grantLabel, promoteGrantToken, stageGrantToken } from "../src/grants.js";
+import { freshDirectory } from "./fixtures/harness.js";
 
 // Every test gets an empty directory: the settings file is written to the working directory.
-const home = process.cwd();
-beforeEach(() => process.chdir(mkdtempSync(join(tmpdir(), "grants-"))));
-after(() => process.chdir(home));
+freshDirectory("grants");
 
 const [old, next] = [createGrantCredential(), createGrantCredential()];
 type Grants = Parameters<typeof adoptStagedGrant>[0];
@@ -50,4 +47,16 @@ test("a staged token whose grant is in force is adopted, even while the token in
   staged();
   adoptStagedGrant([grant(old.commitment), grant(next.commitment)]);
   assert.deepEqual(tokens(), [next.token, null]);
+});
+
+test("a grant's label names its purpose, then any suffix the owner's signature binds", () => {
+  assert.equal(grantLabel("payout"), "payout");
+  assert.equal(grantLabel("invoices"), "invoices");
+  const digest = "0123456789abcdef0123456789abcdef";
+  assert.equal(grantLabel("treasury", digest), `treasury:${digest}`);
+});
+
+test("a label over the API's 64 characters is refused before anything is signed", () => {
+  assert.equal(grantLabel("treasury", "x".repeat(55)).length, 64);
+  assert.throws(() => grantLabel("treasury", "x".repeat(56)), /64 characters/);
 });

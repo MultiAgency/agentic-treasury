@@ -165,3 +165,23 @@ test("an operator call that can't be recorded is not run", async () => {
     rmSync(path, { recursive: true });
   }
 });
+
+test("a cross-site or malformed Origin is refused 403, not mistaken for a bad request", async () => {
+  reached.length = 0;
+  for (const origin of ["null", "https://elsewhere.example", "not a url"]) {
+    const answer = await fetch(`${base}/a/treasury/rpc/pay`, {
+      method: "POST",
+      headers: { origin, cookie: `dao_session=${sessionToken("ops.near", SECRET)}` },
+      body: "{}",
+    });
+    assert.equal(answer.status, 403, origin);
+  }
+  assert.deepEqual(reached, []);
+});
+
+test("a failure on the gateway's side is a 500 that shows no internals", async () => {
+  // The stand-in RPC answers every view with the DAO's policy, which is not a proposal list.
+  const answer = await fetch(`${base}/gw/public`);
+  assert.equal(answer.status, 500);
+  assert.deepEqual(await answer.json(), { error: "Something went wrong. Try again later." });
+});

@@ -49,7 +49,7 @@ export const treasuryPolicy: Policy = {
  * unlisted asset executes and the agent can't sell it back. Refused here until the wallet
  * enforces it; the wallet stays the boundary for everything else.
  */
-export function assetGuard(action: Action, policy: Policy): string | null {
+export function outputAssetRefusal(action: Action, policy: Policy): string | null {
   if (action.method !== "swap") return null;
   return mayBuy(policy.assets, action.request.destination_asset) ? null : `the swap buys ${action.request.destination_asset}, outside the policy's assets`;
 }
@@ -84,4 +84,4 @@ export function payoutPolicy(payees: string[]): Policy {
 }
 
 /** What an agent is for: managing the book (swaps, no approval) or paying agreed payees (approved). */
-export type AgentKind = "treasury" | "payout";
+export type AgentRole = "treasury" | "payout";

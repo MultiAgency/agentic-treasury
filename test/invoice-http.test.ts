@@ -1,17 +1,14 @@
 import { authorityFixture, policyView } from "./fixtures/authority.js";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { api } from "../src/api.js";
 import { sessionToken } from "../src/signin.js";
 import { payoutPolicy } from "../src/policy.js";
 import { getInvoice, invoiceId } from "../src/invoice-store.js";
 import { mayCall } from "../src/gateway/allowlist.js";
+import { freshDirectory } from "./fixtures/harness.js";
 
-const cwd = process.cwd();
 const secret = "test-only-invoice-session-secret";
 process.env.INVOICES_SESSION_SECRET = secret;
 process.env.INVOICES_PUBLIC_HOST = "localhost:8791";
@@ -19,13 +16,12 @@ const { invoiceHandler } = await import("../src/invoice-http.js");
 const server = createServer(invoiceHandler);
 let origin: string;
 const sent: { recipient: string; amount: string }[] = [];
+freshDirectory("invoice-http", { per: "suite" });
 before(async () => {
-  process.chdir(mkdtempSync(join(tmpdir(), "invoice-http-")));
   process.env.AGENT_GRANT_TOKEN = "ngt_test";
   Object.assign(api, {
     ...authorityFixture(),
     getPolicy: async () => policyView(payoutPolicy(["alice.near", "bob.near"])),
-    getHistory: async () => ({ data: [], next_cursor: null }),
     forGrant: () => ({ transfer: async (_id: string, request: { recipient: string; amount: string }) => {
       sent.push(request); return { correlation_id: "invoice-http" };
     } }),
@@ -36,7 +32,6 @@ before(async () => {
 });
 after(async () => {
   await new Promise<void>((resolve, reject) => server.close((e) => e ? reject(e) : resolve()));
-  process.chdir(cwd);
 });
 
 const cookie = (payee: string) => `invoices_session=${sessionToken(payee, secret)}`;

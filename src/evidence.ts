@@ -2,12 +2,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { agentId, allHoldings } from "./agent.js";
+import { agentId } from "./env.js";
+import { allHoldings } from "./holdings.js";
 import { api } from "./api.js";
-import { liveGrant } from "./intents.js";
+import { liveGrant } from "./grants.js";
 import { mandateDigest } from "./mandate.js";
 import { unresolved } from "./recover.js";
-import { loadStrategy, strategyDigest } from "./strategy.js";
+import { loadStrategy } from "./strategy.js";
+import { strategyDigest } from "./strategy-digest.js";
 import { appendSynced } from "./synced.js";
 
 /**
@@ -37,7 +39,7 @@ const BUILD = {
   packageJson: fileDigest(join(APP, "package.json")),
 };
 
-export type Observation = {
+type Observation = {
   at: string;
   book: { asset: string; public: string; confidential: string; usd: number }[];
   /** Each asset's share of the book against the strategy's target, in basis points. */

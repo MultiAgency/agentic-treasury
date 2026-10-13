@@ -3,7 +3,7 @@
 import { existsSync } from "node:fs";
 import { setTimeout } from "node:timers/promises";
 import { api } from "../../src/api.js";
-import { prepare } from "../../src/wallet-intents.js";
+import { prepare } from "../../src/owner-intents.js";
 
 Object.assign(api, {
   generateIntent: async (request: { type: string }) => ({ type: request.type, correlation_id: process.argv[2], preview: {},

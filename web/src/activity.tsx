@@ -1,38 +1,26 @@
 import { DownloadSimple } from "@phosphor-icons/react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
-import { ago, amount, client, fromUnits } from "./lib";
+import { ago, amount, client, describeRequest, fromUnits, queries, useAttempt } from "./lib";
 import { useIsOperator } from "./viewer";
 import { useAgent } from "./shell";
-import { Badge, Button, Card, ConfirmButton, Section, Spinner, statusTone } from "./ui";
+import { Badge, Button, Card, ConfirmButton, ErrorBox, Section, Spinner, statusTone } from "./ui";
 
 /**
  * Money actions without a proven outcome. Each blocks every new one, so the agent waits until they
  * are resolved. Recovery only reads statuses; ambiguous replay is blocked.
  */
 export function Unresolved() {
-  const queryClient = useQueryClient();
-  const { data = [] } = useQuery({ queryKey: ["unresolved"], queryFn: () => client.unresolved(), refetchInterval: 30_000 });
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<string>();
-  if (data.length === 0 && !result) return null;
+  const { data = [] } = useQuery(queries.unresolved);
+  const { busy, message, error, attempt } = useAttempt();
+  if (data.length === 0 && !message && !error) return null;
 
-  const run = async () => {
-    setBusy(true);
-    setResult(undefined);
-    try {
-      const outcomes = await client.recover({ resend: false });
+  const run = () =>
+    attempt(async () => {
       const counts = new Map<string, number>();
-      for (const { outcome } of outcomes) counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
-      setResult([...counts].map(([outcome, n]) => `${n} ${outcome}`).join(" · ") || "Nothing left to resolve.");
-    } catch (error) {
-      setResult(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusy(false);
-      await queryClient.invalidateQueries();
-    }
-  };
+      for (const { outcome } of await client.recover()) counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
+      return [...counts].map(([outcome, n]) => `${n} ${outcome}`).join(" · ") || "Nothing left to resolve.";
+    });
 
   return (
     <Section
@@ -51,12 +39,13 @@ export function Unresolved() {
           ))}
         </ul>
         <div className="flex flex-wrap items-center justify-end gap-3 pt-4">
-          {result && <span className="mr-auto text-sm text-muted-foreground">{result}</span>}
+          {message && <span className="mr-auto text-sm text-muted-foreground">{message}</span>}
           <Button variant="outline" size="sm" disabled={busy} onClick={() => run()}>
             {busy && <Spinner />} Check status
           </Button>
           <span className="text-xs text-muted-foreground">Replay is blocked. Missing operation IDs require review; they do not prove a payment was unsent.</span>
         </div>
+        <ErrorBox error={error} />
       </Card>
     </Section>
   );
@@ -65,9 +54,8 @@ export function Unresolved() {
 /** Payment identity, reserved amount and revisions, read from the executor's authoritative store. */
 export function InvoiceReview() {
   const operator = useIsOperator();
-  const queryClient = useQueryClient();
   const invoices = useQuery({ queryKey: ["invoices"], queryFn: () => client.invoices(), enabled: operator, refetchInterval: 15_000 });
-  const [error, setError] = useState<string>();
+  const { error, attempt } = useAttempt();
   if (!operator || (!invoices.error && !invoices.data?.length)) return null;
   return <Section title="Invoices" description="Each invoice keeps one payment identity. Changed details require review and never replace a payment already submitted.">
     {(error || invoices.error) && <p className="text-sm text-warning-muted-foreground">{error ?? invoices.error?.message}</p>}
@@ -86,11 +74,7 @@ export function InvoiceReview() {
       {invoice.operation.submissionState === "PREPARED" && <ConfirmButton
         label="Cancel unsubmitted invoice" title="Cancel this unsubmitted invoice?"
         description="This payment has never been submitted. Its reservation will be released. Its identity and revisions will remain in the records."
-        confirm="Cancel invoice" onConfirm={async () => {
-          setError(undefined);
-          try { await client.cancelPreparedInvoice({ id: invoice.id }); await queryClient.invalidateQueries(); }
-          catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-        }} />}
+        confirm="Cancel invoice" onConfirm={() => attempt(() => client.cancelPreparedInvoice({ id: invoice.id }))} />}
     </Card>)}
   </Section>;
 }
@@ -99,19 +83,6 @@ export function InvoiceReview() {
 export function Activity({ limit }: { limit?: number }) {
   const { data: book } = useAgent();
   const { data = [] } = useQuery({ queryKey: ["activity"], queryFn: () => client.activity() });
-  const bySymbol = new Map(book.book.map((h) => [h.asset, h]));
-  const value = (raw: string, asset: string) => {
-    const h = bySymbol.get(asset);
-    return h ? amount(raw, h) : `${raw} ${asset.replace(/^nep141:/, "")}`;
-  };
-  const describe = (request: Record<string, unknown>) => {
-    const r = request as Partial<Record<"origin_asset" | "destination_asset" | "asset" | "amount" | "recipient", string>>;
-    return r.origin_asset && r.destination_asset && r.amount
-      ? `${value(r.amount, r.origin_asset)} → ${bySymbol.get(r.destination_asset)?.symbol ?? r.destination_asset}`
-      : r.asset && r.amount
-        ? `${value(r.amount, r.asset)}${r.recipient ? ` to ${r.recipient}` : ""}`
-        : JSON.stringify(request);
-  };
 
   return (
     <Section
@@ -134,7 +105,7 @@ export function Activity({ limit }: { limit?: number }) {
             <li key={`${op.at}-${op.kind}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b py-3 text-sm last:border-0">
               <span className="whitespace-nowrap text-muted-foreground sm:w-32">{ago(op.at)}</span>
               <span className="w-20 font-medium capitalize">{op.kind}</span>
-              <span className="order-last basis-full tabular-nums sm:order-none sm:basis-0 sm:flex-1">{describe(op.request)}</span>
+              <span className="order-last basis-full tabular-nums sm:order-none sm:basis-0 sm:flex-1">{describeRequest(op.request, book.book)}</span>
               <span className="ml-auto">
                 {op.refused ? (
                   // A probe exists to be refused; any other refusal means the policy stopped the agent.

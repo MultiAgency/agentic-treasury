@@ -6,11 +6,11 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { completeSigning, signingRequest } from "../src/dao-owner.js";
+import { TSX } from "./fixtures/harness.js";
 
-const TSX = fileURLToPath(new URL("../node_modules/.bin/tsx", import.meta.url));
 const FIXTURE = fileURLToPath(new URL("./fixtures/owner-intents.ts", import.meta.url));
 // A grant the Agent API generated on mainnet, and the hash the DAO's MPC key signed for it.
-const VECTOR = JSON.parse(readFileSync(new URL("../contracts/owner-adapter/tests/vectors.json", import.meta.url), "utf8")).message;
+const VECTOR = JSON.parse(readFileSync(new URL("./fixtures/owner-vector.json", import.meta.url), "utf8"));
 
 const owner = { type: "near" as const, account_id: "a".repeat(64), public_key: "ed25519:11111111111111111111111111111111" };
 const intent = { standard: "nep413", payload: { message: VECTOR.message, nonce: VECTOR.nonce, recipient: VECTOR.recipient } } as never;

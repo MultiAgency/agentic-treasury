@@ -1,32 +1,29 @@
-import { authorityFixture, policyView } from "./fixtures/authority.js";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, mock, test } from "node:test";
 import { AgentApiError } from "@near-intents-agent-api/sdk";
-import { type Action, dispatch, pay, send } from "../src/agent.js";
+import { type Action, dispatch, LocalRefusal, pay, send } from "../src/agent.js";
 import { api } from "../src/api.js";
 import { acquireMoneyLock, type MoneyLock, UnresolvedOperations } from "../src/lock.js";
 import { readOps, record } from "../src/ops.js";
-import { ASSETS, payoutPolicy } from "../src/policy.js";
-import { refusals, type RefusalEvent } from "../src/treasury.js";
+import { mandateDigest } from "../src/mandate.js";
+import { ASSETS, payoutPolicy, treasuryPolicy } from "../src/policy.js";
+import { refusals } from "../src/probes.js";
+import { authorityFixture, policyView } from "./fixtures/authority.js";
+import { freshDirectory, offline } from "./fixtures/harness.js";
 
-const home = process.cwd();
 const action: Action = { method: "transfer", request: { asset: ASSETS.USDC, amount: "1", recipient: "fixture.near", confidential: true } };
 const policy = policyView(payoutPolicy(["fixture.near"]));
 let calls: string[];
 let answer: () => Promise<{ correlation_id: string }>;
 let status: string;
 
+freshDirectory("money-safety");
 beforeEach(() => {
-  process.chdir(mkdtempSync(join(tmpdir(), "money-safety-")));
-  process.env.AGENT_ID = "a".repeat(64);
   process.env.AGENT_GRANT_TOKEN = "ngt_fixture";
   calls = [];
   status = "FAILED";
   answer = async () => ({ correlation_id: "fixture-op" });
-  mock.method(globalThis, "fetch", async () => { throw new Error("Network forbidden in offline fault tests"); });
+  offline();
   for (const [name, method] of Object.entries(authorityFixture())) mock.method(api, name as keyof typeof api, method as never);
   mock.method(api, "getPolicy", async () => policy);
   mock.method(api, "getStatus", async (correlation_id: string) => ({ correlation_id, status }));
@@ -36,13 +33,7 @@ beforeEach(() => {
   };
   mock.method(api, "forGrant", () => ({ transfer: method, swap: method, shield: method, unshield: method }));
 });
-afterEach(() => { mock.restoreAll(); process.chdir(home); });
-
-const collect = async (live = true) => {
-  const events: RefusalEvent[] = [];
-  for await (const event of refusals({ live })) events.push(event);
-  return events;
-};
+afterEach(() => mock.restoreAll());
 
 test("live probes default off before any API read or send", async () => {
   mock.method(api, "getPolicy", () => assert.fail("disabled probes must not read the API"));
@@ -94,6 +85,26 @@ test("a proven first-submission refusal resolves only that operation", async () 
   try { await assert.rejects(dispatch(lock, "fixture", action), AgentApiError); } finally { await lock.release(); }
   assert.equal(readOps()[0]?.refused, "policy_denied");
   assert.equal(calls.length, 1);
+});
+
+test("a swap into an asset outside the policy is refused before sending, and logged with its mandate", async () => {
+  mock.method(api, "getPolicy", async () => policyView(treasuryPolicy, 7));
+  mock.method(api, "listGrants", authorityFixture("treasury").listGrants);
+  const lock = await acquireMoneyLock();
+  try {
+    const swap = { origin_asset: ASSETS.USDC, destination_asset: "nep141:usdt.tether-token.near", amount: "2000000", confidential: true };
+    await assert.rejects(dispatch(lock, "rebalance", { method: "swap", request: swap }), LocalRefusal);
+  } finally {
+    await lock.release();
+  }
+  const [op] = readOps();
+  assert.equal(op?.refused, "asset_out_not_allowed");
+  assert.deepEqual(calls, [], "nothing was sent");
+  assert.equal(op?.policyRevision, 7);
+  assert.equal(op?.policyDigest, mandateDigest(treasuryPolicy));
+  assert.equal(op?.usdIn, 2);
+  // A refusal is a proven outcome: it doesn't block the next money action.
+  await (await acquireMoneyLock()).release();
 });
 
 test("lock lost during asynchronous preflight produces zero sends and zero request records", async () => {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ASSETS, assetGuard, payoutPolicy, treasuryPolicy } from "../src/policy.js";
+import { ASSETS, outputAssetRefusal, payoutPolicy, treasuryPolicy } from "../src/policy.js";
 
 // Patterns from the API's OpenAPI `Policy` schema.
 const RAW = /^[0-9]{1,78}$/;
@@ -47,12 +47,12 @@ test("a payout agent only transfers, confidentially, to its agreed payees, each 
   for (const value of Object.values(policy.budget)) if (value !== null) assert.match(value, USD);
 });
 
-test("a swap may buy only the policy's assets; other actions pass the guard", () => {
+test("a swap may buy only the policy's assets; other actions pass", () => {
   const swap = (to: string) =>
     ({ method: "swap", request: { origin_asset: ASSETS.USDC, destination_asset: to, amount: "1", confidential: true } }) as const;
-  assert.equal(assetGuard(swap(ASSETS.ETH), treasuryPolicy), null);
-  assert.match(assetGuard(swap("nep141:usdt.tether-token.near"), treasuryPolicy) ?? "", /buys nep141:usdt.tether-token.near, outside/);
-  assert.equal(assetGuard(swap("nep141:usdt.tether-token.near"), { ...treasuryPolicy, assets: "any" }), null);
+  assert.equal(outputAssetRefusal(swap(ASSETS.ETH), treasuryPolicy), null);
+  assert.match(outputAssetRefusal(swap("nep141:usdt.tether-token.near"), treasuryPolicy) ?? "", /buys nep141:usdt.tether-token.near, outside/);
+  assert.equal(outputAssetRefusal(swap("nep141:usdt.tether-token.near"), { ...treasuryPolicy, assets: "any" }), null);
   const transfer = { method: "transfer", request: { asset: ASSETS.USDC, amount: "1", recipient: "a.near", confidential: true } } as const;
-  assert.equal(assetGuard(transfer, treasuryPolicy), null);
+  assert.equal(outputAssetRefusal(transfer, treasuryPolicy), null);
 });

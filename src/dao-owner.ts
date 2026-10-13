@@ -1,6 +1,6 @@
 import type { Intent, OwnerWallet } from "@near-intents-agent-api/sdk";
-import { DELEGATE_ACTION_PREFIX, encodeSignedDelegateAction, Near, parsePublicKey } from "near-kit";
-import { mainnet, transactionsApi } from "./chain.js";
+import { encodeSignedDelegateAction, Near, parsePublicKey } from "near-kit";
+import { delegateTransaction, mainnet, transactionsApi } from "./chain.js";
 import { nep413Hash, rawKey, verifyEd25519 } from "./nep413.js";
 
 /**
@@ -13,7 +13,7 @@ import { nep413Hash, rawKey, verifyEd25519 } from "./nep413.js";
 const PATH = "agent-owner";
 const near = new Near(mainnet);
 
-export type NearOwner = Extract<OwnerWallet, { type: "near" }>;
+type NearOwner = Extract<OwnerWallet, { type: "near" }>;
 
 /** The DAO's owner account: the implicit account of its MPC key on the `agent-owner` path. */
 export async function daoOwner(dao: string): Promise<NearOwner> {
@@ -43,16 +43,9 @@ async function delegateRequest(payload: Extract<Intent, { standard: "nep366" }>[
     },
   };
   const keyStore = { get: async () => key, add: async () => {}, remove: async () => {}, list: async () => [owner.account_id] };
-  const builder = payload.actions.reduce(
-    (tx, { params }) =>
-      tx.functionCall(payload.receiverId, params.methodName, params.args, {
-        gas: params.gas as never,
-        attachedDeposit: BigInt(params.deposit),
-      }),
-    new Near({ ...mainnet, keyStore }).transaction(owner.account_id),
-  );
   // Long enough for the vote; the Agent API's own expiry is the tighter limit.
-  const { signedDelegateAction } = await builder.delegate({ blockHeightOffset: 6000 });
+  const { signedDelegateAction } = await delegateTransaction(new Near({ ...mainnet, keyStore }), owner.account_id, payload)
+    .delegate({ blockHeightOffset: 6000 });
   const bytes = Buffer.from(encodeSignedDelegateAction(signedDelegateAction, "bytes"));
   return { hash: Buffer.from(hash!), bytes };
 }

@@ -1,5 +1,5 @@
 import lockfile from "proper-lockfile";
-import { isHeld, isResolved, type Op, opsLog, readOps } from "./ops.js";
+import { blocksDispatch, type Op, opsLog, readOps, resolveUnsubmitted } from "./ops.js";
 
 /**
  * One money-moving run at a time, across every process (CLI, dashboard server, scripts). The lock
@@ -31,17 +31,10 @@ export function assertMoneyLock(lock: MoneyLock) {
   if (!lock.held) throw new Error("Money actions need the money lock, held by this process");
 }
 
-/**
- * An operation whose outcome is unknown, so nothing new may be sent until it's reconciled. Not one
- * held for the owner's approval (`isHeld`), and not an invoice prepared but never submitted: that is
- * a business record with nothing in flight, and its own send is guarded by its submission claim.
- */
-const blocking = (op: Op) => !isResolved(op) && !isHeld(op) && op.submissionState !== "PREPARED";
-
 /** A new action must not follow an unknown outcome, even within the same locked run. */
 export function assertCanDispatch(lock: MoneyLock, initiatingKey?: string) {
   assertMoneyLock(lock);
-  const unresolved = readOps().filter((op) => blocking(op) && op.idempotencyKey !== initiatingKey);
+  const unresolved = readOps().filter((op) => blocksDispatch(op) && op.idempotencyKey !== initiatingKey);
   if (unresolved.length) throw new UnresolvedOperations(unresolved);
 }
 
@@ -80,8 +73,10 @@ export async function acquireMoneyLock({ reconcile = false }: { reconcile?: bool
     },
   };
   try {
+    assertMoneyLock(lock);
+    resolveUnsubmitted();
     if (!reconcile) {
-      const unresolved = readOps().filter(blocking);
+      const unresolved = readOps().filter(blocksDispatch);
       if (unresolved.length > 0) throw new UnresolvedOperations(unresolved);
     }
   } catch (error) {

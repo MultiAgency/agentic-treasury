@@ -9,13 +9,15 @@ import { api } from "../src/api.js";
 import { saveSettings, settings, tick } from "../src/autopilot.js";
 import { sourceDigest, ticks } from "../src/evidence.js";
 import { dismiss, readInbox } from "../src/inbox.js";
+import { prepareInvoice } from "../src/invoice-store.js";
 import { opsLog } from "../src/ops.js";
 import { ASSETS, treasuryPolicy } from "../src/policy.js";
-import { loadStrategy, strategyLabelSuffix } from "../src/strategy.js";
+import { loadStrategy } from "../src/strategy.js";
+import { strategyLabelSuffix } from "../src/strategy-digest.js";
+import { freshDirectory, offline } from "./fixtures/harness.js";
 
 // Offline: an in-memory book behind the API, so each tick runs the real sweep, rebalance, plan
 // checks, lock and ops log. Every asset has 0 decimals and a $1 price, and quotes cost nothing.
-const home = process.cwd();
 let book: Record<string, { public: bigint; confidential: bigint }>;
 let frozen: boolean;
 let sends: string[];
@@ -23,9 +25,8 @@ let statusOf: (id: string) => string;
 /** The label of this server's live grant; by default one that approves the strategy in force. */
 let grantLabel: () => string;
 
+freshDirectory("autopilot");
 beforeEach(() => {
-  process.chdir(mkdtempSync(join(tmpdir(), "autopilot-")));
-  process.env.AGENT_ID = "a".repeat(64);
   process.env.AGENT_GRANT_TOKEN = "ngt_test";
   // 100 USDC and nothing else: 50 below target in wNEAR and ETH together.
   book = Object.fromEntries(Object.values(ASSETS).map((asset) => [asset, { public: 0n, confidential: 0n }]));
@@ -34,9 +35,7 @@ beforeEach(() => {
   sends = [];
   statusOf = () => "SUCCESS";
   grantLabel = () => `treasury:${strategyLabelSuffix(loadStrategy())}`;
-  mock.method(globalThis, "fetch", async () => {
-    throw new Error("offline only");
-  });
+  offline();
   mock.method(api, "getPolicy", async () => ({ policy: { ...treasuryPolicy, frozen, budget: { daily_usd: "1000", weekly_usd: "1000", monthly_usd: "1000" } }, revision: 1, usage: null }));
   mock.method(api, "getTokens", async () => Object.entries(ASSETS).map(([symbol, asset_id]) => ({ symbol, asset_id, decimals: 0, price: 1 })));
   mock.method(api, "getBalances", async (_id: string, { source }: { source: "public" | "confidential" }) => ({
@@ -69,10 +68,7 @@ beforeEach(() => {
   }));
   completeExecutionEvidence({ grants: true });
 });
-afterEach(() => {
-  mock.restoreAll();
-  process.chdir(home);
-});
+afterEach(() => mock.restoreAll());
 
 const limit = (maxUsd: number) => saveSettings({ ...settings(), maxUsd });
 const open = () => readInbox().filter((e) => e.level !== "run" && !e.dismissed);
@@ -116,6 +112,13 @@ test("an action without a proven outcome stops the tick before anything is sent 
   assert.deepEqual(sends, []);
   // Never sent, so its acceptance is unknown: recover() reports it and resends nothing.
   assert.match(open()[0]!.text, /swap:lost \(unknown, 0 min old\)/);
+});
+
+test("an invoice prepared but never submitted doesn't stop the tick, as it doesn't stop the money lock", async () => {
+  prepareInvoice({ payee: "p.near", submission: "s", amount: "1", note: "" }, ASSETS.USDC);
+  limit(100);
+  assert.notEqual(await tick("schedule"), "Skipped: unresolved money actions.");
+  assert.ok(sends.length > 0);
 });
 
 test("a legacy held payout without valuation evidence no longer holds new execution", async () => {
@@ -254,4 +257,12 @@ test("the source digest identifies a tree: same files, same digest; one changed 
   assert.equal(sourceDigest(dir), digest);
   writeFileSync(join(dir, "a.ts"), "export const a = 2;\n");
   assert.notEqual(sourceDigest(dir), digest);
+});
+
+test("a damaged inbox line is skipped, so the scheduler's once-a-minute read never throws", () => {
+  const entry = { id: "e1", at: new Date().toISOString(), level: "run", text: "book on target" };
+  mkdirSync(".inbox", { recursive: true });
+  // A crash mid-append leaves a partial last line; the next append lands on the same line.
+  writeFileSync(join(".inbox", `${process.env.AGENT_ID}.jsonl`), `${JSON.stringify(entry)}\n{"id":"e2","at":"2026-`);
+  assert.deepEqual(readInbox().map((e) => e.id), ["e1"]);
 });

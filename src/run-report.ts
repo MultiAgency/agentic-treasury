@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type { Tick } from "./evidence.js";
+import { hostedRpc, required } from "./hosted.js";
 import type { Row } from "./ledger.js";
 import { type Intervention, unattendedReport } from "./report.js";
 
@@ -18,19 +19,7 @@ const COOKIE = readFileSync(required("REPORT_COOKIE_FILE"), "utf8").trim();
 const SINCE = required("SINCE");
 const UNTIL = process.env.UNTIL ?? new Date().toISOString();
 
-function required(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`Set ${name}`);
-  return value;
-}
-
-async function rpc<T>(path: string, input?: unknown): Promise<T> {
-  const res = await fetch(new URL(`/a/treasury/rpc/${path}`, BASE), {
-    method: "POST", headers: { "content-type": "application/json", cookie: COOKIE }, body: JSON.stringify(input === undefined ? {} : { json: input }),
-  });
-  if (!res.ok) throw new Error(`${path}: ${res.status} ${await res.text()}`);
-  return ((await res.json()) as { json: T }).json;
-}
+const rpc = <T>(path: string, input?: unknown) => hostedRpc<T>(BASE, COOKIE, "treasury", path, input);
 
 const [evidence, ledger, interventions] = await Promise.all([
   rpc<{ ticks: Tick[]; corrupt: number[] }>("autopilot/evidence", { since: SINCE }),

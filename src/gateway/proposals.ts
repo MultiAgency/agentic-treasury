@@ -1,9 +1,14 @@
 import { createHash } from "node:crypto";
+import { createORPCClient } from "@orpc/client";
+import { RPCLink } from "@orpc/client/fetch";
+import type { RouterClient } from "@orpc/server";
 import type { Intent } from "@near-intents-agent-api/sdk";
 import { DELEGATE_ACTION_PREFIX, decodeSignedDelegateAction, Near } from "near-kit";
 import { mainnet } from "../chain.js";
 import { nep413Hash } from "../nep413.js";
+import type { Router } from "../router.js";
 import type { AgentEntry } from "./config.js";
+import { type DaoProposal, signRequestOf } from "./sign-requests.js";
 
 /**
  * "What am I voting on?" A proposal asking `v1.signer` to sign shows members only a hash. Every owner
@@ -15,16 +20,6 @@ import type { AgentEntry } from "./config.js";
 
 /** The agents' owner key path (src/dao-owner.ts); Trezu signs its confidential payments on the DAO's own. */
 const OWNER_PATH = "agent-owner";
-
-export type DaoProposal = {
-  id: number;
-  proposer: string;
-  description: string;
-  status: string;
-  submission_time: string;
-  votes: Record<string, string>;
-  kind: Record<string, Record<string, unknown>> | string;
-};
 
 /**
  * One request an agent server asked the DAO to sign (`owner.pending` there): still waiting for the
@@ -39,21 +34,6 @@ export type DaoRequest = {
   delegate: string | null;
   state: "waiting" | "done" | "expired";
 };
-
-/** The signing request inside a proposal, if it is a `v1.signer` sign call. */
-export function signRequestOf(proposal: DaoProposal) {
-  const call = typeof proposal.kind === "object" ? (proposal.kind.FunctionCall as { receiver_id: string; actions: { method_name: string; args: string }[] } | undefined) : undefined;
-  if (call?.receiver_id !== "v1.signer" || call.actions.length !== 1 || call.actions[0]!.method_name !== "sign") return null;
-  try {
-    const { request } = JSON.parse(Buffer.from(call.actions[0]!.args, "base64").toString()) as {
-      request: { path: string; payload_v2?: { Eddsa?: string }; domain_id: number };
-    };
-    const hash = request.payload_v2?.Eddsa;
-    return hash ? { path: request.path, hash: hash.toLowerCase(), domainId: request.domain_id } : null;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * A NEP-366 signed delegate action's sender, receiver and the methods it calls (read with
@@ -153,18 +133,9 @@ const near = new Near(mainnet);
 
 /** What an agent server waits for the DAO to sign, read over loopback; empty if it doesn't answer. */
 async function agentRequests(agent: AgentEntry): Promise<DaoRequest[]> {
-  try {
-    const response = await fetch(`http://127.0.0.1:${agent.port}/rpc/owner/pending`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) return [];
-    return ((await response.json()) as { json: DaoRequest[] }).json;
-  } catch {
-    return [];
-  }
+  const client: RouterClient<Router> = createORPCClient(new RPCLink({ origin: `http://127.0.0.1:${agent.port}`, url: "/rpc" }));
+  // The server's `state` is a plain string in its type; it only ever holds DaoRequest's three.
+  return client.owner.pending(undefined, { signal: AbortSignal.timeout(10_000) }).then((r) => r as DaoRequest[], () => []);
 }
 
 /** The DAO's latest `limit` proposals that ask v1.signer to sign, decoded against every agent. */

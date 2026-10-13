@@ -14,7 +14,7 @@ import { readOps } from "../src/ops.js";
 import { checkPaymentApproval } from "../src/payment-approval.js";
 import { ASSETS, payoutPolicy } from "../src/policy.js";
 import { recover } from "../src/recover.js";
-import { prepare, submit } from "../src/wallet-intents.js";
+import { prepare, submit } from "../src/owner-intents.js";
 import { authorityFixture, fixtureGrant, policyView } from "./fixtures/authority.js";
 
 /**
@@ -208,4 +208,22 @@ test("rejecting needs only the identity checks: no policy or agent reads", async
   mock.method(api, "getPolicy", async () => assert.fail("reject must not read policy"));
   mock.method(api, "getAgent", async () => assert.fail("reject must not read the agent"));
   assert.equal((await checkPaymentApproval({ ...vote, verdict: "reject" })).binding.verdict, "reject");
+});
+
+test("a status read that fails says nothing about a held invoice: it stays waiting and blocks nothing", async () => {
+  process.chdir(executor);
+  assert.equal((await file(invoice, invoice.payee)).status, "waiting");
+  mock.method(api, "getStatus", async () => { throw new Error("rate_limited"); });
+  assert.equal((await mine(invoice.payee))[0]?.status, "waiting", "the payee's page read failed; the payment didn't change");
+  await recover();
+  assert.equal((await mine(invoice.payee))[0]?.status, "waiting");
+  const lock = await acquireMoneyLock();
+  await lock.release();
+});
+
+test("a status read naming another operation isn't a mere read failure: the invoice becomes unknown", async () => {
+  process.chdir(executor);
+  assert.equal((await file(invoice, invoice.payee)).status, "waiting");
+  mock.method(api, "getStatus", async () => ({ correlation_id: "someone-else", agent_id: process.env.AGENT_ID, status: "SUCCESS" }));
+  assert.equal((await mine(invoice.payee))[0]?.status, "unknown");
 });

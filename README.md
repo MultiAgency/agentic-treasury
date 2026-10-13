@@ -10,9 +10,10 @@ The owner can be a person's wallet or a Sputnik DAO, such as a [Trezu](https://t
 
 - The **owner** signs a **policy**: allowed actions, assets, caps, budget, and where funds may go.
 - The owner issues a **grant** that lets this server act for the **agent** inside that policy.
-- The agent swaps, shields and pays. The Agent API and the wallet provider refuse anything outside the
-  policy before funds move. The one gap they leave, a swap into an asset the policy doesn't list, is
-  refused by this server (see Not done yet).
+- The agent swaps, shields and pays through the Agent API and OutLayer, with application checks and
+  provider-enforced limits. Output-asset enforcement is local; strict cumulative per-asset enforcement
+  and USD-budget atomicity remain unproven. See the [enforcement assessment](docs/enforcement.md) for
+  the evidence and remaining gaps.
 - Every policy has a **mandate digest**: sha256 of its canonical JSON (`src/mandate.ts`), which anyone
   holding the policy can recompute. Every plan and every money action records the digest it ran under.
 - The **books** compare public balances against the chain's
@@ -28,21 +29,29 @@ requires reconciliation. New money actions recheck lock ownership and unresolved
 preflight. This closes the reproduced preflight lock-loss scenario; ownership loss during an
 in-flight send remains a single-host residual risk, not a distributed fencing guarantee.
 
-Owner intents persist `prepared → submitted → settled` in the existing private per-instance file.
-Here `submitted` means submission was attempted, not proven accepted. A restart polls the same ID,
-including after signing expiry, and finishes agent creation, grant promotion, or approval settlement.
-It never signs again or automatically resubmits an ambiguous owner request. Settled results remain
-available after restart. Records already deleted by older versions cannot be reconstructed locally.
+Owner intents persist `prepared → submitted → settled` in a private per-instance file. Updates take
+an inter-process lock and reload the file before modification, so concurrent preparation and settlement
+preserve each other's records. `submitted` means submission was attempted, not proven accepted.
+Approval signatures are poll-only after an attempt. For other owner actions, the existing recovery
+flow can resend the saved signature only while the API reports `PENDING_SIGNATURE` and the signing
+window remains open. Settled results remain available after restart. Records deleted by older versions
+cannot be reconstructed locally. This is single-host coordination, not distributed fencing.
 
 The dashboard runs status-only reconciliation every 10 seconds, independently of strategy execution.
 `pnpm reconcile --poll` performs one pass. Unknown IDs, failed reads, `UNCERTAIN`, and `NEEDS_REVIEW`
-remain unresolved. `--replay` is blocked: provider deduplication and lookup semantics remain unverified.
+remain unresolved. Nothing is resent: provider deduplication and lookup semantics remain unverified.
 
 Plans simulate cumulative swaps and shields using guaranteed output floors, then recheck remaining
 feasibility between legs. Policy, strategy digest, cost ceiling, and expiry are checked after
 asynchronous preflight before each send, including a swap following an automatic shield.
 These recovery and execution checks are offline fault-tested; they are not mainnet-validated.
-Autopilot demonstration remains a separate milestone.
+
+New non-invoice operations use journal v2: a durable preparation followed by a durable submission
+claim before the provider call. On the next money-lock acquisition, an unclaimed preparation is
+resolved as `never_submitted`. Claimed operations without an outcome and ambiguous legacy records
+remain blocked. Invoice preparation keeps its existing SQLite lifecycle. Before upgrading, follow the
+[stopped-writer migration](docs/operations.md#journal-v2-and-owner-intent-locking-upgrade).
+
 
 ## Run it
 
@@ -72,45 +81,18 @@ settings. Anyone else is refused at sign-in. Only payees in the payout agent's p
 
 The demo walkthrough is in [DEMO.md](DEMO.md).
 
-**Deploy the dashboard on Railway** (service `dao`: `Dockerfile.dashboard`, one replica, a volume at
-`/data`). One container runs the public gateway (`src/gateway/server.ts`) and, on loopback beside it,
-each agent server listed in `deploy/dashboard.json`. An agent with `"executor": false` runs approve-only.
-All state lives on the volume in `/data/state`; the app stays in `/app`.
-
-1. Create the service and attach a volume at `/data`. Point it at its Dockerfile with the variable
-   `RAILWAY_DOCKERFILE_PATH=Dockerfile.dashboard` (Railway no longer offers Config as Code to new
-   services, so `railway.json` applies to `invoices` only). Set the healthcheck path to `/health`.
-2. Set `NEAR_INTENTS_AGENT_API_KEY`, `NEAR_INTENTS_AGENT_API_URL`, `NEARAI_API_KEY`, `FASTNEAR_API_KEY`,
-   and `SESSION_SECRET` (random, 32+ characters). `TRUST_PROXY=true` is set in the image.
-3. For the first boot only, give each agent its settings file as a base64 variable: `DAO_ENV` and
-   `PAYOUT_ENV` for `.env.dao` and `.env.payout`. To move an existing executor's state, also set
-   `RESTORE_ARCHIVE` (a base64 gzipped tar of its `.ops`, `.inbox`, `.owner-intents` and `.strategy`
-   files) and `RESTORE_SHA256` (that tar's SHA-256). `deploy/dashboard-entrypoint.sh` restores only
-   when the checksum matches and no state exists, and writes a settings file only if it is missing.
-   Delete these four variables once the service has started: they hold grant tokens and owner intents,
-   which from then on live only on the volume.
-4. Deploy with `railway up --service dao`. To test before DNS is in place, set `DASHBOARD_HOST` to the
-   service's Railway domain. Sign-in is bound to that host instead of `host` in `deploy/dashboard.json`.
-   Then point a CNAME at the target `railway domain status <domain> --service dao` shows, and remove
-   `DASHBOARD_HOST`.
-
-Each agent has exactly one executor, and nothing enforces that across machines: the executor lease
-covers one host. Every other copy of an agent, such as the owner's laptop, sets `EXECUTOR=off`. Such a
-copy needs no grant token (it shows the executor's grant, read from the API) and refuses to issue grants,
-since the new token would be saved on the wrong machine. To move an executor back, stop the `dao`
-service, copy the agent's state files out of `/data/state`, and remove `EXECUTOR=off` from the laptop's
-settings file before starting it there.
-
-To stop an agent's sends, freeze its policy by owner vote: the provider refuses every send while the
-executor keeps reconciling. To stop one host from sending, set `EXECUTOR=off` there.
+Deployment, executor migration and state preservation are documented in the
+[operations guide](docs/operations.md#dashboard). Each agent requires one executor host; the local
+lease does not enforce that across machines. Other instances use `EXECUTOR=off`.
 
 ## Two kinds of agent
 
 - A **treasury agent** swaps between USDC, wNEAR and ETH toward a target, shields anything public,
   and can be steered by an LLM whose responses are verified against its TEE. No vote per action.
 - A **payout agent** only transfers USDC, confidentially, to payees the owner agreed to. Every payout
-  waits for the owner's approval, and its caps are checked before any vote, so an approval given by
-  mistake still can't exceed them.
+  waits for the owner's approval. Approval verification checks the intended terms against the current
+  policy; cumulative enforcement and the final signed artifact retain the provider dependencies
+  described in the [enforcement assessment](docs/enforcement.md).
 
 Each instance of the server runs one agent. To run a second beside the first, give it its own
 settings file: `ENV_FILE=.env.payout PORT=8790 pnpm server`. It shares the API keys in `.env` but keeps
@@ -118,15 +100,8 @@ its own agent, grant and treasury, and each agent has its own action log in `.op
 
 ## Invoices
 
-The payout executor now serves both the private dashboard and public invoice page. Stop an existing
-payout server before starting `ENV_FILE=.env.payout pnpm invoices`: the dashboard listens on loopback
-port 8790 and invoices on 8791. Both use the payout agent's existing grant, money lock and recovery
-loop. One host is the agent's executor; any other instance of the same agent, such as the owner's
-local dashboard while the executor runs on Railway, sets `EXECUTOR=off`: it reads and approves as the
-owner but never sends, reconciles or serves invoices. A lifetime lease prevents a second
-current-version executor on the same host/user; it is not distributed fencing.
-For an existing `pnpm server` or gateway-managed worker, set `INVOICES_PORT=8791` in that worker's
-settings instead. A gateway can point at the already-running loopback worker without `envFile`.
+The payout executor serves both the private dashboard and public invoice page through the same
+grant, money lock and recovery loop. See [payout setup](docs/operations.md#payout-executor).
 
 Contractors sign in with a full-access NEAR wallet key and file an amount and optional note for their
 own account. Only agreed payees can submit. Sign-in uses near-connect's wallet list pinned to one reviewed
@@ -141,8 +116,8 @@ Before a payment can be sent, `.invoices/<agent>.sqlite` atomically stores the s
 initial revision, exact payment request, stable idempotency key and reservation. A second transaction
 marks submission attempted before network I/O. A crash after that point is ambiguous even when the
 network call may never have started. Missing correlation IDs, failed reads and uncertain outcomes
-never authorize another send. Reconciliation polls known operation IDs; **ambiguous replay is blocked**,
-including requests from older clients that still pass `resend` or `--replay`.
+never authorize another send. Reconciliation polls known operation IDs and never resends: **ambiguous
+replay is not possible**.
 
 Retries of the same form retain the same payment identity. Changed amount/note contents are retained
 as revisions requiring review; they never modify an existing payment or create a second attempt.
@@ -152,29 +127,8 @@ and reserved amounts. Operators may cancel a payment only when its durable state
 never began. A held/unknown payment retains its reservation until a proven terminal outcome. These
 reservations are records of encumbrances, not yet a full available-cash or liquidity-control engine.
 
-**Upgrade and migration:** stop old invoice/payout writers first, preserve `.ops/`, `.invoices/` and
-any `.intake/` files, and back up the persistent volume before starting the new executor. Existing
-JSONL invoice history is imported read-only: recorded outcomes (paid, failed, refused) are shown as
-they were, open ones as needing review, and missing business-to-payment links are never guessed. Non-invoice operations continue using their existing `.ops/` JSONL log;
-new invoice operations are authoritative in SQLite and projected into the same activity/recovery
-views. Each legacy file is moved to `.invoices/legacy/` once imported, so a stale writer can only start a new
-file, which is imported in turn; its ids are never filed again. The `.sqlite.initialized` marker
-prevents a missing database from silently becoming an empty one; restore the database rather than
-removing the marker. Preserve SQLite journals and use a consistent backup. Do not roll back to an
-old writer after new SQLite payments without reconciling/exporting the new records.
-
-**Deploy on Railway** (`Dockerfile`, `railway.json`, one replica, one executor host per agent):
-
-1. Move the payout executor and its persistent state together. Any other instance of this agent, such
-   as the owner's local dashboard, runs with `EXECUTOR=off`. The database cannot coordinate with an
-   independent volume.
-2. Attach `/data` with the migrated state. Keep the existing payout agent's `AGENT_ID`,
-   `AGENT_GRANT_TOKEN`, `NEAR_INTENTS_AGENT_API_KEY` and `NEAR_INTENTS_AGENT_API_URL` in the environment.
-3. Set `INVOICES_PUBLIC_HOST`, `INVOICES_SESSION_SECRET` (random, 32+ bytes), and optionally
-   `INVOICES_TITLE`. Railway's `PORT` is the public invoice port; `AGENT_PORT` defaults to 8790 for
-   private dashboard/RPC access inside the host. The public invoice listener exposes no dashboard RPC.
-4. Review imported and unresolved records before submitting new invoices. An outcome without a
-   correlation ID requires provider/operator investigation; there is no assumed lookup-by-key API.
+Before upgrading an existing payout executor, follow the
+[invoice migration instructions](docs/operations.md#invoice-migration-and-deployment).
 
 SQLite provides local atomicity, not exactly-once remote payment execution. These paths are covered
 by offline concurrency, HTTP authorization and process-crash tests, and the flow ran on mainnet on
@@ -184,9 +138,9 @@ by offline concurrency, HTTP authorization and process-crash tests, and the flow
 
 Every money submission (invoice, dashboard, CLI, autopilot) goes through one dispatch: under the
 money lock, with no earlier operation of unknown outcome, written ahead to the log before it is sent.
-The provider enforces the policy itself when the payment is submitted (grant validity, actions,
-payees, per-transaction and rolling limits, USD budgets, balance), and its refusals are recorded as
-refusals. Dispatch refuses locally, recording why, only what the provider can't see or check
+Policy enforcement is delegated to the Agent API and OutLayer, with the evidence and limitations
+listed in the [enforcement assessment](docs/enforcement.md). Provider refusals are recorded.
+Dispatch also refuses locally, recording why, what the provider can't see or check
 (`src/authorize.ts`): a policy that is frozen, unapplied or unsynchronized; no live grant; a grant for
 another purpose (the autopilot's must carry its strategy's digest); a swap into an asset the policy
 doesn't list (the provider checks only the asset spent); a payout that isn't a confidential USDC
@@ -287,15 +241,22 @@ history, and budgets compared as text ("25" vs "25.00"). Both failed safe: nothi
 
 ## Not done yet
 
+The [enforcement assessment](docs/enforcement.md#status) tracks the current evidence for the signed
+spending envelope, including cumulative limits, policy binding and execution-artifact trust.
+A provider `FAILED` status is currently treated as terminal locally; it is not independently verified
+as proof that a replacement payment is safe. See [recovery guidance](DEMO.md#the-live-moment-one-invoice-end-to-end).
+
 - The API keeps signing requests open for 5 to 10 minutes, so a slow council misses the window.
-- Trezu shows these proposals as a generic "sign on v1.signer", so members vote on a hash they can't
-  read. The dashboard should say what each one does.
+- Trezu shows these proposals as a generic "sign on v1.signer", so a member voting there sees only a hash.
+  The dashboard's "What am I voting on?" shows what each one does; check it there first.
+- Two owner actions signed as NEAR delegate actions (create, freeze, unfreeze, policy update) pending at
+  once share a nonce, so the second fails after its vote passes. File them one at a time.
 - The policy's asset list limits what the agent spends, not what it buys: the wallet lets a swap into an
   unlisted asset through. This server refuses one before sending, but the wallet should enforce it.
-- The API's `agent_policy_hash` can't be recomputed from the policy, so the mandate digest is this
-  server's own: the signed payload isn't shown to commit to it.
+- The owner can't verify the enforced policy: it is stored encrypted to the custody keystore, and the
+  public `store_wallet_policy` takes no `agent_policy_hash`. The mandate digest is this server's own;
+  the signed payload isn't shown to commit to it.
 - Confidential credits from outside the API can't be attributed: nothing public indexes `intents.far`.
 - A refusal says `policy_denied` without naming the rule that refused.
 - The autopilot (off by default) hasn't yet run unattended for days, and its warnings stay in the dashboard:
   nothing reaches the owner outside it.
-- Auto-execution doesn't yet require a grant that approves the current strategy.

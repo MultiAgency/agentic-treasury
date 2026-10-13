@@ -24,6 +24,11 @@ The one instance that sends, reconciles and serves invoices for an agent. Any ot
 agent is **approve-only**: it reads and approves as the owner, and never sends.
 _Avoid_: primary, leader
 
+**Member** / **Operator**:
+Who may use the hosted dashboard. A member is in one of the DAO's roles: reads everything and may file
+owner actions as proposals. An operator is also named in the dashboard's configuration and may move
+money and change settings.
+
 ## Mandate
 
 **Policy**:
@@ -35,8 +40,12 @@ _Avoid_: rules, config
 The sha256 of a policy's canonical JSON, recorded with every plan and every money action.
 
 **Grant**:
-The owner's permission for this server to act for the agent, labelled with its **purpose**.
+The owner's permission for this server to act for the agent, named by its **grant label**.
 _Avoid_: token, credential (the grant token is only the secret that proves the grant)
+
+**Grant label**:
+What a grant is for, signed by the owner: `treasury`, `payout` or `invoices`, optionally followed by a
+suffix such as a strategy digest (`treasury:<digest>`). Each purpose names the labels that may act for it.
 
 **Purpose**:
 Why a send or approval happens: `treasury`, `autopilot`, `payout`, `invoice` or `approval`. A purpose
@@ -64,7 +73,9 @@ A saved, expiring list of swaps and shields, bound to the policy and strategy it
 
 **Operation**:
 One money action in the agent's log, identified by its idempotency key from the write-ahead record
-through its outcome.
+through its outcome. New non-invoice operations record preparation and then a durable submission
+claim before the provider call. A preparation without a claim proves it was never submitted; a claim
+without an outcome remains unresolved. Legacy records without this distinction remain unresolved.
 _Avoid_: transaction, job
 
 **Unresolved operation**:
@@ -79,5 +90,14 @@ _Avoid_: pending approval (as a noun)
 **Refusal**:
 A proven outcome that nothing was sent, recorded with a code.
 
+**Money lock**:
+The lock every money action runs under: one money-moving run at a time across this host's processes,
+refused while an unresolved operation exists. It is single-host, not distributed fencing.
+
+**Owner intent**:
+An owner action (create, grant, freeze, policy update, approval vote) prepared by the server and signed
+by the owner's wallet or a DAO vote, kept `prepared → submitted → settled` so a restart follows it.
+
 **Invoice**:
-A payee's request to be paid, which becomes one payout operation with a stable key and immutable terms.
+A payee's request to be paid, which becomes one payout operation with a stable key and immutable terms. Until it is
+submitted it is **prepared**: nothing is in flight, so it is not an unresolved operation.

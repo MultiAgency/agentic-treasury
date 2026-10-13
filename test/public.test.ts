@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import type { DaoPolicy } from "../src/chain.js";
-import type { DaoProposal } from "../src/gateway/proposals.js";
+import type { DaoProposal } from "../src/gateway/sign-requests.js";
 import { publicView } from "../src/gateway/public.js";
 
 const DAO = "agentic.sputnik-dao.near";
@@ -52,9 +52,10 @@ test("the public view names each proposal's kind from its on-chain arguments, ne
   assert.deepEqual(view.roles, [{ name: "Approver", members: ["multiagentic.near"] }]);
 });
 
-test("the public view is read from chain only: it never calls an agent server", () => {
-  const source = readFileSync(new URL("../src/gateway/public.ts", import.meta.url), "utf8");
-  assert.doesNotMatch(source, /127\.0\.0\.1|localhost|\/rpc\/|fetch\(/);
-  const imports = [...source.matchAll(/from "([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(imports, ["near-kit", "../chain.js", "./proposals.js"]);
+test("the public view is read from chain only: nothing it can reach calls an agent server", () => {
+  const read = (path: string) => readFileSync(new URL(`../src/gateway/${path}`, import.meta.url), "utf8");
+  const imports = (source: string) => [...source.matchAll(/from "([^"]+)"/g)].map((m) => m[1]);
+  for (const path of ["public.ts", "sign-requests.ts"]) assert.doesNotMatch(read(path), /127\.0\.0\.1|localhost|\/rpc\/|fetch\(/, path);
+  assert.deepEqual(imports(read("public.ts")), ["near-kit", "../chain.js", "./sign-requests.js"]);
+  assert.deepEqual(imports(read("sign-requests.ts")), []);
 });

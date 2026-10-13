@@ -1,0 +1,243 @@
+{
+  "capturedAt": "2026-10-13T04:10:03.956Z",
+  "origin": "https://api.demo.agentsonintents.com",
+  "custodyGuaranteeEstablished": false,
+  "localOwnerSignatures": [
+    {
+      "id": "intent_QASGnkRcNkZXTCOic768cODTcKD9r9nq91DNpuTVFHI",
+      "type": "grant_issue",
+      "valid": true,
+      "recordedHashMatches": true,
+      "changedMessageRejected": true,
+      "changedRecipientRejected": true,
+      "payloadSha256": "ff18382f3f80e40bc673ca61f334739b8634091f83ad972b9bbe7dd265b7034b"
+    },
+    {
+      "id": "intent_gWZqmGSXRCMPfpXL55EZzDCCyjU5YR-HA2cfwAHPB0s",
+      "type": "grant_revoke",
+      "valid": true,
+      "recordedHashMatches": true,
+      "changedMessageRejected": true,
+      "changedRecipientRejected": true,
+      "payloadSha256": "a1dfbc6e485b58901a09cfa00df9f7c7f4707402592274308ec9d045180b955d"
+    },
+    {
+      "id": "intent_4dKH50KR6ot8CnHTt3XA31NQV72mTW_02gMdB96-j7A",
+      "type": "grant_issue",
+      "valid": true,
+      "recordedHashMatches": true,
+      "changedMessageRejected": true,
+      "changedRecipientRejected": true,
+      "payloadSha256": "c51ed47859efe7480ae8f2371ec28d090187011d2487f9ca0c38f45222a11d5d"
+    },
+    {
+      "id": "intent_R93UUmuX915Twl7uiiz-kWjzTuZKs79PDvq2jjpdcAo",
+      "type": "grant_issue",
+      "valid": true,
+      "recordedHashMatches": true,
+      "changedMessageRejected": true,
+      "changedRecipientRejected": true,
+      "payloadSha256": "8cb123a8571a2ccea42c2021609de5ad721aef80c01097a5301caf10229909da"
+    },
+    {
+      "id": "intent_P8fkMWo0bS8qu7YxCPZYcSYH1qIeSc656UmIdBzQNX4",
+      "type": "grant_issue",
+      "valid": true,
+      "recordedHashMatches": true,
+      "changedMessageRejected": true,
+      "changedRecipientRejected": true,
+      "payloadSha256": "bc8b12e1bff6cd8dcd9815dcfccebf1e517c3787dd87daf50f98986c98ed2650"
+    },
+    {
+      "id": "intent_OvYJNtVJEsrqCom2fq5VhhQ0PZwxP4ufqG36Z2c6Amk",
+      "type": "grant_issue",
+      "valid": true,
+      "recordedHashMatches": true,
+      "changedMessageRejected": true,
+      "changedRecipientRejected": true,
+      "payloadSha256": "d1638d4caa1a18021e13c1d6db0136d962da3159f32422d37cf7c4f6656f990c"
+    },
+    {
+      "id": "intent_P_XQhE_0R438pQMlxbsfomnKEVVhLMXO17AZl60X-6I",
+      "type": "approval_vote",
+      "valid": true,
+      "recordedHashMatches": true,
+      "changedMessageRejected": true,
+      "changedRecipientRejected": true,
+      "payloadSha256": "25de0bf9be81a1d8b5f422e2dee0d641b008b34287972f0bb759917e3dbeed57"
+    },
+    {
+      "id": "intent_wmKNRHzdpBp0_uYcaMQcWy1WjzCvv8AI0rdCdkz7Cus",
+      "type": "approval_vote",
+      "valid": true,
+      "recordedHashMatches": true,
+      "changedMessageRejected": true,
+      "changedRecipientRejected": true,
+      "payloadSha256": "d72ffc0c3d9b9cfb209e8bc23f1b03b8daf163c5c77ea736effa0f132ba88543"
+    },
+    {
+      "id": "intent_djmD74ZmFk_DSmlyraExXFbFCC6gmALOZBWiu31MXIA",
+      "type": "approval_vote",
+      "valid": true,
+      "recordedHashMatches": true,
+      "changedMessageRejected": true,
+      "changedRecipientRejected": true,
+      "payloadSha256": "c98a2e08ad47f9ccbf83d2a3810eebfd91feb52740902cab62b42f00c72211a1"
+    },
+    {
+      "id": "intent_V69AdRkCgbCeqEz5fRZdVgcC2NxFf4AA655EUYbemX4",
+      "type": "approval_vote",
+      "valid": true,
+      "recordedHashMatches": true,
+      "changedMessageRejected": true,
+      "changedRecipientRejected": true,
+      "payloadSha256": "a63f2681a3ba35e53d6bbfce7f989da8152d0cab31558fb4737948880ed28a4a"
+    }
+  ],
+  "agents": [
+    {
+      "label": "treasury",
+      "policyRevisions": [
+        {
+          "revision": 11,
+          "status": "APPLIED",
+          "hashMatches": true,
+          "transactionHash": "6zMUupjmu1AyF8vdjaFZrS3qGR63FTJohM9dETrYttBM"
+        },
+        {
+          "revision": 10,
+          "status": "APPLIED",
+          "hashMatches": true,
+          "transactionHash": "24JSJ1dkZyjwNg8zZ5kjztnsHdBdiwLSk43AZdYeWweG"
+        },
+        {
+          "revision": 9,
+          "status": "APPLIED",
+          "hashMatches": true,
+          "transactionHash": null
+        },
+        {
+          "revision": 8,
+          "status": "APPLIED",
+          "hashMatches": true,
+          "transactionHash": "G1ktzFfPkrUJanQ3Nx7z7TCrLhWbFhxF85xf7hL8nm16"
+        },
+        {
+          "revision": 7,
+          "status": "APPLIED",
+          "hashMatches": true,
+          "transactionHash": "4JDXgFMwYVoubPRCba7KPgSrrA8Fc5ACAdq5rKsTdhg1"
+        },
+        {
+          "revision": 6,
+          "status": "APPLIED",
+          "hashMatches": true,
+          "transactionHash": "6CF58cJRkzHCj2g78DPDNjBnqWjkBrdVJgweXL5MQMaG"
+        },
+        {
+          "revision": 5,
+          "status": "APPLIED",
+          "hashMatches": true,
+          "transactionHash": "ATrunish7AnqjxexFmtXWCUmdvBD3xbwzXHN36v8NRdw"
+        },
+        {
+          "revision": 4,
+          "status": "APPLIED",
+          "hashMatches": true,
+          "transactionHash": "BuFrjJLSav6s33UQbfxPzh4RZ3kjmDZQRG3vpkQBM5BL"
+        },
+        {
+          "revision": 3,
+          "status": "APPLIED",
+          "hashMatches": true,
+          "transactionHash": "BhmYghZGqQNKkWuJrfgcno2dXEn5ReRHdER4t1hsXjxY"
+        },
+        {
+          "revision": 2,
+          "status": "APPLIED",
+          "hashMatches": true,
+          "transactionHash": null
+        },
+        {
+          "revision": 1,
+          "status": "APPLIED",
+          "hashMatches": true,
+          "transactionHash": "Fo3G63XtNasJ4Z3VrLpAuPA9ax7P1bwt1D7YargkU1XP"
+        }
+      ],
+      "grants": {
+        "total": 5,
+        "active": 1
+      },
+      "proofAttempt": {
+        "id": "op_XNaqLYyKbGtTqnqKudiH8uQGIPQKxYvU9oLjHXJdaW4",
+        "type": "swap"
+      },
+      "error": {
+        "name": "AgentApiError",
+        "code": "transparency_log_disabled",
+        "status": 501
+      }
+    },
+    {
+      "label": "payout",
+      "policyRevisions": [
+        {
+          "revision": 1,
+          "status": "APPLIED",
+          "hashMatches": true,
+          "transactionHash": "AREKSdvToZDotMh7r2XPdt33UEkc8tDEWgZiyai7tGjT"
+        }
+      ],
+      "grants": {
+        "total": 2,
+        "active": 1
+      },
+      "proofAttempt": {
+        "id": "op_RCW0gaWGDo_fl7VYWln71qoFSPtfWGgXoGyVaStGvZ0",
+        "type": "transfer"
+      },
+      "error": {
+        "name": "AgentApiError",
+        "code": "transparency_log_disabled",
+        "status": 501
+      }
+    },
+    {
+      "label": "isolated",
+      "policyRevisions": [
+        {
+          "revision": 3,
+          "status": "APPLIED",
+          "hashMatches": true,
+          "transactionHash": null
+        },
+        {
+          "revision": 2,
+          "status": "APPLIED",
+          "hashMatches": true,
+          "transactionHash": "5H33FZe97mzQYTfBCUTB5JTq7iBzwLMpA41vNTfyPRKA"
+        },
+        {
+          "revision": 1,
+          "status": "APPLIED",
+          "hashMatches": true,
+          "transactionHash": "ERpkAtVJVq2u8dsXq6mDRxaMe7az4EEMrQVRmrptUhtU"
+        }
+      ],
+      "grants": {
+        "total": 1,
+        "active": 1
+      },
+      "proofAttempt": {
+        "id": "op_13BiIirYsg208ObtehlBZqEwvW52gthNOoW0EZEvlRo",
+        "type": "swap"
+      },
+      "error": {
+        "name": "AgentApiError",
+        "code": "transparency_log_disabled",
+        "status": 501
+      }
+    }
+  ]
+}

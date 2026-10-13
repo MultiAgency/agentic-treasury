@@ -1,12 +1,7 @@
-import { createORPCClient } from "@orpc/client";
-import { RPCLink } from "@orpc/client/fetch";
-import type { RouterClient } from "@orpc/server";
 import { ArrowRight, CheckCircle, Robot, WarningOctagon } from "@phosphor-icons/react";
-import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import type { Decoded } from "../../src/gateway/proposals.js";
-import type { Router } from "../../src/router.js";
-import { ago, usd } from "./lib";
+import { ago, clientFor, fromUnits, gw, minutesSeconds, useCountdown, usd } from "./lib";
 import { type Gateway, ViewerBadge } from "./session";
 import { Badge, Card, Section, Spinner, type Tone } from "./ui";
 
@@ -15,17 +10,6 @@ import { Badge, Card, Section, Spinner, type Tone } from "./ui";
  * Agent data comes through the gateway, by the same calls each agent's own dashboard makes.
  */
 
-const agentClient = (name: string): RouterClient<Router> => createORPCClient(new RPCLink({ url: `/a/${name}/rpc` }));
-
-/** Seconds until `iso`, ticking. */
-function useSecondsLeft(iso: string) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-  return Math.max(0, Math.round((new Date(iso).getTime() - now) / 1000));
-}
 
 const TYPE_WORDS: Record<string, string> = {
   agent_create: "Create the agent",
@@ -38,12 +22,12 @@ const TYPE_WORDS: Record<string, string> = {
 };
 
 function Window({ expiresAt }: { expiresAt: string }) {
-  const left = useSecondsLeft(expiresAt);
+  const left = useCountdown(expiresAt) ?? 0;
   return left === 0 ? (
     <Badge tone="destructive">signing window closed</Badge>
   ) : (
     <Badge tone={left < 120 ? "warning" : "info"}>
-      {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")} left to vote
+      {minutesSeconds(left)} left to vote
     </Badge>
   );
 }
@@ -123,11 +107,7 @@ function Proposal({ p, dao }: { p: Decoded; dao: string }) {
 function Proposals({ dao }: { dao: string }) {
   const proposals = useQuery({
     queryKey: ["gw", "proposals"],
-    queryFn: async () => {
-      const response = await fetch("/gw/proposals");
-      if (!response.ok) throw new Error(((await response.json()) as { error: string }).error);
-      return (await response.json()) as Decoded[];
-    },
+    queryFn: () => gw<Decoded[]>("/gw/proposals"),
     refetchInterval: 15_000,
   });
   const open = proposals.data?.filter((p) => p.status === "InProgress") ?? [];
@@ -155,22 +135,102 @@ function Proposals({ dao }: { dao: string }) {
   );
 }
 
+/** One agent's state, as members may read it: shared by its card and the action queue. */
+const agentQuery = (name: string) => ({
+  queryKey: ["fleet", name],
+  queryFn: async () => {
+    const client = clientFor(`/a/${name}`);
+    const [setup, overview, held, unresolved, autopilot, inbox] = await Promise.all([
+      client.setup(),
+      client.overview(),
+      client.held(),
+      client.unresolved(),
+      client.autopilot.get(),
+      client.inbox.list(),
+    ]);
+    return { setup, overview, held, unresolved, autopilot, inbox };
+  },
+  refetchInterval: 30_000,
+});
+type AgentState = Awaited<ReturnType<ReturnType<typeof agentQuery>["queryFn"]>>;
+
+/** Payouts are confidential USDC (src/authorize.ts), which an empty wallet's book doesn't list. */
+const USDC = "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
+function amountOf(raw: string, asset: string, d: AgentState) {
+  const holding = d.overview.book.find((h) => h.asset === asset);
+  if (holding) return `${fromUnits(raw, holding.decimals)} ${holding.symbol}`;
+  return asset === USDC ? `${fromUnits(raw, 6)} USDC` : `${raw} ${asset}`;
+}
+
+const GRANT_WARNING_DAYS = 7;
+type Item = { agent: string; tone: Tone; text: string; href: string; action: string };
+
+/** Everything across the DAO's agents that is waiting on a person, most urgent first. */
+function itemsOf(name: string, d: AgentState): Item[] {
+  const base = `/a/${name}`;
+  const items: Item[] = [];
+  if (d.unresolved.length)
+    items.push({ agent: name, tone: "destructive", href: `${base}/activity`, action: "Reconcile",
+      text: `${d.unresolved.length} money action${d.unresolved.length === 1 ? " has" : "s have"} no proven outcome: the agent sends nothing until reconciled` });
+  if (d.overview.policy.policy?.frozen)
+    items.push({ agent: name, tone: "destructive", href: `${base}/policy`, action: "Review", text: "The policy is frozen: the agent can't send" });
+  const grant = d.setup.grant;
+  if (!grant) items.push({ agent: name, tone: "destructive", href: `${base}/policy`, action: "Issue", text: "No live grant: the agent can't send" });
+  else if (Date.parse(grant.expiresAt) - Date.now() < GRANT_WARNING_DAYS * 86_400_000)
+    items.push({ agent: name, tone: "warning", href: `${base}/policy`, action: "Renew", text: `Its grant expires ${ago(grant.expiresAt)}` });
+  for (const h of d.held) {
+    const r = h.request as { amount?: string; asset?: string; recipient?: string };
+    items.push({ agent: name, tone: "warning", href: `${base}/policy`, action: "Approve",
+      text: `${r.amount && r.asset ? amountOf(r.amount, r.asset, d) : "A payment"} to ${r.recipient ?? "a payee"} waits for approval (requested ${ago(h.at)})` });
+  }
+  for (const e of d.inbox.filter((e) => !e.dismissed && e.level !== "run"))
+    items.push({ agent: name, tone: e.level === "warn" ? "warning" : "info", href: `${base}/automations`, action: "Open", text: e.text });
+  return items;
+}
+
+function NeedsAttention({ agents }: { agents: string[] }) {
+  const results = useQueries({ queries: agents.map(agentQuery) });
+  const loading = results.some((r) => r.isPending);
+  const failed = agents.filter((_, i) => results[i]?.error);
+  const items = agents.flatMap((name, i) => (results[i]?.data ? itemsOf(name, results[i].data) : []));
+  const rank: Record<Tone, number> = { destructive: 0, warning: 1, info: 2, success: 3, neutral: 4 };
+  items.sort((a, b) => rank[a.tone] - rank[b.tone]);
+  return (
+    <Section title="Needs attention" description="What's waiting on a person across the DAO's agents: payouts to approve, the autopilot's questions, and anything stopping an agent from sending.">
+      <Card>
+        {loading ? (
+          <Spinner />
+        ) : items.length === 0 && failed.length === 0 ? (
+          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+            <CheckCircle size={18} /> Nothing is waiting. The agents are working inside their limits.
+          </p>
+        ) : (
+          <ul className="flex flex-col divide-y">
+            {failed.map((name) => (
+              <li key={`failed-${name}`} className="py-3 text-sm text-destructive-muted-foreground first:pt-0 last:pb-0">
+                Couldn't read the {name} agent: it may be down.
+              </li>
+            ))}
+            {items.map((item, i) => (
+              <li key={i} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
+                <span className="flex min-w-0 items-center gap-2 text-sm">
+                  <Badge tone={item.tone}>{item.agent}</Badge>
+                  <span className="min-w-0">{item.text}</span>
+                </span>
+                <a href={item.href} className="flex items-center gap-1 text-sm font-medium hover:underline">
+                  {item.action} <ArrowRight size={14} />
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </Section>
+  );
+}
+
 function AgentCard({ name }: { name: string }) {
-  const client = agentClient(name);
-  const data = useQuery({
-    queryKey: ["fleet", name],
-    queryFn: async () => {
-      const [setup, overview, held, unresolved, autopilot] = await Promise.all([
-        client.setup(),
-        client.overview(),
-        client.held(),
-        client.unresolved(),
-        client.autopilot.get(),
-      ]);
-      return { setup, overview, held, unresolved, autopilot };
-    },
-    refetchInterval: 30_000,
-  });
+  const data = useQuery(agentQuery(name));
   const d = data.data;
   const value = d?.overview.book.reduce((sum, h) => sum + h.usd, 0) ?? 0;
   return (
@@ -225,6 +285,7 @@ export function DaoHome({ gateway }: { gateway: Gateway }) {
           <ViewerBadge />
         </div>
       </header>
+      <NeedsAttention agents={gateway.agents} />
       <Proposals dao={gateway.dao} />
       <Section title="Agents">
         <div className="grid gap-4 sm:grid-cols-2">

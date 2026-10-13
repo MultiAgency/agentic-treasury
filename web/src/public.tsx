@@ -1,7 +1,7 @@
 import { ArrowSquareOut, LockSimple, Receipt } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import type { PublicProposal, PublicView } from "../../src/gateway/public.js";
-import { ago } from "./lib";
+import { ago, gw } from "./lib";
 import { SignIn } from "./session";
 import { Badge, Card, Section, Spinner, type Tone } from "./ui";
 
@@ -39,11 +39,7 @@ function Proposal({ p }: { p: PublicProposal }) {
 export function PublicHome({ dao, invoices }: { dao: string; invoices: string | null }) {
   const view = useQuery({
     queryKey: ["gw", "public"],
-    queryFn: async () => {
-      const response = await fetch("/gw/public");
-      if (!response.ok) throw new Error(((await response.json()) as { error: string }).error);
-      return (await response.json()) as PublicView;
-    },
+    queryFn: () => gw<PublicView>("/gw/public"),
     refetchInterval: 60_000,
   });
   const d = view.data;

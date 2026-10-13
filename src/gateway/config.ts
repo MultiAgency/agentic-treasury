@@ -29,7 +29,7 @@ const Config = z.object({
     )
     .min(1),
 });
-export type Config = z.infer<typeof Config>;
+type Config = z.infer<typeof Config>;
 export type AgentEntry = Config["agents"][number];
 
 export function loadConfig(file = process.env.DASHBOARD_FILE ?? "dashboard.json"): Config {

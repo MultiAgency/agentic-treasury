@@ -1,6 +1,7 @@
-import { Check } from "@phosphor-icons/react";
+import { Check, Copy } from "@phosphor-icons/react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { useRef } from "react";
+import { ASSET_COLOR } from "./lib";
 import { useIsOperator } from "./viewer";
 
 const BUTTON = {
@@ -189,3 +190,70 @@ export function Step({
     </li>
   );
 }
+
+/** Why an action failed, in the server's or wallet's words; nothing when it didn't. */
+export function ErrorBox({ error }: { error?: string }) {
+  if (!error) return null;
+  return <p className="rounded-xl bg-destructive-muted px-4 py-3 text-sm text-destructive-muted-foreground">{error}</p>;
+}
+
+/** An operation's settled status, with the provider's failure code when it has one. */
+export function StatusBadge({ status, failureCode, children }: { status: string; failureCode?: string | null; children?: ReactNode }) {
+  return (
+    <Badge tone={statusTone(status)}>
+      {children}
+      {status.toLowerCase()}
+      {failureCode ? ` · ${failureCode}` : ""}
+    </Badge>
+  );
+}
+
+/** A plan that didn't run, and why: anything that changed since it was made. */
+export function NotExecuted({ problems, again }: { problems: string[]; again: string }) {
+  return (
+    <div className="flex flex-col gap-1 rounded-xl bg-warning-muted px-4 py-3 text-sm text-warning-muted-foreground">
+      <span className="font-medium">Not executed. {again} again.</span>
+      {problems.map((p) => (
+        <span key={p}>– {p}</span>
+      ))}
+    </div>
+  );
+}
+
+export function CopyButton({ text }: { text: string }) {
+  return (
+    <Button variant="ghost" size="sm" onClick={() => navigator.clipboard.writeText(text)}>
+      <Copy size={16} /> Copy
+    </Button>
+  );
+}
+
+/** A card's heading: its icon, title and what it does. */
+export function CardHeader({ icon, title, description }: { icon: ReactNode; title: string; description: string }) {
+  return (
+    <div className="flex gap-4">
+      <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand-muted text-brand-strong">{icon}</div>
+      <div className="flex flex-col gap-1">
+        <h3 className="text-lg font-medium">{title}</h3>
+        <p className="text-sm text-muted-foreground">{description}</p>
+      </div>
+    </div>
+  );
+}
+
+export function Note({ children }: { children: ReactNode }) {
+  return <p className="text-sm text-muted-foreground">{children}</p>;
+}
+
+/** Fills a card's body when there is nothing to list yet. */
+export function Empty({ icon, children }: { icon: ReactNode; children: ReactNode }) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+      {icon}
+      {children}
+    </div>
+  );
+}
+
+/** An asset's chart colour, as a dot beside its name. */
+export const Dot = ({ symbol }: { symbol: string }) => <span className={`size-2 rounded-full ${ASSET_COLOR[symbol] ?? "bg-muted-foreground"}`} />;

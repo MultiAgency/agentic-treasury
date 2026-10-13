@@ -1,4 +1,4 @@
-import { format } from "./agent.js";
+import { format } from "./holdings.js";
 import { steward } from "./llm.js";
 import { executePlan, type PlannedAction } from "./plans.js";
 

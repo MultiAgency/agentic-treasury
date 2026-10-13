@@ -2,8 +2,8 @@ import { authorityFixture, policyView } from "./authority.js";
 import { appendFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { api } from "../../src/api.js";
-import { file, invoiceId } from "../../src/invoices.js";
-import { getInvoice } from "../../src/invoice-store.js";
+import { file } from "../../src/invoices.js";
+import { getInvoice, invoiceId } from "../../src/invoice-store.js";
 import { payoutPolicy } from "../../src/policy.js";
 import { recover } from "../../src/recover.js";
 
@@ -31,7 +31,6 @@ DatabaseSync.prototype.exec = function (sql: string) {
 Object.assign(api, {
     ...authorityFixture(),
   getPolicy: async () => policyView(payoutPolicy([invoice.payee])),
-    getHistory: async () => ({ data: [], next_cursor: null }),
   forGrant: () => ({ transfer: async (_id: string, request: unknown, options: { idempotencyKey: string }) => {
     // Separate provider-side evidence, persisted before the simulated response can be lost.
     appendFileSync("provider.jsonl", JSON.stringify({ ...options, request }) + "\n");
@@ -45,6 +44,6 @@ Object.assign(api, {
 });
 
 if (mode === "recover_revoked") Object.assign(api, { listGrants: async () => [] });
-if (mode.startsWith("recover")) await recover({ resend: true });
+if (mode.startsWith("recover")) await recover();
 const result = mode.includes("only") ? null : await file(invoice, invoice.payee);
 console.log(JSON.stringify({ result, invoice: getInvoice(invoiceId(invoice)) }));

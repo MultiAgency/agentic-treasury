@@ -7,15 +7,12 @@ research/
 node_modules/
 .ops/
 .invoices/
-.release/
 .inbox/
 web/dist/
 .plans/
-contracts/*/target/
 .playwright-mcp/
 .owner-intents/
 .strategy/
 .DS_Store
 /dashboard.json
-.runtime/
 .evidence

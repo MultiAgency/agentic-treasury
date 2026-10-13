@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { TSX } from "./fixtures/harness.js";
 
-const TSX = fileURLToPath(new URL("../node_modules/.bin/tsx", import.meta.url));
 const FIXTURE = fileURLToPath(new URL("./fixtures/env.ts", import.meta.url));
 
 /** Runs the fixture in a fresh process in `dir`, with `env` added; returns what it printed. */

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Holding } from "../src/agent.js";
-import { DEFAULT_STRATEGY } from "../src/strategy.js";
+import type { Holding } from "../src/holdings.js";
+import { DEFAULT_STRATEGY } from "../src/strategy-digest.js";
 import { ASSETS } from "../src/policy.js";
 import { type Leg, planLegs, planSteps } from "../src/treasury.js";
 

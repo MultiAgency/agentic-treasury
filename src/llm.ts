@@ -5,11 +5,14 @@ import type { ChatCompletionFunctionTool, ChatCompletionMessageParam } from "ope
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { agentId, format, holdings } from "./agent.js";
+import { agentId } from "./env.js";
+import { format, holdings } from "./holdings.js";
 import { api } from "./api.js";
 import { ASSETS, mayBuy } from "./policy.js";
 import { type Plan, type PlannedAction, savePlan, snapshot } from "./plans.js";
-import { loadStrategy, type Strategy } from "./strategy.js";
+import { loadStrategy } from "./strategy.js";
+import type { Strategy } from "./strategy-digest.js";
+import { usdValue } from "./value.js";
 import { type Leg, quoteLeg, targets } from "./treasury.js";
 
 /**
@@ -42,10 +45,10 @@ async function legFor({ from, to, amount }: z.infer<typeof SwapInput>): Promise<
   const raw = BigInt(whole! + fraction.padEnd(source.decimals, "0").slice(0, source.decimals));
   if (raw <= 0n) throw new Error("amount must be positive");
   if (raw > source.public + source.confidential) throw new Error(`only ${format(source.public + source.confidential, source)} held`);
-  return { from: source, to: target, usd: (Number(raw) / 10 ** source.decimals) * source.price, amount: raw };
+  return { from: source, to: target, usd: usdValue(raw, source.decimals, source.price), amount: raw };
 }
 
-/** The buy-side guard's refusal, before quoting: the provider would execute it (see `assetGuard`). */
+/** The output-asset refusal, before quoting: the provider would execute it (see `outputAssetRefusal`). */
 async function buyRefusal(leg: Leg) {
   const { policy } = await api.getPolicy(agentId());
   return policy && !mayBuy(policy.assets, leg.to.asset) ? `REFUSED asset_out_not_allowed: ${symbolOf(leg.to.asset)} is outside the policy's assets` : null;
@@ -153,9 +156,9 @@ You only propose. A step exists only once you call swap or shield_public and it 
 Finish with a short report: what you saw, what you propose, and why. Write plain text, not Markdown: short paragraphs, and lists with a leading hyphen.`;
 
 /** What a run does when the owner gives no instruction. */
-export const ROUTINE = "Review the treasury. Rebalance toward the target if it is worth it, and shield anything public.";
+const ROUTINE = "Review the treasury. Rebalance toward the target if it is worth it, and shield anything public.";
 
-export type StewardEvent =
+type StewardEvent =
   | { type: "say"; text: string }
   | { type: "call"; name: string; input: unknown }
   | { type: "result"; name: string; result: string }

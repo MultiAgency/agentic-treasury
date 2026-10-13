@@ -16,13 +16,21 @@ const MOVING = new Set<StatusResponse["status"]>(["PROCESSING", "QUEUED"]);
 /** Still on its way: a status that says nothing yet about how the operation ends. */
 export const isMoving = (status: StatusResponse["status"]) => MOVING.has(status);
 
+/** The provider answered a status read for another operation or agent: evidence something is wrong, not a failed read. */
+export class StatusMismatch extends Error {
+  constructor() { super("Provider returned another operation or agent; preserve the original outcome and investigate"); }
+}
+
 /** Bind every status observation to the requested operation before applying financial effects. */
-export function checkedStatus<T extends { correlation_id: string; agent_id?: string | null }>(id: string, status: T): T {
+function checkedStatus<T extends { correlation_id: string; agent_id?: string | null }>(id: string, status: T): T {
   if (status.correlation_id !== id || (process.env.AGENT_ID && status.agent_id && status.agent_id !== process.env.AGENT_ID)) {
-    throw new Error("Provider returned another operation or agent; preserve the original outcome and investigate");
+    throw new StatusMismatch();
   }
   return status;
 }
+
+/** One status read, bound to the operation asked about. */
+export const readStatus = async (id: string) => checkedStatus(id, await api.getStatus(id, { signal: AbortSignal.timeout(30_000) }));
 
 /** Polls until the operation stops moving; UNCERTAIN/NEEDS_REVIEW are returned, never retried. */
 export async function waitForStatus(correlationId: string, signal = AbortSignal.timeout(180_000)) {

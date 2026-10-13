@@ -1,23 +1,20 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { after, beforeEach, test } from "node:test";
+import { readFileSync, writeFileSync } from "node:fs";
+import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { dispatch, held } from "../src/agent.js";
+import { dispatch } from "../src/agent.js";
+import { held } from "../src/payouts.js";
 import { api } from "../src/api.js";
 import { acquireMoneyLock, MoneyLockBusy, STALE_MS, UnresolvedOperations } from "../src/lock.js";
 import { opsLog, readOps, settle } from "../src/ops.js";
+import { freshDirectory, TSX } from "./fixtures/harness.js";
 
-const TSX = fileURLToPath(new URL("../node_modules/.bin/tsx", import.meta.url));
 const FIXTURE = fileURLToPath(new URL("./fixtures/lock.ts", import.meta.url));
-const home = process.cwd();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Every test gets an empty directory: the lock and the ops log live in the working directory.
-beforeEach(() => process.chdir(mkdtempSync(join(tmpdir(), "money-lock-"))));
-after(() => process.chdir(home));
+freshDirectory("money-lock");
 
 /** Runs the fixture in another process in the current directory; returns what it printed. */
 const child = (mode: string) =>

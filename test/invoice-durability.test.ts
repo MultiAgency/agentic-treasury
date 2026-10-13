@@ -1,42 +1,38 @@
 import { authorityFixture, policyView } from "./fixtures/authority.js";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
-import { after, beforeEach, test } from "node:test";
+import { beforeEach, test } from "node:test";
 import { AgentApiError } from "@near-intents-agent-api/sdk";
 import { api } from "../src/api.js";
-import { file, invoiceId, mine } from "../src/invoices.js";
-import { cancelPreparedInvoice, claimInvoiceSubmission, getInvoice, invoiceDatabasePath, listInvoices, markInvoiceUnknown, prepareInvoice } from "../src/invoice-store.js";
+import { file, mine } from "../src/invoices.js";
+import { cancelPreparedInvoice, claimInvoiceSubmission, getInvoice, invoiceDatabasePath, invoiceId, listInvoices, markInvoiceUnknown, prepareInvoice } from "../src/invoice-store.js";
 import { acquireMoneyLock, UnresolvedOperations } from "../src/lock.js";
 import { pay } from "../src/agent.js";
 import { readOps, record } from "../src/ops.js";
 import { ASSETS, payoutPolicy } from "../src/policy.js";
 import { recover } from "../src/recover.js";
+import { freshDirectory, TSX } from "./fixtures/harness.js";
 
-const cwd = process.cwd();
-const TSX = fileURLToPath(new URL("../node_modules/.bin/tsx", import.meta.url));
 const FIXTURE = fileURLToPath(new URL("./fixtures/invoice-crash.ts", import.meta.url));
 const invoice = { payee: "alice.near", amount: "1000000", note: "October", submission: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" };
 let sends: string[];
+freshDirectory("invoice-durability");
 beforeEach(() => {
-  process.chdir(mkdtempSync(join(tmpdir(), "invoice-durability-")));
   process.env.AGENT_GRANT_TOKEN = "ngt_test";
   sends = [];
   Object.assign(api, {
     ...authorityFixture(),
     getPolicy: async () => policyView(payoutPolicy([invoice.payee])),
-    getHistory: async () => ({ data: [], next_cursor: null }),
     forGrant: () => ({ transfer: async (_id: string, _request: unknown, { idempotencyKey }: { idempotencyKey: string }) => {
       sends.push(idempotencyKey); return { correlation_id: "op_invoice" };
     } }),
     getStatus: async (correlation_id: string) => ({ correlation_id, status: "PENDING_APPROVAL", details: { approval_id: "approval" } }),
   });
 });
-after(() => process.chdir(cwd));
 const stored = () => getInvoice(invoiceId(invoice))!;
 
 test("concurrent copies produce one occurrence, operation, immutable request and reservation", async () => {
@@ -92,7 +88,7 @@ test("unknown has no second send, keeps its reservation, and blocks ordinary das
   assert.equal((await file(invoice, invoice.payee)).status, "unknown");
   const key = stored().operation.idempotencyKey;
   assert.equal((await file(invoice, invoice.payee)).status, "unknown");
-  assert.equal((await recover({ resend: true }))[0]?.outcome, "unknown");
+  assert.equal((await recover())[0]?.outcome, "unknown");
   assert.deepEqual(sends, [key]);
   assert.equal(stored().reservation, invoice.amount);
   await assert.rejects(pay({ asset: ASSETS.USDC, amount: "1", recipient: invoice.payee, confidential: true }), UnresolvedOperations);
@@ -143,7 +139,8 @@ test("a payout policy changed to bypass owner approval stops before submission",
 test("polling settles the original operation and releases the reservation atomically", async () => {
   await file(invoice, invoice.payee);
   Object.assign(api, { getStatus: async () => { throw new Error("status unavailable"); } });
-  assert.equal((await mine(invoice.payee))[0]?.status, "unknown");
+  // A failed read is no evidence: the payment shows as last recorded.
+  assert.equal((await mine(invoice.payee))[0]?.status, "waiting");
   assert.equal(stored().reservation, invoice.amount);
   Object.assign(api, { getStatus: async (correlation_id: string) => ({ correlation_id, status: "SUCCESS" }) });
   await recover();

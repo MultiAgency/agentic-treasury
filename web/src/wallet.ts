@@ -2,7 +2,7 @@ import type { Intent } from "@near-intents-agent-api/sdk";
 import { type DataStorage, NearConnector } from "@fastnear/near-connect";
 import { useSyncExternalStore } from "react";
 
-export type WalletState = { status: "idle" | "connecting" | "connected"; accountId?: string; publicKey?: string };
+type WalletState = { status: "idle" | "connecting" | "connected"; accountId?: string; publicKey?: string };
 export type Transaction = {
   receiverId: string;
   actions: (

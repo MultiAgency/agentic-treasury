@@ -1,29 +1,25 @@
 import { completeExecutionEvidence, policyView } from "./fixtures/authority.js";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, mock, test } from "node:test";
 import { api } from "../src/api.js";
 import { executePlan, feasibility, observe, savePlan, type PlannedAction } from "../src/plans.js";
 import { ASSETS, treasuryPolicy } from "../src/policy.js";
 import { loadStrategy, saveStrategy } from "../src/strategy.js";
 import { readOps } from "../src/ops.js";
+import { freshDirectory, offline } from "./fixtures/harness.js";
 
-const home = process.cwd();
 const a = ASSETS.USDC, b = ASSETS.wNEAR;
 let book: Record<string, { public: bigint; confidential: bigint }>;
 let revision: number;
 let sends: string[];
 let afterSend: () => void;
 let time: number;
+freshDirectory("plan-recovery");
 beforeEach(() => {
-  process.chdir(mkdtempSync(join(tmpdir(), "plan-recovery-")));
-  process.env.AGENT_ID = "a".repeat(64);
   process.env.AGENT_GRANT_TOKEN = "ngt_test";
   book = Object.fromEntries(Object.values(ASSETS).map((asset) => [asset, { public: 10n, confidential: 10n }]));
   revision = 1; sends = []; afterSend = () => {}; time = Date.now();
-  mock.method(globalThis, "fetch", async () => { throw new Error("offline only"); });
+  offline();
   mock.method(api, "getPolicy", async () => ({ policy: treasuryPolicy, revision }));
   mock.method(api, "getTokens", async () => Object.entries(ASSETS).map(([symbol, asset_id]) => ({ symbol, asset_id, decimals: 0, price: 1 })));
   mock.method(api, "getBalances", async (_id: string, { source }: { source: "public" | "confidential" }) =>
@@ -48,7 +44,7 @@ beforeEach(() => {
   }));
   completeExecutionEvidence();
 });
-afterEach(() => { mock.restoreAll(); process.chdir(home); });
+afterEach(() => mock.restoreAll());
 const swap = (amount = "15"): PlannedAction => ({ type: "swap", from: a, to: b, amount, amountOut: amount, minAmountOut: amount, costBps: 0 });
 const run = async (actions: PlannedAction[]) => {
   const plan = savePlan((await observe()).snapshot, "rebalance", "offline test", actions, new Date(time));

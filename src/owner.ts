@@ -3,7 +3,7 @@ import { createInterface } from "node:readline/promises";
 import type { GenerateIntentResponse, OwnerWallet, SignedData } from "@near-intents-agent-api/sdk";
 import { Near, parseKey, type PrivateKey } from "near-kit";
 import { api, waitForStatus } from "./api.js";
-import { mainnet } from "./chain.js";
+import { delegateTransaction, mainnet } from "./chain.js";
 
 const accountId = process.env.AGENT_OWNER_ACCOUNT_ID;
 const privateKey = process.env.AGENT_OWNER_PRIVATE_KEY as PrivateKey | undefined;
@@ -29,20 +29,11 @@ async function sign({ intent, signer }: GenerateIntentResponse): Promise<SignedD
   }
   if (intent.standard !== "nep366") throw new Error(`unsupported standard ${intent.standard}`);
   // Gasless delegate action: the API's sponsor relays it, and near-kit reads the nonce from chain.
-  const { receiverId, actions } = intent.payload;
-  const builder = actions.reduce(
-    (tx, { params }) =>
-      tx.functionCall(receiverId, params.methodName, params.args, {
-        gas: params.gas as never,
-        attachedDeposit: BigInt(params.deposit),
-      }),
-    near.transaction(signer.account_id),
-  );
-  const { payload } = await builder.delegate({ blockHeightOffset: 120 });
+  const { payload } = await delegateTransaction(near, signer.account_id, intent.payload).delegate({ blockHeightOffset: 120 });
   return { ...intent, signed_delegate: payload };
 }
 
-/** generate → show preview → owner confirms → sign → submit → settle. */
+/** generate → show preview → owner confirms → sign → submit → settle; throws unless it succeeds. */
 export async function runOwnerIntent(request: Parameters<typeof api.generateIntent>[0]) {
   if (request.type === "approval_vote") throw new Error("Use the bound payment approval flow; generic owner signing cannot release payments");
   const generated = await api.generateIntent(request, { idempotencyKey: crypto.randomUUID() });
@@ -57,5 +48,7 @@ export async function runOwnerIntent(request: Parameters<typeof api.generateInte
     correlation_id: generated.correlation_id,
     signed_data: await sign(generated),
   } as Parameters<typeof api.submitIntent>[0]);
-  return waitForStatus(generated.correlation_id);
+  const status = await waitForStatus(generated.correlation_id);
+  if (status.status !== "SUCCESS") throw new Error(status.failure_code ?? `${request.type} ${status.status}`);
+  return status;
 }

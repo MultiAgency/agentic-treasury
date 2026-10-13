@@ -6,8 +6,8 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { invoiceHandler } from "../src/invoice-http.js";
 import { ChallengeLimit, clientAddress, issueChallenge, MAX_CHALLENGES } from "../src/signin.js";
+import { TSX } from "./fixtures/harness.js";
 
-const TSX = fileURLToPath(new URL("../node_modules/.bin/tsx", import.meta.url));
 const SERVER = fileURLToPath(new URL("../src/server.ts", import.meta.url));
 const GATEWAY = fileURLToPath(new URL("../src/gateway/server.ts", import.meta.url));
 

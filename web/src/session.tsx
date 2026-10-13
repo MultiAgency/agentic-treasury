@@ -1,6 +1,6 @@
 import { SignIn as SignInIcon, SignOut } from "@phosphor-icons/react";
 import { useState } from "react";
-import { BASE } from "./lib";
+import { BASE, errorMessage, gw } from "./lib";
 import { Button, Card, Spinner } from "./ui";
 import { useViewer, type Viewer } from "./viewer";
 import { signChallenge, signOutMember } from "./wallet";
@@ -27,16 +27,15 @@ export function SignIn({ dao }: { dao: string }) {
     setBusy(true);
     setError(undefined);
     try {
-      const challenge = (await (await fetch("/gw/challenge")).json()) as { message: string; recipient: string; nonce: string };
-      const response = await fetch("/gw/session", {
+      const challenge = await gw<{ message: string; recipient: string; nonce: string }>("/gw/challenge");
+      await gw("/gw/session", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(await signChallenge(challenge)),
       });
-      if (!response.ok) throw new Error(((await response.json()) as { error: string }).error);
       location.assign(BASE || "/");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
       setBusy(false);
     }
   };

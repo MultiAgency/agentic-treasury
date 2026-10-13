@@ -9,7 +9,7 @@
 import { AgentApiError } from "@near-intents-agent-api/sdk";
 import { readFileSync } from "node:fs";
 import { api } from "../../src/api.js";
-import { reconcileOwnerIntents, submit } from "../../src/wallet-intents.js";
+import { reconcileOwnerIntents, submit } from "../../src/owner-intents.js";
 
 const refusal = new AgentApiError(400, {
   errors: [{ status: "400", code: "invalid_signature", title: "Invalid signature", meta: { retryable: false } }],

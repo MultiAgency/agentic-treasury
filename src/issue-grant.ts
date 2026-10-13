@@ -1,15 +1,14 @@
 import { ENV_FILE } from "./env.js";
-import { type GrantPurpose, grantRequest, promoteGrantToken, stageGrantToken } from "./intents.js";
+import { GRANT_LABELS, type GrantLabel, grantRequest, promoteGrantToken, stageGrantToken } from "./grants.js";
 import { runOwnerIntent } from "./owner.js";
 
-// `pnpm issue-grant [treasury|payout|invoices] [suffix]`; the purpose defaults to what the policy allows.
-const [purpose, suffix] = process.argv.slice(2) as [GrantPurpose | undefined, string | undefined];
-if (purpose && !["treasury", "payout", "invoices"].includes(purpose)) throw new Error(`Unknown grant purpose "${purpose}"`);
-const { token, request } = await grantRequest({ purpose, suffix });
+// `pnpm issue-grant [treasury|payout|invoices] [suffix]`; the label defaults to what the policy allows.
+const [label, suffix] = process.argv.slice(2) as [GrantLabel | undefined, string | undefined];
+if (label && !GRANT_LABELS.includes(label)) throw new Error(`Unknown grant label "${label}"`);
+const { token, request } = await grantRequest({ label, suffix });
 
 stageGrantToken(token);
 
-const status = await runOwnerIntent(request);
-if (status.status !== "SUCCESS") throw new Error(status.failure_code ?? `grant_issue ${status.status}`);
+await runOwnerIntent(request);
 promoteGrantToken(token);
 console.log(`Grant issued; token saved to ${ENV_FILE} as AGENT_GRANT_TOKEN`);

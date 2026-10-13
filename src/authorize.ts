@@ -3,8 +3,9 @@ import type { Action } from "./agent.js";
 import type { api } from "./api.js";
 import { mandateDigest } from "./mandate.js";
 import type { Plan, PlannedAction } from "./plans.js";
-import { ASSETS, assetGuard } from "./policy.js";
-import { grantApproves, type Strategy, strategyDigest } from "./strategy.js";
+import { ASSETS, outputAssetRefusal } from "./policy.js";
+import { grantApproves, type Strategy, strategyDigest } from "./strategy-digest.js";
+import { costBps, usdValue } from "./value.js";
 
 /**
  * The one authorization rule every money action passes before it is sent. The provider enforces the
@@ -16,7 +17,7 @@ import { grantApproves, type Strategy, strategyDigest } from "./strategy.js";
  */
 
 export type Purpose = "treasury" | "autopilot" | "payout" | "invoice" | "approval";
-export type Refusal = { code: string; message: string };
+type Refusal = { code: string; message: string };
 
 type PolicyView = Awaited<ReturnType<typeof api.getPolicy>>;
 type Grant = Awaited<ReturnType<typeof api.listGrants>>[number];
@@ -34,8 +35,11 @@ type Common = {
 /** A plan's send, with the leg being sent; `null` for a sweep, which has no plan. */
 type PlanFacts = { plan: Plan; leg: PlannedAction } | null;
 type TreasuryFacts = Common & { plan: PlanFacts; strategy: Strategy; tokens: Token[] };
-/** The confidential balance of the asset a payout spends, in its smallest unit. */
-type Funds = { balance: string };
+/**
+ * What a payout may still spend, in the asset's smallest unit: the confidential balance less payouts of
+ * that asset already held for approval (the provider holds a payment without reserving funds for it).
+ */
+type Funds = { available: string };
 
 export type Facts = {
   treasury: TreasuryFacts;
@@ -54,7 +58,7 @@ export function agreedPayees(policy: Policy) {
 }
 
 /** Which grant labels may send for each purpose. Approval votes need no grant. */
-function grantAllows(purpose: Purpose, label: string, strategy?: Strategy) {
+export function grantAllows(purpose: Purpose, label: string, strategy?: Strategy) {
   switch (purpose) {
     case "treasury": return label === "treasury" || label.startsWith("treasury:");
     case "autopilot": return label.startsWith("treasury:") && grantApproves(label, strategy!);
@@ -80,7 +84,7 @@ export function authorize<P extends Purpose>(purpose: P, action: Action, facts: 
   }
 
   // The provider checks only what a swap spends, so what it buys is checked here, for every purpose.
-  const buys = assetGuard(action, policy);
+  const buys = outputAssetRefusal(action, policy);
   if (buys) return refuse("asset_out_not_allowed", buys);
 
   if (purpose === "payout" || purpose === "invoice" || purpose === "approval") {
@@ -99,8 +103,8 @@ export function authorize<P extends Purpose>(purpose: P, action: Action, facts: 
       return refuse("owner_approval_required", "Invoices and approvals need a confidential policy holding every payment for the owner");
     // The provider holds a payment for the owner's vote without checking the balance, and fails it
     // only after the vote: an unfunded payout is refused before anyone is asked to approve it.
-    if ((purpose === "payout" || purpose === "invoice") && BigInt(action.request.amount) > BigInt((facts as Funds).balance))
-      return refuse("insufficient_balance", `The wallet holds ${(facts as Funds).balance} of ${action.request.asset}, less than ${action.request.amount}: fund it first`);
+    if ((purpose === "payout" || purpose === "invoice") && BigInt(action.request.amount) > BigInt((facts as Funds).available))
+      return refuse("insufficient_balance", `Only ${(facts as Funds).available} of ${action.request.asset} isn't already held for approval, less than ${action.request.amount}: fund the wallet first`);
     if (purpose === "payout") {
       const { recipient, asset: token, amount: units } = action.request;
       if ((facts as Facts["payout"]).heldPayouts.some((h) => h.recipient === recipient && h.asset === token && h.amount === units))
@@ -120,9 +124,9 @@ export function authorize<P extends Purpose>(purpose: P, action: Action, facts: 
       if (leg.type === "swap") {
         const input = tokens.find((t) => t.asset_id === leg.from);
         const output = tokens.find((t) => t.asset_id === leg.to);
-        const usdIn = input?.price ? Number(leg.amount) / 10 ** input.decimals * input.price : NaN;
-        const floorUsd = output?.price ? Number(leg.minAmountOut) / 10 ** output.decimals * output.price : NaN;
-        const cost = (1 - floorUsd / usdIn) * 10_000;
+        const usdIn = input?.price ? usdValue(leg.amount, input.decimals, input.price) : NaN;
+        const floorUsd = output?.price ? usdValue(leg.minAmountOut, output.decimals, output.price) : NaN;
+        const cost = costBps(usdIn, floorUsd);
         if (!Number.isFinite(cost) || cost > strategy.maxCostBps)
           return refuse("swap_cost_exceeded", "The swap's output floor exceeds the strategy's cost limit");
       }

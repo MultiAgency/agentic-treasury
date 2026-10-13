@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ASSETS } from "../src/policy.js";
-import { probeCases } from "../src/treasury.js";
+import { probeCases } from "../src/probes.js";
 
 const spent = (action: ReturnType<typeof probeCases>[number][1]) =>
   action.method === "swap" ? action.request.origin_asset : action.request.asset;

@@ -7,7 +7,6 @@
     "node": ">=24"
   },
   "scripts": {
-    "check": "tsx --env-file-if-exists=.env src/check.ts",
     "create-agent": "tsx --env-file-if-exists=.env src/create-agent.ts",
     "issue-grant": "tsx --env-file-if-exists=.env src/issue-grant.ts",
     "revoke-grant": "tsx --env-file-if-exists=.env src/revoke-grant.ts",

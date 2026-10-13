@@ -1,9 +1,6 @@
 import { authorityFixture, fixtureWallet, policyView } from "./fixtures/authority.js";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, mock, test } from "node:test";
 import type { Policy } from "@near-intents-agent-api/sdk";
 import { pay } from "../src/agent.js";
@@ -13,22 +10,21 @@ import { canonical } from "../src/mandate.js";
 import { readOps, record } from "../src/ops.js";
 import { checkPaymentApproval } from "../src/payment-approval.js";
 import { ASSETS, payoutPolicy } from "../src/policy.js";
+import { freshDirectory, offline } from "./fixtures/harness.js";
 
 /** Regressions for the single authorization rule (see CONTEXT.md, "Authorization"), through the real money path. */
 
-const home = process.cwd();
 const usdc = (amount: string, recipient = "payee.near") =>
   ({ asset: ASSETS.USDC, amount, recipient, confidential: true });
 let policy: Policy;
 let sends: string[];
 
+freshDirectory("authorization");
 beforeEach(() => {
-  process.chdir(mkdtempSync(join(tmpdir(), "authorization-")));
-  process.env.AGENT_ID = "a".repeat(64);
   process.env.AGENT_GRANT_TOKEN = "ngt_fixture";
   policy = payoutPolicy(["payee.near"]);
   sends = [];
-  mock.method(globalThis, "fetch", async () => { throw new Error("Network forbidden in offline tests"); });
+  offline();
   for (const [name, method] of Object.entries(authorityFixture())) mock.method(api, name as keyof typeof api, method as never);
   mock.method(api, "getPolicy", async () => policyView(policy));
   mock.method(api, "getStatus", async (correlation_id: string) => ({ correlation_id, status: "SUCCESS" }));
@@ -38,7 +34,7 @@ beforeEach(() => {
   };
   mock.method(api, "forGrant", () => ({ transfer, swap: transfer, shield: transfer, unshield: transfer }));
 });
-afterEach(() => { mock.restoreAll(); process.chdir(home); });
+afterEach(() => mock.restoreAll());
 
 /** An `except` policy forbids its listed payees: none of them is agreed. */
 const except = (forbidden: string[]): Policy => ({ ...policy, destinations: { ...policy.destinations, mode: "except",
@@ -59,6 +55,14 @@ test("a payout the wallet can't cover is refused before sending, so it never goe
   // Mainnet, 2026-10-12: the provider held op_v5cnpSsa… for approval from an empty wallet; it failed after the DAO voted.
   mock.method(api, "getBalances", async () => ({ balances: [] }));
   await refusedBeforeSending(usdc("1"), "insufficient_balance");
+});
+
+test("payouts already held for approval count against the balance, so two can't both go to a vote on funds for one", async () => {
+  mock.method(api, "getBalances", async () => ({ balances: [{ asset_id: ASSETS.USDC, balance_raw: "1500000" }] }));
+  record({ at: new Date().toISOString(), idempotencyKey: "payout:held", kind: "payout", method: "transfer", request: usdc("1000000") });
+  record({ idempotencyKey: "payout:held", correlation_id: "op_held", status: "PENDING_APPROVAL" });
+  await refusedBeforeSending(usdc("900000"), "insufficient_balance");
+  assert.equal((await pay(usdc("500000"))).outcome, "settled", "what's left after the held payout may still be paid");
 });
 
 test("a payout repeating a held payout's recipient, asset and amount is refused before sending", async () => {

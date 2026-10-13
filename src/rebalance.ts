@@ -1,10 +1,8 @@
-import { format } from "./agent.js";
-import type { Strategy } from "./strategy.js";
+import { format } from "./holdings.js";
+import type { Strategy } from "./strategy-digest.js";
 import { type Leg, rebalance, targets } from "./treasury.js";
 
 // A rebalance only previews; the saved plan executes with `pnpm steward --execute <plan id>`.
-if (process.argv.includes("--execute"))
-  console.log("Rebalance no longer swaps directly: it previews and saves a plan to execute as previewed.\n");
 
 let legs: Leg[] = [];
 let strategy: Strategy | undefined;

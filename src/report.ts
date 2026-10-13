@@ -8,7 +8,7 @@ const MONEY = new Set(["swap", "shield", "unshield", "transfer", "withdraw"]);
 const OPERATOR_READS = new Set(["autopilot/evidence"]);
 
 export type Intervention = { at: string; account: string; agent: string; path: string };
-export type ReportInput = {
+type ReportInput = {
   since: string;
   until: string;
   /** The scheduler's evidence: ticks with their ends, and the line numbers that didn't parse. */
@@ -27,9 +27,15 @@ export function outcomeOf(t: Tick): Outcome {
   const end = t.end;
   if (!end) return "incomplete";
   if (end.outcome.startsWith("Skipped") || end.outcome.startsWith("Not run")) return "skipped";
-  if (end.refusal || end.rejected.length > 0) return "refused";
-  if (end.outcome.startsWith("Failed") || [...end.steps, ...end.shields].some((s) => s.status !== "SUCCESS")) return "failed";
-  return end.steps.length + end.shields.length > 0 ? "executed" : "no-op";
+  // Worst first: a failed send isn't hidden by a refusal after it, and money sent counts as executed even if a
+  // later leg was refused. A refusal is a working control, even though its outcome reads "Failed: <code>".
+  const sent = [...end.steps, ...end.shields];
+  const refused = !!end.refusal || end.rejected.length > 0;
+  if (sent.some((s) => s.status !== "SUCCESS")) return "failed";
+  // A failure that isn't a refusal (an unknown outcome, an error) is a failure even after settled legs.
+  if (end.outcome.startsWith("Failed") && !refused) return "failed";
+  if (sent.length > 0) return "executed";
+  return refused ? "refused" : "no-op";
 }
 
 /**
@@ -59,13 +65,15 @@ export function unattendedReport({ since, until, evidence, interventions: allInt
   // settings the later tick recorded. Operator, skipped and incomplete ticks are named, not counted.
   const done = ticks.filter((t) => t.trigger === "schedule" && !["skipped", "incomplete"].includes(outcome.get(t)!));
   const gaps: string[] = [];
-  const points = [{ at: since, schedule: done[0]?.schedule }, ...done.map((t) => ({ at: t.at, schedule: t.schedule })), { at: until, schedule: done.at(-1)?.schedule }];
+  // The scheduler counts the interval from a tick's end (its inbox "run" entry), so a gap runs from one tick's end to the next one's start.
+  const points = [{ at: since, ended: since, schedule: done[0]?.schedule },
+    ...done.map((t) => ({ at: t.at, ended: t.end?.endedAt || t.at, schedule: t.schedule })), { at: until, ended: until, schedule: done.at(-1)?.schedule }];
   if (done.length === 0) gaps.push(`no completed scheduled tick between ${since} and ${until}`);
   else for (let i = 1; i < points.length; i++) {
     const [a, b] = [points[i - 1]!, points[i]!];
     const schedule = i === points.length - 1 ? a.schedule : b.schedule;
     if (!schedule?.on) continue;
-    if (Date.parse(b.at) - Date.parse(a.at) <= (schedule.everyMin + SLACK_MIN) * 60_000) continue;
+    if (Date.parse(b.at) - Date.parse(a.ended) <= (schedule.everyMin + SLACK_MIN) * 60_000) continue;
     const within = ticks.filter((t) => t.at > a.at && t.at < b.at && !done.includes(t)).map((t) => `${t.trigger} ${outcome.get(t)} tick at ${t.at}`);
     gaps.push(`${a.at} → ${b.at} (interval ${schedule.everyMin} min)${within.length ? `; in between: ${within.join(", ")}` : ""}`);
   }
@@ -160,7 +168,7 @@ export function unattendedReport({ since, until, evidence, interventions: allInt
     ...list("Operator interventions (dashboard calls beyond reads):", interventions.map((i) => `${i.at} ${i.account} ${i.agent} ${i.path}`)),
     ...list("Operator-triggered ticks:", operatorTicks.map((t) => t.at)),
     ...list("Operator reads (recorded by the gateway, not interventions):", reads.map((i) => `${i.at} ${i.account} ${i.agent} ${i.path}`)),
-    ...list("Refusals (the control was invoked; whether it refused correctly is not judged here):", ticks.filter((t) => outcome.get(t) === "refused").map((t) => `${t.at}: ${t.end!.refusal ?? t.end!.rejected.join("; ")}`)),
+    ...list("Refusals (the control was invoked; whether it refused correctly is not judged here):", ticks.filter((t) => t.end && (t.end.refusal || t.end.rejected.length > 0)).map((t) => `${t.at}: ${t.end!.refusal ?? t.end!.rejected.join("; ")}`)),
     ...list("Failed executions or errors:", ticks.filter((t) => outcome.get(t) === "failed").map((t) => `${t.at}: ${t.end!.outcome}`)),
     ...list("Ticks that couldn't read their book or mandate:", unread.map((t) => t.at)),
     ...list("Unreadable evidence lines:", evidence.corrupt.map((n) => `line ${n}`)),

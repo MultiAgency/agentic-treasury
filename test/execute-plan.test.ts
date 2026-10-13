@@ -1,18 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { after, before, test } from "node:test";
+import { test } from "node:test";
 import { ASSETS } from "../src/policy.js";
 import { claimPlan, executePlan, type PlanEvent, type PlannedAction, savePlan, snapshot } from "../src/plans.js";
 import { readOps } from "../src/ops.js";
+import { freshDirectory } from "./fixtures/harness.js";
 
 // Live against the Agent API: reads the real account and quotes, but every case must be refused
 // before any money action, so the ops log in this temporary directory must stay empty.
 const live = { skip: !process.env.AGENT_GRANT_TOKEN && "no agent configured", timeout: 120_000 };
-const home = process.cwd();
-before(() => process.chdir(mkdtempSync(join(tmpdir(), "execute-plan-"))));
-after(() => process.chdir(home));
+freshDirectory("execute-plan", { per: "suite" });
 
 const swap = (minAmountOut: string): PlannedAction => ({
   type: "swap",

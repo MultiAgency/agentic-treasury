@@ -3,7 +3,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { test } from "node:test";
 import type { Intent } from "@near-intents-agent-api/sdk";
 import { DelegateAction, encodeSignedDelegateAction, generateKey, parsePublicKey, serializeDelegateAction } from "near-kit";
-import { checkRequest, type DaoProposal, type DaoRequest, decodeProposals, readDelegate } from "../src/gateway/proposals.js";
+import { checkRequest, type DaoRequest, decodeProposals, readDelegate } from "../src/gateway/proposals.js";
+import type { DaoProposal } from "../src/gateway/sign-requests.js";
 import { proposalAndVote, proposalTransaction } from "../src/dao-owner.js";
 import { nep413Hash } from "../src/nep413.js";
 

@@ -1,14 +1,15 @@
-import { agentId, LocalRefusal } from "./agent.js";
+import { LocalRefusal } from "./agent.js";
 import { api } from "./api.js";
-import { saveEnv } from "./env.js";
+import { agentId, saveEnv } from "./env.js";
 import { post, readInbox } from "./inbox.js";
-import { liveGrant } from "./intents.js";
+import { liveGrant } from "./grants.js";
 import { MoneyLockBusy } from "./lock.js";
-import { provenRefusal } from "./ops.js";
+import { blocksDispatch, provenRefusal } from "./ops.js";
 import { executePlan } from "./plans.js";
 import { context, newTickId, observe, recordEnd, recordStart, type TickEnd, type TickStart } from "./evidence.js";
 import { ageMinutes, recover } from "./recover.js";
-import { grantApproves, loadStrategy, saveStrategy, type Strategy, strategyLabelSuffix } from "./strategy.js";
+import { loadStrategy, saveStrategy } from "./strategy.js";
+import { grantApproves, type Strategy, strategyLabelSuffix } from "./strategy-digest.js";
 import { rebalance, sweep } from "./treasury.js";
 
 /**
@@ -25,7 +26,7 @@ import { rebalance, sweep } from "./treasury.js";
  */
 
 /** `everyMin` and `maxUsd` (whole dollars) are part of the strategy, inside its digest; on/off is not: turning off is always safe. */
-export type Settings = { on: boolean } & Strategy["autopilot"];
+type Settings = { on: boolean } & Strategy["autopilot"];
 
 export const MIN_EVERY_MIN = 5;
 
@@ -104,10 +105,10 @@ async function run(found: Found): Promise<string> {
     if (!policy) return done("Skipped: the agent's policy is not applied yet.");
     if (policy.frozen) return done("Skipped: the agent is frozen.");
     // Reads the status of each action without a proven outcome; resends nothing, which is a person's call.
-    // A payout held for the owner's approval can't be lost and never blocks, as in the money lock.
-    const stuck = (await recover()).filter((r) => r.outcome !== "settled" && r.outcome !== "refused" && r.status !== "PENDING_APPROVAL");
-    if (stuck.length > 0) {
-      const list = stuck.map((r) => `${r.op.idempotencyKey} (${r.outcome}, ${ageMinutes(r.op)} min old)`).join(", ");
+    // What still blocks is exactly what blocks the money lock (`blocksDispatch`).
+    const unresolved = (await recover()).filter((r) => blocksDispatch({ ...r.op, status: r.status ?? r.op.status }));
+    if (unresolved.length > 0) {
+      const list = unresolved.map((r) => `${r.op.idempotencyKey} (${r.outcome}, ${ageMinutes(r.op)} min old)`).join(", ");
       post("warn", `Money actions without a proven outcome: ${list}. Check them under Activity; the autopilot waits until then.`);
       return done("Skipped: unresolved money actions.");
     }

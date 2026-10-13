@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { agentId } from "./agent.js";
+import { agentId } from "./env.js";
+import { appendSynced } from "./synced.js";
 
 /**
  * What the agent tells its owner while no one is watching, `.inbox/<agent id>.jsonl`, append-only
@@ -9,8 +10,8 @@ import { agentId } from "./agent.js";
  * owner and stay open until dismissed.
  */
 
-export type Level = "run" | "warn" | "action";
-export type Entry = { id: string; at: string; level: Level; text: string; dismissed?: boolean };
+type Level = "run" | "warn" | "action";
+type Entry = { id: string; at: string; level: Level; text: string; dismissed?: boolean };
 
 type Line = Omit<Entry, "dismissed"> | { dismiss: string };
 
@@ -21,12 +22,12 @@ const file = () => {
 
 export function post(level: Level, text: string): Entry {
   const entry = { id: randomUUID(), at: new Date().toISOString(), level, text };
-  appendFileSync(file(), `${JSON.stringify(entry satisfies Line)}\n`);
+  appendSynced(file(), entry satisfies Line);
   return entry;
 }
 
 export function dismiss(id: string) {
-  appendFileSync(file(), `${JSON.stringify({ dismiss: id } satisfies Line)}\n`);
+  appendSynced(file(), { dismiss: id } satisfies Line);
 }
 
 /** Every entry, newest first, with whether the owner dismissed it. */
@@ -36,7 +37,9 @@ export function readInbox(): Entry[] {
   const entries = new Map<string, Entry>();
   for (const text of readFileSync(path, "utf8").split("\n")) {
     if (!text.trim()) continue;
-    const line = JSON.parse(text) as Line;
+    // A crash mid-append leaves a partial line. Skipped, not thrown: the scheduler reads this every minute.
+    let line: Line;
+    try { line = JSON.parse(text) as Line; } catch { continue; }
     if ("dismiss" in line) {
       const entry = entries.get(line.dismiss);
       if (entry) entry.dismissed = true;

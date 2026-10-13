@@ -1,4 +1,4 @@
-import { refusals } from "./treasury.js";
+import { refusals } from "./probes.js";
 
 for await (const event of refusals({ live: process.argv.includes("--live") })) {
   if (event.outcome === "passed")

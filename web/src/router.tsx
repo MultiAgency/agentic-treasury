@@ -4,8 +4,10 @@ import { BASE } from "./lib";
 import { Overview } from "./overview";
 import { Policy } from "./policy";
 import { Shell } from "./shell";
-import { Automations, Steward } from "./strategies";
-import { PayeesSection, TreasurySection } from "./treasury";
+import { Automations } from "./automations";
+import { Steward } from "./steward";
+import { PayeesSection } from "./payees";
+import { TreasurySection } from "./treasury";
 
 const root = createRootRoute({ component: Shell });
 const page = <P extends string>(path: P, component: () => React.ReactNode) =>

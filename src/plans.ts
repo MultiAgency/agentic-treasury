@@ -2,12 +2,16 @@ import { createHash, randomUUID } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Policy } from "@near-intents-agent-api/sdk";
-import { agentId, dispatch, type Holding, holdings, LocalRefusal, type Sending } from "./agent.js";
+import { agentId } from "./env.js";
+import { dispatch, LocalRefusal, type Sending } from "./agent.js";
+import { type Holding, holdings } from "./holdings.js";
 import { api } from "./api.js";
 import { acquireMoneyLock } from "./lock.js";
 import { mandateDigest } from "./mandate.js";
 import { mayBuy } from "./policy.js";
-import { loadStrategy, strategyDigest } from "./strategy.js";
+import { loadStrategy } from "./strategy.js";
+import { strategyDigest } from "./strategy-digest.js";
+import { usdValue } from "./value.js";
 import { executeLeg, quoteLeg } from "./treasury.js";
 
 /**
@@ -36,7 +40,7 @@ export type Snapshot = {
 };
 
 /** What proposed the plan; its actions are logged under this kind. */
-export type PlanSource = "steward" | "rebalance";
+type PlanSource = "steward" | "rebalance";
 
 export type Plan = Snapshot & {
   id: string;
@@ -47,7 +51,7 @@ export type Plan = Snapshot & {
   actions: PlannedAction[];
 };
 
-export const PLAN_TTL_MS = 5 * 60_000;
+const PLAN_TTL_MS = 5 * 60_000;
 const DIR = ".plans";
 
 const digest = (plan: Plan) => createHash("sha256").update(JSON.stringify(plan)).digest("hex");
@@ -197,7 +201,7 @@ const legFor = (book: Holding[], action: Extract<PlannedAction, { type: "swap" }
   const from = book.find((h) => h.asset === action.from)!;
   const to = book.find((h) => h.asset === action.to)!;
   const amount = BigInt(action.amount);
-  return { from, to, amount, usd: (Number(amount) / 10 ** from.decimals) * from.price };
+  return { from, to, amount, usd: usdValue(amount, from.decimals, from.price) };
 };
 
 /** Executes a saved plan exactly as previewed, under the money lock, or says why it can't. */

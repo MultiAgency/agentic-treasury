@@ -3,9 +3,10 @@ import { RPCHandler } from "@orpc/server/node";
 import { startAutopilot } from "./autopilot.js";
 import { startReconciliation } from "./recover.js";
 import { router } from "./router.js";
-import { executes } from "./agent.js";
+import { executes } from "./env.js";
 import { acquireExecutorLease } from "./executor-lease.js";
-import { serveStatic } from "./http.js";
+import { crossSite, serveStatic } from "./http.js";
+import { resumeOwnerIntents } from "./owner-intents.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 
@@ -28,15 +29,14 @@ const dashboard = createServer(async (req, res) => {
   }
 }).listen(PORT, "127.0.0.1", () => {
   console.log(`Treasury dashboard on http://localhost:${PORT}`);
+  resumeOwnerIntents();
   // Ticks only once the owner turns the autopilot on and an agent exists, and only on its executor.
   if (process.env.AGENT_ID && executes()) { startReconciliation(); startAutopilot(); }
 });
 
 async function serveDashboard(req: IncomingMessage, res: ServerResponse) {
-  const host = req.headers.host ?? "";
-  const origin = req.headers.origin;
-  // A malformed Origin (`null`, garbage) parses to null and is refused like a foreign one.
-  if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host) || (origin && URL.parse(origin)?.host !== host)) {
+  // Loopback only, and only from this page: a malformed Origin (`null`, garbage) is refused like a foreign one.
+  if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(req.headers.host ?? "") || crossSite(req)) {
     res.writeHead(403).end();
     return;
   }

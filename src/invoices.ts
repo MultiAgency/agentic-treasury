@@ -1,5 +1,7 @@
-import { dispatch, held, agentId } from "./agent.js";
-import { api, checkedStatus } from "./api.js";
+import { agentId } from "./env.js";
+import { dispatch } from "./agent.js";
+import { held } from "./payouts.js";
+import { api, readStatus, StatusMismatch } from "./api.js";
 import { agreedPayees } from "./authorize.js";
 import { acquireMoneyLock, MoneyLockBusy, UnresolvedOperations } from "./lock.js";
 import { ASSETS } from "./policy.js";
@@ -7,11 +9,10 @@ import { isResolved, record } from "./ops.js";
 import { getInvoice, invoiceId, legacyInvoices, listInvoices, markInvoiceUnknown, noteRevision, prepareInvoice,
   type InvoiceInput, type StoredInvoice } from "./invoice-store.js";
 
-export { invoiceId } from "./invoice-store.js";
 export type Invoice = InvoiceInput;
 export type Status = "needs_agreement" | "refused" | "busy" | "prepared" | "waiting" | "paying" | "paid" | "failed" | "unknown" | "needs_review";
 
-export const MAX_WAITING = 10;
+const MAX_WAITING = 10;
 const ACCOUNT = /^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
 const USDC = 6;
 
@@ -42,7 +43,7 @@ export async function agreed() {
   return policy ? agreedPayees(policy) : new Set<string>();
 }
 
-export const fromApi = (status: string): Status => {
+const fromApi = (status: string): Status => {
   switch (status) {
     case "PREPARED": return "prepared";
     case "PENDING_APPROVAL": return "waiting";
@@ -109,14 +110,22 @@ export const file = (invoice: Invoice, authenticatedPayee: string): Promise<Fili
   } finally { await lock?.release(); }
 });
 
-/** Status reads cannot send; terminal outcomes also release the reservation in one transaction. */
+/**
+ * Status reads cannot send; terminal outcomes also release the reservation in one transaction. A read
+ * that fails is no evidence about the payment, so its recorded state stays as it was; an answer about
+ * another operation is evidence something is wrong, so the payment becomes unknown.
+ */
 async function refreshed(invoice: StoredInvoice): Promise<StoredInvoice> {
   const op = invoice.operation;
   if (!op.correlationId || isResolved(op)) return invoice;
   try {
-    const current = checkedStatus(op.correlationId, await api.getStatus(op.correlationId, { signal: AbortSignal.timeout(30_000) }));
+    const current = await readStatus(op.correlationId);
     record({ idempotencyKey: op.idempotencyKey, correlation_id: op.correlationId, status: current.status });
-  } catch { markInvoiceUnknown(op.idempotencyKey); }
+  } catch (error) {
+    if (!(error instanceof StatusMismatch)) return getInvoice(invoice.id)!; // unread: shown as last recorded
+    console.error(`invoice ${invoice.id}: ${error.message}`);
+    markInvoiceUnknown(op.idempotencyKey);
+  }
   return getInvoice(invoice.id)!;
 }
 

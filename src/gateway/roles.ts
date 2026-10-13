@@ -7,7 +7,7 @@ import { type DaoPolicy, daoPolicy } from "../chain.js";
  */
 
 export type Role = "operator" | "member";
-export type Access = { role: Role; canPropose: boolean; canVote: boolean };
+type Access = { role: Role; canPropose: boolean; canVote: boolean };
 
 /** Whether `permissions` grant `action` on FunctionCall proposals, wildcards included. */
 const grants = (permissions: string[], action: string) =>

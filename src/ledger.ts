@@ -1,7 +1,7 @@
 import type { StatusResponse } from "@near-intents-agent-api/sdk";
-import { agentId } from "./agent.js";
+import { agentId } from "./env.js";
 import { api } from "./api.js";
-import { fastnearHeaders, transactionsApi } from "./chain.js";
+import { fastnearPost, transactionsApi } from "./chain.js";
 import { readOps } from "./ops.js";
 
 /**
@@ -151,13 +151,10 @@ async function publicTransfers(account: string) {
   const all: Transfer[] = [];
   let resume_token: string | undefined;
   do {
-    const response = await fetch("https://transfers.main.fastnear.com/v0/transfers", {
-      method: "POST",
-      headers: { "content-type": "application/json", ...fastnearHeaders },
-      body: JSON.stringify({ account_id: account, limit: 100, ...(resume_token && { resume_token }) }),
-    });
-    if (!response.ok) throw new Error(`FastNear transfers: ${response.status}`);
-    const page = (await response.json()) as { transfers: Transfer[]; resume_token?: string | null };
+    const page = await fastnearPost<{ transfers: Transfer[]; resume_token?: string | null }>(
+      "https://transfers.main.fastnear.com/v0/transfers",
+      { account_id: account, limit: 100, ...(resume_token && { resume_token }) },
+    );
     all.push(...page.transfers);
     resume_token = page.resume_token ?? undefined;
   } while (resume_token);

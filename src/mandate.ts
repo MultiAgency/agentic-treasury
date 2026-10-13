@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import type { Policy } from "@near-intents-agent-api/sdk";
 
 /**
- * The owner's mandate as one reproducible digest. The API's `agent_policy_hash` can't serve: it isn't
- * the sha256 of the policy JSON, and the policy it stands for is stored encrypted, so no one else can
- * recompute it from the policy.
+ * The owner's mandate as one reproducible digest: an audit identifier, not a commitment the owner's
+ * signature is shown to cover. The API's `agent_policy_hash` can't serve: it isn't the sha256 of the
+ * policy JSON, the public `outlayer.near` `store_wallet_policy` takes no such argument, and the policy
+ * is stored encrypted to the custody keystore, so no one outside it can check what is enforced.
  *
  * Canonical form: object keys sorted, no whitespace, and every array whose order carries no meaning
  * sorted by its entries' canonical form. A policy holds only strings, booleans, integers and null, so
