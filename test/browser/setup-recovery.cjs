@@ -1,10 +1,11 @@
+const { rpcValue } = require('./fixtures/rpc.cjs');
 /** Offline setup recovery regressions; every request is intercepted or aborted.
  * PLAYWRIGHT_MODULE=/path/to/playwright-core BROWSER_EXECUTABLE=/path/to/chrome
  * node test/browser/setup-recovery.cjs /path/to/build
  */
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { chromium } = require('./fixtures/browser.cjs');
 const root = path.resolve(process.argv[2] || 'web/dist');
 (async () => {
   const browser = await chromium.launch({headless:true, executablePath:process.env.BROWSER_EXECUTABLE});
@@ -33,7 +34,7 @@ const root = path.resolve(process.argv[2] || 'web/dist');
           if(method==='setup' && setupFails) return error(503,'Setup fixture unavailable');
           if(denied && ['activity','unresolved','owner/actions'].includes(method)) return error(403,'Record access denied');
           const values={
-            setup:{executor:false,agentId:scenario==='no-agent'?null:'fixture',wallet:'agent.near',owner:{type:'near',account_id:'owner.near'},grant:{label:'payout',expiresAt:'2030-01-01T00:00:00Z'},dao:null},
+            get instance() { return { agentId: this.setup?.agentId ?? null, executor: this.setup?.executor !== false }; }, setup:{executor:false,agentId:scenario==='no-agent'?null:'fixture',wallet:'agent.near',owner:{type:'near',account_id:'owner.near'},grant:{label:'payout',expiresAt:'2030-01-01T00:00:00Z'},dao:null},
             overview:{agentId:'fixture',digest:'fixture',notInForce:null,agreed:[],unmanaged:[],target:{usdc:1},rebalance:{minLegUsd:1,maxCostBps:100},book:[],policy:{policy:{actions:['transfer'],frozen:false,destinations:{mode:'only',list:[]},assets:'any',budget:{},limits:{}},usage:{budget:{}},cooldowns:{}}},
             'treasury/get':null,
             activity:[{at,kind:'payout',request:{asset:'usdc',amount:'123',recipient:'private-payee.near'},correlationId:'private-operation',status:'PROCESSING'},{at,kind:'probe',request:{asset:'usdc',amount:'1'},correlationId:'private-probe',status:'FAILED'}],
@@ -41,7 +42,7 @@ const root = path.resolve(process.argv[2] || 'web/dist');
             'owner/actions':[{correlationId:'private-owner',type:'approval_vote',signer:'wallet',stage:'submitted',expiresAt:'2020-01-01T00:00:00Z',ownerSucceeded:false,status:null,payment:{correlationId:'private-operation',verdict:'approve'}}],
             'owner/pending':[],held:[],paymentHistory:{items:[],complete:true},'agreements/list':[],'inbox/list':[],invoices:[],ledger:[],reconcileBooks:[],
           };
-          return route.fulfill({json:{json:values[method]??null}});
+          return route.fulfill({json:{json:rpcValue(values, method)}});
         }
         if(p.startsWith('/static/')) return route.fulfill({path:root+p,contentType:p.endsWith('.js')?'application/javascript':p.endsWith('.css')?'text/css':'font/woff2'});
         documents++;return route.fulfill({path:path.join(root,'index.html'),contentType:'text/html'});

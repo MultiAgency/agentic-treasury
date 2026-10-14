@@ -1,7 +1,8 @@
+const { rpcValue } = require('./fixtures/rpc.cjs');
 /** Offline browser checks: serve the built files via interception; abort every external request.
  * PLAYWRIGHT_MODULE=/path/to/playwright-core BROWSER_EXECUTABLE=/path/to/chrome node test/browser/schedule.cjs [web/dist]
  */
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { chromium } = require('./fixtures/browser.cjs');
 const assert = require('node:assert/strict');
 const root = require('node:path').resolve(process.argv[2] || 'web/dist');
 const at = '2026-01-01T00:00:00.000Z';
@@ -75,7 +76,7 @@ const overview = { agentId: 'fixture', digest: 'fixture', grants: [], rebalance:
           return route.fulfill({ json: { json: method === 'owner/status' ? { stage: 'submitted', status: 'SUCCESS' } : { status: 'SUCCESS' } } });
         }
         if (method === 'strategy/get' && unavailable) return fail('Readiness unavailable');
-        const values = { setup: { ...setup, executor: !options.approveOnly, grant: options.noGrant ? null : setup.grant,
+        const values = { instance: { agentId: 'fixture', executor: !options.approveOnly }, setup: { ...setup, executor: !options.approveOnly, grant: options.noGrant ? null : setup.grant,
           dao: options.dao ? { id: 'fixture.dao', owner: { account_id: 'owner.near' } } : null },
           overview: options.payables ? { ...overview, policy: { ...overview.policy, policy: { ...overview.policy.policy, actions: ['transfer'] } } } : overview,
           'treasury/get': null, held: [], unresolved: [], 'inbox/list': [], 'agreements/list': [], activity: [], 'owner/pending': [], 'owner/actions': ownerActions,
@@ -83,14 +84,14 @@ const overview = { agentId: 'fixture', digest: 'fixture', grants: [], rebalance:
             readiness: { state: options.approveOnly ? 'approve-only' : authorized ? 'off' : 'authorization-required', canEnable: !options.approveOnly && authorized,
               reasons: options.approveOnly ? ['Check authorization on the executor.'] : authorized ? [] : ready.readiness.reasons } } };
         assert.ok(method in values, `Unexpected request: ${method}`);
-        return route.fulfill({ json: { json: values[method] } });
+        return route.fulfill({ json: { json: rpcValue(values, method) } });
       }
       if (p.startsWith('/static/')) return route.fulfill({ path: root + p, contentType: p.endsWith('.js') ? 'application/javascript' : p.endsWith('.css') ? 'text/css' : 'font/woff2' });
       return route.fulfill({ path: root + '/index.html', contentType: 'text/html' });
     });
     try {
       await page.goto('http://frontend.test/a/treasury/automations');
-      await page.getByRole('heading', { name: 'Automations', exact: true }).waitFor();
+      await page.getByRole('heading', { name: options.payables ? 'Shield public funds' : 'Strategy', exact: true }).waitFor();
       await test({ page, calls, writes, state: () => current, revoke: () => { authorized = false; }, change: () => { digest = 'sha256:' + 'c'.repeat(64); saved = { ...saved, minLegUsd: 4, autopilot: { everyMin: 120, maxUsd: 20 } }; current = { ...current, everyMin: 120, maxUsd: 20 }; }, unavailable: value => { unavailable = value; }, recover: () => { saveFails = false; } });
       assert.deepEqual(errors, []);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
@@ -250,6 +251,32 @@ const overview = { agentId: 'fixture', digest: 'fixture', grants: [], rebalance:
     await page.getByRole('button', { name: 'Turn off', exact: true }).click();
     await page.getByText('Schedule off', { exact: true }).waitFor(); assert.equal(state().on, false);
   });
+  for (const mode of ['portfolio', 'payables', 'recovery']) await check(`settings contention during stop stays visible and allows retry (${mode})`, { on: true, payables: mode === 'payables' }, async ({ page, state }) => {
+    if (mode === 'recovery') {
+      await page.route('**/rpc/setup', route => route.fulfill({ status: 503, json: { json: { defined: false, code: 'INTERNAL_SERVER_ERROR', message: 'Fixture setup unavailable' } } }));
+      await page.reload();
+    }
+    const stop = page.getByRole('button', { name: 'Turn off', exact: true });
+    await stop.waitFor();
+    const endpoint = '**/rpc/autopilot/stop';
+    const message = 'Settings are being updated by another process; retry this change.';
+    let attempts = 0;
+    await page.route(endpoint, route => {
+      attempts++;
+      return route.fulfill({ status: 400, json: { json: { defined: false, code: 'BAD_REQUEST', message } } });
+    });
+    await stop.click();
+    await page.getByRole('alert').filter({ hasText: message }).waitFor();
+    assert.equal(state().on, true, 'a rejected stop leaves the schedule on');
+    assert.equal(await page.getByText('Schedule off. Operations already submitted may still finish.', { exact: true }).count(), 0);
+    assert.equal(await stop.isEnabled(), true, 'the owner can retry');
+    assert.equal(attempts, 1, 'the UI does not silently retry the mutation');
+    await page.unroute(endpoint);
+    await stop.click();
+    await page.getByText('Schedule off. Operations already submitted may still finish.', { exact: true }).waitFor();
+    assert.equal(state().on, false);
+    assert.equal(await page.getByText(message, { exact: true }).count(), 0, 'successful retry clears the failure');
+  });
   for (const source of ['strategy', 'schedule']) await check(`failed ${source} refresh replaces cached readiness and recovers`, { on: true, clock: true }, async ({ page, unavailable, writes }) => {
     await page.getByText('Ready for scheduled runs', { exact: true }).waitFor();
     const route = '**/rpc/autopilot/get';
@@ -268,13 +295,13 @@ const overview = { agentId: 'fixture', digest: 'fixture', grants: [], rebalance:
     assert.deepEqual(writes, [], 'refresh and recovery do not change executor settings');
   });
   for (const options of [{ member: true }, { approveOnly: true }]) await check('read-only controls ' + JSON.stringify(options), options, async ({ page }) => {
-    await page.getByText('Treasury strategy', { exact: true }).waitFor();
+    await page.getByText('Portfolio strategy', { exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Edit strategy', exact: true }).count(), 0);
     const enable = page.getByRole('button', { name: 'Turn on', exact: true });
     assert.ok(await enable.count() === 0 || await enable.isDisabled());
   });
-  await check('Payables has no Treasury strategy workflow', { payables: true }, async ({ page, calls }) => {
-    await page.getByRole('button', { name: /Preview/i }).waitFor();
+  await check('Payables has no Portfolio strategy workflow', { payables: true }, async ({ page, calls }) => {
+    await page.getByRole('link', { name: 'Preview a sweep', exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Turn on', exact: true }).count(), 0);
     assert.equal(calls.includes('strategy/get'), false);
   });

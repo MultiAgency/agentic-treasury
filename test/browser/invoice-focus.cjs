@@ -1,7 +1,7 @@
 /** Full invoice page and browser module, with all network and wallet interactions mocked. */
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { chromium } = require('./fixtures/browser.cjs');
 // Import the real page renderer. No HTTP listener, executor, or source-text extraction.
 const { html, script } = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e',
   'import { invoicePage, invoiceBrowser } from "./src/invoice-page.ts"; console.log(JSON.stringify({html:invoicePage("Invoice fixture"),script:invoiceBrowser}));'], { encoding: 'utf8' }));

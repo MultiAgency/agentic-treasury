@@ -16,7 +16,7 @@ function paths(node: object, prefix = ""): string[] {
 }
 
 /** What members may call: reads, plus filing owner actions as proposals. */
-const READS = ["setup", "overview", "policyHistory", "treasury/get", "activity", "unresolved", "held", "autopilot/get", "autopilot/evidence",
+const READS = ["instance", "setup", "overview", "policyHistory", "treasury/get", "activity", "unresolved", "held", "autopilot/get", "autopilot/evidence",
   "autopilot/log", "strategy/get", "inbox/list", "ledger", "ledgerCsv", "reconcileBooks", "owner/status", "owner/pending", "owner/actions", "paymentHistory", "agreements/list", "paymentStatus"];
 /**
  * Member-callable but not read-only: `owner/prepare` creates a provider intent and holds it on the

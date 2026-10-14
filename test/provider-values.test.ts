@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { AgentApiError } from "@near-intents-agent-api/sdk";
 import { displayedUsd, priceState, totalUsd } from "../src/valuation.js";
 import { paymentEvidence, refusalDetails } from "../src/provider-display.js";
-import { errorMessage, providerDetailText } from "../web/src/provider-message.js";
+import { errorMessage, providerDetailText } from "../web/src/shared/provider-message.js";
 
 const now = Date.parse("2026-10-14T12:00:00Z");
 const fresh = { price: 2, priceUpdatedAt: "2026-10-14T11:59:00Z", priceExpiresAt: "2026-10-14T12:01:00Z", decimals: 6, public: "1000000", confidential: "2000000" };

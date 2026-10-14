@@ -8,7 +8,42 @@ Preserve the complete state when moving an executor: `.ops/`, `.invoices/` (incl
 settings file. Stop writers before copying state; never start the destination before stopping the
 source. The lease coordinates processes on one host only.
 
-## Combined UI, strategy and recovery candidate — 2026-10-14
+## Settings and record-read hardening
+
+Settings updates now lock the canonical settings-file target before reading and replacing it.
+Symlink aliases share that lock. A competing update returns a retry error without changing settings;
+retry the action after the current writer completes. This is single-host coordination, not distributed
+fencing. A CLI edit does not refresh another running process's environment. After a writer crash,
+the settings lock must age past its 60-second stale threshold; never delete a live writer's lock.
+
+Before upgrading, stop all writers, including CLI processes using the same settings file. Old writers
+do not participate in this lock. Preserve the full state listed above and the settings files. The saved
+formats are unchanged, so there is no record conversion. Offline child-process tests cover competing
+settings updates, retry, and symlink aliases; this is not a mainnet observation.
+
+Inbox and agreement readers reject damaged records, including a torn final append, rather than hide
+them. Unreadable inbox history defers scheduled ticks and logs an error without crashing the server.
+The peer owner-intent scan similarly refuses a new DAO delegate when the fields needed to check
+pending actions cannot be read. Preserve the damaged file, stop writers before repair, and restore
+only from verified records. Do not delete evidence merely to resume a schedule or prepare an action.
+Manual ticks and operation-journal authorization retain their existing behavior.
+
+Gateway configuration rejects duplicate agent ports before starting listeners or child processes.
+Distinct names must point to distinct loopback servers, including externally started servers.
+
+DAO delegate preparation also uses an owner-scoped lock in the shared `.owner-intents/` directory.
+Stop every instance and CLI writer sharing that directory before upgrading; older versions do not
+take this lock. Keep the entire state listed above unchanged. There is no record-format conversion.
+A competing preparation refuses for retry. A dead holder's lock becomes eligible for takeover after
+10 seconds; do not delete a live lock. Instances on different hosts or using separate state directories
+are not coordinated by this lock.
+
+An unresolved submitted delegate keeps other preparations blocked until the original instance's
+owner-intent recovery records an outcome. Expiry alone is insufficient. Owner success permits a
+later preparation even when the released payout is still settling. Preserve older settled records
+without outcome evidence and investigate them; do not fabricate a result or delete them to unblock.
+
+## Combined UI, strategy and recovery candidate
 
 This is the locally prepared candidate based on `5cd6cc9fbb584a3174b6d7586fbdda8633cf4d45`,
 not a deployment record. The base commit alone does not identify its uncommitted changes: retain
@@ -375,3 +410,31 @@ show the intermediate history. Keep the newer reader available for version 2 dow
 convert a version 2 file to version 1 by relabeling it.
 `test/run-progress.test.ts` verifies automatic initialization and existing-state preservation offline;
 the recording tests cover historical ticks without progress.
+
+## Scheduling cadence and local refactoring
+
+The scheduler currently counts its interval from the latest inbox `run` summary, written before the
+final after-observation and tick evidence end. Warnings and dismissals do not change that timestamp.
+An interrupted evidence start does not itself advance the schedule; an unresolved operation still
+blocks sends through the existing money lock. `test/autopilot.test.ts` checks these distinctions offline.
+Keep `.inbox/` alongside `.evidence/` during preservation and migration. No new scheduler checkpoint or
+state migration is introduced by the planning extraction; switching scheduling sources would require
+separate restart semantics and compatibility tests.
+
+The planning extraction keeps `.plans/` filenames, JSON, content digests and execution claims unchanged.
+It changes the source digest, so identify any deployed build with its own release record. The optional
+`DASHBOARD_AREA` setting changes presentation, not authorization. Configure an external agent server's
+area explicitly as well as its gateway entry; gateway-managed children receive it from `area`.
+
+## Task-flow and RPC extraction candidate
+
+The task-flow extraction adds a private, member-readable `instance` procedure and preserves existing
+RPC paths and action permissions. Ship the gateway allowlist, agent server and frontend from the same
+reviewed build so the provider-independent schedule-stop view can read instance mode. This work
+changes no state formats and requires no conversion. Preserve all existing state directories as usual.
+The lazy application entrypoints and recovery views are verified locally with intercepted browser
+requests; deployment, restarts and hosted verification remain separate owner actions.
+
+An inherited `EXECUTOR=off` remains a process-lifetime restriction even if the instance settings file
+contains `EXECUTOR=on` or settings are saved at runtime. Changing executor ownership requires the
+existing stopped-executor procedure; instance-file loading cannot lift that restriction.

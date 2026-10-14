@@ -5,7 +5,8 @@ import { ATTESTATION, MODEL, steward, verifiedInference } from "../src/llm.js";
 // Live: needs NEARAI_API_KEY. Attestation can't be faked offline, so this runs against NEAR AI Cloud,
 // whose gateway reported TCB OutOfDate with four Intel advisories on 2026-10-10 (pinned in ATTESTATION).
 const apiKey = process.env.NEARAI_API_KEY;
-const live = { skip: !apiKey && "NEARAI_API_KEY is not set", timeout: 180_000 };
+if (process.env.PROTO_TEST_MODE !== "live" || !apiKey) throw new Error("Run configured live checks with pnpm test:live");
+const live = { timeout: 180_000 };
 
 /** The refusal behind an error, whether thrown directly or wrapped as a connection error's cause. */
 const refusal = (error: unknown): string => {

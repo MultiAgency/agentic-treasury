@@ -53,3 +53,17 @@ test("saving through a symlinked settings file updates its target and keeps the 
   assert.ok(lstatSync(join(dir, ".env.linked")).isSymbolicLink());
   assert.equal(readFileSync(join(dir, "settings"), "utf8"), "SHARED=kept\nAGENT_ID=linked\n");
 });
+
+for (const [name, setting, expected] of [
+  ["absent", "", null], ["explicitly off", "AUTOPILOT=\n", ""], ["explicitly on", "AUTOPILOT=on\n", "on"],
+] as const) test(`a separate instance's ${name} schedule does not borrow the parent's setting`, () => {
+  const dir = mkdtempSync(join(tmpdir(), "instance-schedule-"));
+  writeFileSync(join(dir, ".env.second"), `AGENT_ID=second\n${setting}`);
+  const module = fileURLToPath(new URL("../src/env.ts", import.meta.url));
+  const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e",
+    `await import(${JSON.stringify(module)}); console.log(JSON.stringify(process.env.AUTOPILOT ?? null));`], {
+    cwd: process.cwd(), env: { ...process.env, ENV_FILE: join(dir, ".env.second"), AUTOPILOT: "on" }, encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout.trim()), expected);
+});

@@ -1,11 +1,13 @@
-import { completeExecutionEvidence, policyView } from "./fixtures/authority.js";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { authorityFixture, balanceView, policyView, timedPrices } from "./fixtures/authority.js";
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
 import { api } from "../src/api.js";
 import { executePlan, feasibility, observe, savePlan, type PlannedAction } from "../src/plans.js";
 import { ASSETS, treasuryPolicy } from "../src/policy.js";
 import { loadStrategy, saveStrategy } from "../src/strategy.js";
-import { readOps } from "../src/ops.js";
+import { opsLog, readOps } from "../src/ops.js";
 import { freshDirectory, offline } from "./fixtures/harness.js";
 
 const a = ASSETS.USDC, b = ASSETS.wNEAR;
@@ -20,10 +22,15 @@ beforeEach(() => {
   book = Object.fromEntries(Object.values(ASSETS).map((asset) => [asset, { public: 10n, confidential: 10n }]));
   revision = 1; sends = []; afterSend = () => {}; time = Date.now();
   offline();
-  mock.method(api, "getPolicy", async () => ({ policy: treasuryPolicy, revision }));
-  mock.method(api, "getTokens", async () => Object.entries(ASSETS).map(([symbol, asset_id]) => ({ symbol, asset_id, decimals: 0, price: 1 })));
+  const authority = authorityFixture("treasury");
+  mock.method(api, "getAgent", authority.getAgent);
+  mock.method(api, "getWallet", authority.getWallet);
+  mock.method(api, "getHistory", authority.getHistory);
+  mock.method(api, "listGrants", authority.listGrants);
+  mock.method(api, "getPolicy", async () => policyView(treasuryPolicy, revision));
+  mock.method(api, "getTokens", async () => timedPrices(Object.entries(ASSETS).map(([symbol, asset_id]) => ({ symbol, asset_id, decimals: 0, price: 1 }))));
   mock.method(api, "getBalances", async (_id: string, { source }: { source: "public" | "confidential" }) =>
-    ({ balances: Object.entries(book).map(([asset_id, balances]) => ({ asset_id, balance_raw: String(balances[source]) })) }));
+    balanceView(source, Object.entries(book).map(([asset_id, balances]) => ({ asset_id, balance_raw: String(balances[source]) }))));
   mock.method(api, "getStatus", async (correlation_id: string) => ({ correlation_id, status: "SUCCESS" }));
   mock.method(api, "forGrant", () => ({
     shield: async (_id: string, request: { asset: string; amount: string }) => {
@@ -42,9 +49,8 @@ beforeEach(() => {
       return { correlation_id: String(sends.length) };
     },
   }));
-  completeExecutionEvidence();
 });
-afterEach(() => mock.restoreAll());
+afterEach(() => { mock.restoreAll(); syncBuiltinESMExports(); });
 const swap = (amount = "15"): PlannedAction => ({ type: "swap", from: a, to: b, amount, amountOut: amount, minAmountOut: amount, costBps: 0 });
 const run = async (actions: PlannedAction[]) => {
   const plan = savePlan((await observe()).snapshot, "rebalance", "offline test", actions, new Date(time));
@@ -133,4 +139,49 @@ test("submission observers run after the journal records acceptance and cannot s
   assert.deepEqual(sends, ["swap"]);
   assert.ok(events.some(event => event.type === "action" && event.status === "SUCCESS"));
   assert.equal(readOps()[0]!.status, "SUCCESS");
+});
+
+test("a failed execution-marker directory sync sends nothing and leaves the plan claimed", async () => {
+  const plan = savePlan((await observe()).snapshot, "rebalance", "offline durability fault", [swap()], new Date(time));
+  opsLog();
+  const planDirectory = fs.statSync(".plans").ino;
+  const sync = fs.fsyncSync;
+  mock.method(fs, "fsyncSync", (fd: number) => {
+    if (fs.fstatSync(fd).ino === planDirectory) throw new Error("directory sync failed");
+    sync(fd);
+  });
+  syncBuiltinESMExports();
+  const execute = async () => {
+    const events = [];
+    for await (const event of executePlan(plan.id, () => new Date(time))) events.push(event);
+    return events;
+  };
+  await assert.rejects(execute(), /directory sync failed/);
+  assert.deepEqual(sends, []);
+  assert.deepEqual(await execute(), [{ type: "rejected", problems: ["the plan was already executed"] }]);
+  assert.deepEqual(sends, []);
+});
+
+
+test("a failed journal-directory sync blocks repeated execution attempts before sending", async () => {
+  const plan = savePlan((await observe()).snapshot, "rebalance", "offline directory retry", [swap()], new Date(time));
+  const stateParent = fs.statSync(process.cwd()).ino;
+  const sync = fs.fsyncSync;
+  let fail = true;
+  mock.method(fs, "fsyncSync", (fd: number) => {
+    if (fail && fs.fstatSync(fd).ino === stateParent) throw new Error("state parent sync failed");
+    sync(fd);
+  });
+  syncBuiltinESMExports();
+  const execute = async () => {
+    const events = [];
+    for await (const event of executePlan(plan.id, () => new Date(time))) events.push(event);
+    return events;
+  };
+  await assert.rejects(execute(), /state parent sync failed/);
+  await assert.rejects(execute(), /state parent sync failed/);
+  assert.deepEqual(sends, []);
+  fail = false;
+  await execute();
+  assert.deepEqual(sends, ["shield", "swap"]);
 });

@@ -1,3 +1,4 @@
+const { rpcValue } = require('./fixtures/rpc.cjs');
 /**
  * Offline simplification regressions. Build first with pnpm build:web.
  * PLAYWRIGHT_MODULE=/path/to/playwright-core BROWSER_EXECUTABLE=/path/to/chrome \
@@ -6,7 +7,7 @@
  */
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { chromium } = require('./fixtures/browser.cjs');
 const root = path.resolve(process.argv[2] || 'web/dist');
 const { makeTick, recordingFor } = require('./fixtures/run.cjs');
 const budget = Object.fromEntries(['daily', 'weekly', 'monthly'].map(period => [period,
@@ -69,7 +70,7 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
           return route.fulfill({ status: 500, json: { json: { defined: false, code: 'INTERNAL_SERVER_ERROR', message: 'Fixture read unavailable' } } });
         }
         const kind = pathname.includes('/payables/') ? 'payables' : 'treasury';
-        const values = { setup: { ...setup, ...(options.noGrant && { grant: null }), ...(options.approveOnly && { executor: false }) }, overview: overview(kind), 'treasury/get': null, held: options.held && kind === 'payables' ? [{ at: new Date().toISOString(), request: { amount: '1000000', asset: 'usdc', recipient: 'payee.near' } }] : [], unresolved: options.unresolved && kind === 'payables' ? [{ at: new Date().toISOString(), key: 'fixture-unresolved' }] : [],
+        const values = { instance: { agentId: 'fixture', executor: !options.approveOnly }, setup: { ...setup, ...(options.noGrant && { grant: null }), ...(options.approveOnly && { executor: false }) }, overview: overview(kind), 'treasury/get': null, held: options.held && kind === 'payables' ? [{ at: new Date().toISOString(), request: { amount: '1000000', asset: 'usdc', recipient: 'payee.near' } }] : [], unresolved: options.unresolved && kind === 'payables' ? [{ at: new Date().toISOString(), key: 'fixture-unresolved' }] : [],
           'inbox/list': [], 'agreements/list': options.agreed ? [{ id: 'agreement-fixture', payee: 'payee.near', amount: '1000000', status: 'agreed', origin: 'owner', at: '2026-10-01T00:00:00Z' }] : [], activity: [], invoices: [], reconcileBooks: [], 'owner/pending': [], 'owner/actions': [], paymentHistory: { items: [], complete: true },
           'autopilot/get': { on: true, everyMin: 60, maxUsd: 10 },
           'autopilot/evidence': { ticks: [run] } };
@@ -87,7 +88,7 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
           values[method] = { ticks: input.includes('since') ? [] : [run], corrupt: [] };
         }
         assert.ok(method in values, `Unexpected RPC: ${method}`);
-        return route.fulfill({ json: { json: values[method] } });
+        return route.fulfill({ json: { json: rpcValue(values, method) } });
       }
       if (pathname.startsWith('/static/')) return route.fulfill({ path: root + pathname,
         contentType: pathname.endsWith('.js') ? 'application/javascript' : pathname.endsWith('.css') ? 'text/css' : 'font/woff2' });

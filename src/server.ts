@@ -41,7 +41,7 @@ async function serveDashboard(req: IncomingMessage, res: ServerResponse) {
     res.writeHead(403).end();
     return;
   }
-  if (["/rpc/autopilot/log", "/rpc/owner/actions", "/rpc/paymentHistory", "/rpc/strategy/get"].includes(req.url?.split("?")[0] ?? "")) res.setHeader("cache-control", "private, no-store");
+  if (["/rpc/instance", "/rpc/autopilot/log", "/rpc/owner/actions", "/rpc/paymentHistory", "/rpc/strategy/get"].includes(req.url?.split("?")[0] ?? "")) res.setHeader("cache-control", "private, no-store");
   const { matched } = await handler.handle(req, res, { prefix: "/rpc" });
   if (matched) return;
 

@@ -114,6 +114,21 @@ test("retryable provider errors remain unknown with the same reserved payment", 
   assert.equal(stored().reservation, invoice.amount);
 });
 
+test("an unstructured timeout preserves the invoice reservation and never permits a second send", async () => {
+  Object.assign(api, { forGrant: () => ({ transfer: async (_id: string, _request: unknown, { idempotencyKey }: { idempotencyKey: string }) => {
+    sends.push(idempotencyKey);
+    throw new AgentApiError(408, undefined);
+  } }) });
+  assert.equal((await file(invoice, invoice.payee)).status, "unknown");
+  const key = stored().operation.idempotencyKey;
+  assert.equal(stored().reservation, invoice.amount);
+  assert.equal(stored().operation.refused, undefined);
+  assert.equal((await file(invoice, invoice.payee)).status, "unknown");
+  assert.equal((await recover())[0]?.outcome, "unknown");
+  await assert.rejects(pay({ asset: ASSETS.USDC, amount: "1", recipient: invoice.payee, confidential: true }), UnresolvedOperations);
+  assert.deepEqual(sends, [key]);
+});
+
 test("only never-submitted payments can be cancelled and release their reservation", () => {
   const saved = prepareInvoice(invoice, ASSETS.USDC);
   cancelPreparedInvoice(saved.id);

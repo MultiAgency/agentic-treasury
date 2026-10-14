@@ -4,7 +4,7 @@ import { hostedRpc, required } from "./remote.js";
 import { totalUsd } from "./valuation.js";
 
 /**
- * Before a demo: the few things that stopped one on 2026-10-13, read from the hosted dashboard as the
+ * Before a demo: check operational preconditions through the hosted dashboard as the
  * signed-in session in REPORT_COOKIE_FILE. Reads only; sends nothing.
  *
  *   DASHBOARD_URL=https://… REPORT_COOKIE_FILE=… pnpm demo-check

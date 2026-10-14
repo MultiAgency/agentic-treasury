@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, rmSync, mkdtempSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
@@ -85,3 +85,50 @@ for (const boundary of ["after_prepare", "after_claim", "after_acceptance"]) {
     assert.equal(readOps().length, 1);
   });
 }
+
+const preparation = { at: "2026-10-14T00:00:00Z", idempotencyKey: "review", kind: "payout", journalVersion: 2, request: {} };
+const claim = { idempotencyKey: "review", submissionState: "SUBMISSION_ATTEMPTED" };
+for (const [name, lines] of Object.entries({
+  "orphan claim": [claim],
+  "orphan outcome": [{ idempotencyKey: "review", refused: "never_submitted" }],
+  "duplicate preparation": [preparation, claim, preparation],
+  "duplicate claim": [preparation, claim, claim],
+  "outcome before claim": [preparation, { idempotencyKey: "review", correlation_id: "op", status: "SUCCESS" }],
+  "changed correlation": [preparation, claim, { idempotencyKey: "review", correlation_id: "op", status: "SENT" }, { idempotencyKey: "review", correlation_id: "other", status: "SUCCESS" }],
+  "false never-submitted": [preparation, claim, { idempotencyKey: "review", refused: "never_submitted" }],
+  "unknown version": [{ ...preparation, journalVersion: 3 }],
+  "mixed line": [{ ...preparation, refused: "never_submitted" }],
+  "invalid shape": [{}],
+  "terminal rewrite": [preparation, claim, { idempotencyKey: "review", correlation_id: "op", status: "SUCCESS" }, { idempotencyKey: "review", correlation_id: "op", status: "FAILED" }],
+})) test(`inconsistent journal (${name}) blocks recovery without rewriting evidence`, async () => {
+  const raw = lines.map(line => JSON.stringify(line)).join("\n") + "\n";
+  writeFileSync(opsLog(), raw);
+  assert.throws(readOps, /Invalid operation journal/);
+  await assert.rejects(acquireMoneyLock(), /Invalid operation journal/);
+  assert.equal(readFileSync(opsLog(), "utf8"), raw);
+});
+
+test("legacy status records and repeated observations remain compatible without inferring submission safety", async () => {
+  const { journalVersion: _version, ...legacy } = preparation;
+  const lines = [legacy, { idempotencyKey: "review", correlation_id: "legacy-op" }];
+  writeFileSync(opsLog(), lines.map(line => JSON.stringify(line)).join("\n") + "\n");
+  await assert.rejects(acquireMoneyLock(), /no proven outcome/);
+  record({ idempotencyKey: "review", correlation_id: "legacy-op", status: "SUCCESS" });
+  record({ idempotencyKey: "review", correlation_id: "legacy-op", status: "SUCCESS" });
+  const lock = await acquireMoneyLock();
+  await lock.release();
+  assert.equal(readOps()[0]?.status, "SUCCESS");
+  assert.equal(readOps()[0]?.submissionState, undefined);
+});
+
+
+test("additional metadata and opaque timestamps do not change submission evidence", async () => {
+  const lines = [
+    { ...preparation, at: "legacy timestamp", annotation: { source: "older writer" } },
+    { ...claim, at: "legacy timestamp", annotation: "extra metadata" },
+  ];
+  writeFileSync(opsLog(), lines.map(line => JSON.stringify(line)).join("\n") + "\n");
+  assert.equal(readOps()[0]?.submissionState, "SUBMISSION_ATTEMPTED");
+  await assert.rejects(acquireMoneyLock(), /no proven outcome/);
+  assert.equal(readOps()[0]?.refused, undefined);
+});

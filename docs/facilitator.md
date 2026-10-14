@@ -21,10 +21,11 @@ a dated observation with real funds, on this area's own agent or on another (the
 isolated test agent), and the row says which; **tested offline**; **per pinned provider source, with deployed behavior unverified**; or **not yet**. The provider and its
 custody are still trusted; [enforcement](enforcement.md) sets out how far, and what isn't established.
 
-The app shows only this area's running brief. Public and compact signed-in cards always show its
-evidence coverage by observation scope and its known limitations, without a completion score.
+The app shows only this area's running brief. Public cards show its evidence coverage by observation
+scope and its known limitations, without a completion score. The shared signed-in workspace leads
+with tasks and status; each area keeps its known limitations beside its detailed evidence.
 Mainnet observations do not establish every guarantee. Public cards also show its capability and safety targets,
-controls and evidence stages; members follow **Inspect evidence and limitations** on Overview
+controls and evidence stages; members follow **Inspect evidence and limitations** on Payments
 for the same requirements with their evidence. Roadmap briefs remain below for planning and are
 not displayed in the app. Both presentations use the [canonical inventory](../evidence/inventory.ts).
 The tables below are generated; edit the inventory and run `pnpm evidence:write`.
@@ -76,7 +77,7 @@ These are catalog targets, not established guarantees. Evidence stages describe 
 | Capability target | A winners list is paid in one auditable batch | — | Not yet | Not built: each award is its own invoice and vote |
 | Capability target | Recurring disbursements run as scheduled, individually budgeted transfers | — | Not yet | Not built |
 | Capability target | Refund waves use the same mechanics | — | Not yet | Not built |
-| Safety target | A duplicate winner or inflated prize can't pay twice | Our server | Tested offline | The provider returns the original payment when a request repeats its key; a second request for the same payee and amount is refused by our server (test/authorize.test.ts) |
+| Safety target | A duplicate winner or inflated prize can't pay twice | Nothing yet | Not yet | Not built: campaign winner identity and prize validation. Offline tests cover only a manual payout matching the recipient, asset and amount of an existing held payout (test/authorize.test.ts). Provider replay deduplication is unverified. |
 | Safety target | A payout outside the campaign's list is refused | Nothing yet | Not yet | Not built: payees are the policy's agreed list; there is no campaign list |
 
 <!-- END GENERATED: requirements -->

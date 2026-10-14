@@ -42,6 +42,14 @@ export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
     $("agreed-chip").className = "chip " + (agreed ? "ok" : "warn");
     if (!$("submit").disabled) $("submit").textContent = agreed ? "Submit invoice" : "Send request";
   }
+  // Local draft identity is not payment evidence. Keep that limitation beside the action after reload.
+  const retainedDraft = document.createElement("p");
+  retainedDraft.id = "retained-draft";
+  retainedDraft.className = "notice";
+  retainedDraft.setAttribute("role", "status");
+  retainedDraft.textContent = "This form retains a previous submission. Check its existing invoice and payment outcome before submitting again. Do not create a replacement while its outcome is unknown.";
+  retainedDraft.hidden = true;
+  $("submit").before(retainedDraft);
   let sessionVersion = 0;
   /** @param {string | null} account @param {boolean} agreed */
   function signedIn(account, agreed) {
@@ -56,6 +64,7 @@ export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
     $("refresh-error").textContent = ""; $("refresh-status").textContent = "";
     $("error").hidden = true; $("error").textContent = "";
     $("amount").value = ""; $("note").value = "";
+    retainedDraft.hidden = true;
     $("submit").disabled = false;
     $("step-signin").hidden = !!account; $("step-invoice").hidden = !account; $("list").hidden = !account;
     $("account").textContent = account || "";
@@ -64,6 +73,7 @@ export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
     if (account) {
       const saved = JSON.parse(localStorage.getItem("invoice-draft:" + account) || "null");
       submission = saved?.submission || crypto.randomUUID();
+      retainedDraft.hidden = !saved?.submission;
       $("amount").value = saved?.amount || ""; $("note").value = saved?.note || "";
       refresh();
     }
@@ -90,7 +100,7 @@ export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
     const session = sessionVersion;
     if (agreement.origin === "owner") {
       if (!agreement.terms) { fail("Agreement terms are unavailable. Refresh before filing."); return; }
-      $("amount").value = decimal(agreement.terms.maxAmount); $("note").value = agreement.note; submission = crypto.randomUUID();
+      $("amount").value = decimal(agreement.terms.maxAmount); $("note").value = agreement.note; submission = crypto.randomUUID(); retainedDraft.hidden = true;
       $("amount").focus(); return;
     }
     try { await call("POST", "/api/invoices", { amount: decimal(agreement.amount), note: agreement.note, submission: agreement.submission }); }
@@ -247,16 +257,17 @@ export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
       const draft = { amount: $("amount").value, note: $("note").value, submission };
       const draftKey = "invoice-draft:" + $("account").textContent;
       localStorage.setItem(draftKey, JSON.stringify(draft));
+      retainedDraft.hidden = false;
       const result = await call("POST", "/api/invoices", draft);
       if (session !== sessionVersion) return;
       // A request from an account not yet agreed: recorded, listed under agreements, nothing paid.
       if (result.status === "requested" || result.status === "proposed") {
-        localStorage.removeItem(draftKey); submission = crypto.randomUUID(); $("amount").value = ""; $("note").value = "";
+        localStorage.removeItem(draftKey); retainedDraft.hidden = true; submission = crypto.randomUUID(); $("amount").value = ""; $("note").value = "";
       }
       // Turned away before filing (not agreed, or the queue is full): say so, since it isn't listed.
       if (result.status === "needs_agreement" || result.status === "busy") fail(wordsFor(result.status)?.[0] ?? result.status);
       if (["waiting", "paying", "paid", "refused"].includes(result.status) && !result.revisionConflict) {
-        localStorage.removeItem(draftKey); submission = crypto.randomUUID(); $("amount").value = ""; $("note").value = "";
+        localStorage.removeItem(draftKey); retainedDraft.hidden = true; submission = crypto.randomUUID(); $("amount").value = ""; $("note").value = "";
       }
       if (["unknown", "prepared", "needs_review", "failed"].includes(result.status)) fail(wordsFor(result.status)?.[0] ?? result.status);
       if (result.status === "refused") fail(WORDS.refused[0]);

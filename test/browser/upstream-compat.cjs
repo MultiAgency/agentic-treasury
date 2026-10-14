@@ -1,6 +1,7 @@
+const { rpcValue } = require('./fixtures/rpc.cjs');
 /** Offline only: all requests are fulfilled by fixtures or aborted. */
 const assert = require('node:assert/strict');
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { chromium } = require('./fixtures/browser.cjs');
 const root = require('node:path').resolve(process.argv[2] || 'web/dist');
 
 (async () => {
@@ -25,7 +26,7 @@ const root = require('node:path').resolve(process.argv[2] || 'web/dist');
           const method = p.split('/rpc/')[1];
           if (['pay', 'owner/prepare', 'owner/submit', 'agreements/offer'].includes(method)) writes.push({ method, body: route.request().postDataJSON() });
           const values = {
-            setup: { executor: true, agentId: 'fixture', wallet: 'agent.near', owner: { type: 'near', account_id: 'owner.near' },
+            get instance() { return { agentId: this.setup?.agentId ?? null, executor: this.setup?.executor !== false }; }, setup: { executor: true, agentId: 'fixture', wallet: 'agent.near', owner: { type: 'near', account_id: 'owner.near' },
               grant: scenario === 'ended-grants' ? null : { id: 'live', label: 'live-access', expiresAt: future }, dao: null },
             overview: { agentId: 'fixture', digest: 'sha256:' + 'a'.repeat(64), notInForce: null, agreed: ['payee.near'], grants,
               unmanaged: [], target: { usdc: 1 }, rebalance: { minLegUsd: 1, maxCostBps: 100 },
@@ -38,7 +39,7 @@ const root = require('node:path').resolve(process.argv[2] || 'web/dist');
             'autopilot/get': { on: false, everyMin: 60, maxUsd: 10 }, 'autopilot/evidence': { ticks: [] }, 'strategy/get': {}, invoices: [],
             pay: { outcome: 'refused', code: 'duplicate_held_payout' },
           };
-          return route.fulfill({ json: { json: values[method] ?? null } });
+          return route.fulfill({ json: { json: rpcValue(values, method) } });
         }
         if (p.startsWith('/static/')) return route.fulfill({ path: root + p, contentType: p.endsWith('.js') ? 'application/javascript' : p.endsWith('.css') ? 'text/css' : 'font/woff2' });
         return route.fulfill({ path: root + '/index.html', contentType: 'text/html' });
@@ -64,6 +65,9 @@ const root = require('node:path').resolve(process.argv[2] || 'web/dist');
         assert.equal(writes[0].body.json.confidential, scenario !== 'public-recipient');
       } else {
         await page.goto('http://frontend.test/a/treasury/policy');
+        const grants = page.locator('details').filter({ has: page.locator('summary', { hasText: 'Grant controls and history' }) }).first();
+        await grants.waitFor();
+        if (!await grants.evaluate(element => element.open)) await grants.locator('summary').first().click();
         await page.getByText('expired-history', { exact: true }).waitFor();
         await page.getByText('revoked-history', { exact: true }).waitFor();
         assert.match(await page.locator('body').innerText(), /Expired/);
@@ -74,7 +78,7 @@ const root = require('node:path').resolve(process.argv[2] || 'web/dist');
           assert.equal(await page.getByText('Current', { exact: true }).count(), 0);
         } else {
           await page.getByText('Revoke a grant', { exact: true }).click();
-          const controls = page.locator('details').filter({ has: page.locator('summary', { hasText: 'Revoke a grant' }) });
+          const controls = page.locator('details').filter({ has: page.locator(':scope > summary', { hasText: 'Revoke a grant' }) });
           assert.doesNotMatch(await controls.innerText(), /expired-history|revoked-history/);
         }
         assert.equal(writes.length, 0);

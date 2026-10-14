@@ -1,4 +1,5 @@
 import type { StatusResponse } from "@near-intents-agent-api/sdk";
+import { z } from "zod";
 import { agentId } from "./env.js";
 import { api } from "./api.js";
 import { fastnearPost, transactionsApi } from "./chain.js";
@@ -85,30 +86,71 @@ async function audit(id: string) {
   }
 }
 
-type Receipts = {
-  transactions?: { receipts?: { receipt?: { receiver_id?: string }; execution_outcome?: { outcome?: { logs?: string[] } } }[] }[];
-};
+const nonempty = z.string().refine(value => value.trim().length > 0);
+const depositReceipt = z.object({
+  receipt: z.object({ receiver_id: nonempty }),
+  execution_outcome: z.object({ outcome: z.object({ logs: z.array(z.string()) }) }),
+});
+const depositReceipts = z.object({ transactions: z.array(z.object({ receipts: z.array(depositReceipt) })) });
+const eventEnvelope = z.object({ standard: nonempty, event: nonempty, data: z.unknown().optional() });
+const transferData = z.array(z.object({ new_owner_id: nonempty })).min(1);
+type DepositTransfer = { address: string; asset: string };
+const unavailableDeposit = () => new Error("Deposit evidence is unavailable: invalid transaction receipts or transfer events.");
 
 /**
- * A deposit's asset, which the API does not report: the token contract whose `ft_transfer` paid the
- * deposit address in the funding transaction.
+ * Validate the whole response before using any transfer: a valid early match must not conceal
+ * malformed evidence later in the transaction. Errors never include private receipt contents.
  */
-async function depositAsset(txHash: string, address: string) {
-  const { transactions = [] } = await transactionsApi<Receipts>("/transactions", { tx_hashes: [txHash] });
-  for (const receipt of transactions.flatMap((t) => t.receipts ?? [])) {
-    for (const log of receipt.execution_outcome?.outcome?.logs ?? []) {
+async function depositTransfers(txHash: string): Promise<DepositTransfer[]> {
+  const response = await transactionsApi<unknown>("/transactions", { tx_hashes: [txHash] });
+  const parsed = depositReceipts.safeParse(response);
+  if (!parsed.success) throw unavailableDeposit();
+  const transfers: DepositTransfer[] = [];
+  for (const receipt of parsed.data.transactions.flatMap(t => t.receipts)) {
+    for (const log of receipt.execution_outcome.outcome.logs) {
       if (!log.startsWith("EVENT_JSON:")) continue;
-      const event = JSON.parse(log.slice("EVENT_JSON:".length)) as { standard?: string; event?: string; data?: { new_owner_id?: string }[] };
-      if (event.standard === "nep141" && event.event === "ft_transfer" && event.data?.some((d) => d.new_owner_id === address))
-        return `nep141:${receipt.receipt?.receiver_id}`;
+      let raw: unknown;
+      try { raw = JSON.parse(log.slice("EVENT_JSON:".length)); } catch { throw unavailableDeposit(); }
+      const event = eventEnvelope.safeParse(raw);
+      if (!event.success) throw unavailableDeposit();
+      if (event.data.standard !== "nep141" || event.data.event !== "ft_transfer") continue;
+      const data = transferData.safeParse(event.data.data);
+      if (!data.success) throw unavailableDeposit();
+      for (const transfer of data.data) transfers.push({ address: transfer.new_owner_id, asset: `nep141:${receipt.receipt.receiver_id}` });
     }
   }
-  return null;
+  return transfers;
+}
+
+/** One lookup per hash per ledger read; no persistent cache or assumed batch-response mapping. */
+async function readDeposits(executions: StatusResponse[]) {
+  const hashes = new Set<string>();
+  for (const e of executions) {
+    const details = (e.details ?? {}) as Details;
+    const hash = field(details, "deposit_tx_hash");
+    if (e.type === "deposit" && e.status === "SUCCESS" && hash && field(details, "deposit_address")) hashes.add(hash);
+  }
+  const remaining = hashes.values();
+  const deposits = new Map<string, DepositTransfer[]>();
+  let failed = false;
+  async function worker() {
+    while (!failed) {
+      const next = remaining.next();
+      if (next.done) return;
+      try { deposits.set(next.value, await depositTransfers(next.value)); }
+      catch (error) { failed = true; throw error; }
+    }
+  }
+  // Drain in-flight reads before rejecting, and stop scheduling new ones after a failure.
+  const results = await Promise.allSettled(Array.from({ length: Math.min(4, hashes.size) }, () => worker()));
+  for (const result of results) if (result.status === "rejected") throw result.reason;
+  return deposits;
 }
 
 export async function ledger(id = agentId()): Promise<Row[]> {
   const [executions, events] = await Promise.all([history(id), audit(id)]);
   const ops = new Map(readOps().flatMap((op) => (op.correlationId ? [[op.correlationId, op] as const] : [])));
+  const deposits = await readDeposits(executions);
   const rows: Row[] = [];
   for (const e of executions) {
     const details = (e.details ?? {}) as Details;
@@ -119,7 +161,8 @@ export async function ledger(id = agentId()): Promise<Row[]> {
     let assetOut = event?.destination_asset ?? text(request.destination_asset) ?? assetIn;
     const depositTx = field(details, "deposit_tx_hash");
     const address = field(details, "deposit_address");
-    if (e.type === "deposit" && e.status === "SUCCESS" && depositTx && address) assetIn = assetOut = await depositAsset(depositTx, address);
+    if (e.type === "deposit" && e.status === "SUCCESS" && depositTx && address)
+      assetIn = assetOut = deposits.get(depositTx)!.find(transfer => transfer.address === address)?.asset ?? null;
     rows.push({
       at: e.created_at,
       settledAt: e.updated_at,

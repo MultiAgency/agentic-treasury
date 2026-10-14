@@ -1,4 +1,6 @@
 import lockfile from "proper-lockfile";
+import { z } from "zod";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { type Intent, type OwnerWallet, type SubmitIntentRequest } from "@near-intents-agent-api/sdk";
@@ -54,25 +56,65 @@ const readPending = () => new Map<string, Prepared>(
 );
 let pending = new Map<string, Prepared>();
 
+// Validate the fields this cross-instance check relies on; legacy records may omit stage.
+const pendingDelegate = z.object({
+  type: z.string().min(1),
+  expiresAt: z.string().refine(value => Number.isFinite(Date.parse(value))),
+  stage: z.enum(["prepared", "submitted", "settled"]).optional(),
+  ownerSucceeded: z.boolean().optional(),
+  result: z.object({ status: z.string().min(1), failureCode: z.string().nullable().optional() }).optional(),
+  dao: z.object({ owner: z.object({ account_id: z.string().min(1) }), delegate: z.string().min(1).optional() }).optional(),
+});
+const peerIntents = z.record(z.string(), pendingDelegate);
+
 /**
- * A NEAR delegate action (NEP-366) still waiting for the DAO's vote under `owner`, from any agent's
+ * A NEAR delegate action (NEP-366) waiting for a vote or with an unproven submission under `owner`, from any agent's
  * server on this host. The owner key has one nonce sequence: whichever delegate action executes raises
  * it, so a second one prepared meanwhile would fail after its own vote. Each server keeps its pending
  * intents beside the others in `.owner-intents/`; another host's (a laptop's) aren't visible here.
  */
-export function delegateWaiting(owner: string, now = Date.now()): Prepared | undefined {
+export function delegateWaiting(owner: string, now = Date.now()): z.infer<typeof pendingDelegate> | undefined {
   if (!existsSync(".owner-intents")) return undefined;
   for (const name of readdirSync(".owner-intents").filter((n) => n.endsWith(".json"))) {
-    let entries: Prepared[];
-    try { entries = Object.values(JSON.parse(readFileSync(join(".owner-intents", name), "utf8")) as Record<string, Prepared>); }
-    catch { continue; }
-    const waiting = entries.find((p) => p.dao?.delegate && p.dao.owner.account_id === owner && (p.stage ?? "prepared") === "prepared" && Date.parse(p.expiresAt) > now);
+    let entries: z.infer<typeof pendingDelegate>[];
+    try { entries = Object.values(peerIntents.parse(JSON.parse(readFileSync(join(".owner-intents", name), "utf8")))); }
+    catch { throw new Error(`Owner-intent history unavailable (${name}); preserve and verify the records before preparing another delegate action.`); }
+    const waiting = entries.find((p) => {
+      if (!p.dao?.delegate || p.dao.owner.account_id !== owner) return false;
+      const stage = p.stage ?? "prepared";
+      if (stage === "prepared") return Date.parse(p.expiresAt) > now;
+      // Approval completion is separate from settlement of the payout it released.
+      if (p.ownerSucceeded === true) return false;
+      if (stage === "submitted") return true; // expiry or a newer nonce read is not an outcome
+      return !p.result || !(isTerminal(p.result.status) ||
+        (p.result.status === "EXPIRED" && p.result.failureCode === "signing_window_closed"));
+    });
     if (waiting) return waiting;
   }
   return undefined;
 }
 let assertOwnerLock: () => void = () => { throw new Error("Owner-intent storage requires its lock"); };
 let ownerQueue: Promise<unknown> = Promise.resolve();
+
+/** Lock order: instance storage, then owner key. Never acquire a peer instance's lock here.
+ * All participating instances must share this directory on one host. */
+async function withDelegateLock<T>(owner: string, run: (assertHeld: () => void) => Promise<T>): Promise<T> {
+  const key = createHash("sha256").update(owner).digest("hex");
+  const path = join(".owner-intents", `.delegate-${key}`);
+  let held = true;
+  let release: () => Promise<void>;
+  try {
+    release = await lockfile.lock(path, { realpath: false, retries: 0, stale: 10_000, update: 2_000,
+      onCompromised: () => { held = false; } });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOCKED")
+      throw new Error("Another owner action is preparing a delegate; retry after it finishes.");
+    throw error;
+  }
+  const assertHeld = () => { if (!held) throw new Error("Owner delegate preparation lock lost; refresh before preparing again."); };
+  try { assertHeld(); return await run(assertHeld); }
+  finally { if (held) { held = false; await release(); } }
+}
 
 /** Serialize the full read/modify/write lifecycle, including async status/signature checks.
  * Reload only after acquiring the cross-process lock. Atomic rename alone cannot merge stale maps.
@@ -209,14 +251,24 @@ async function prepareLocked(action: OwnerAction, signer: Signer) {
   }
   if (generated.signer.type !== "near" || generated.signer.account_id !== owner.account_id)
     throw new Error("This agent's owner is not the DAO's owner account");
-  if (generated.intent.standard === "nep366") {
-    const waiting = delegateWaiting(owner.account_id);
-    if (waiting) throw new Error(`Another owner action (${waiting.type}) is waiting for the DAO's vote until ${waiting.expiresAt}. ` +
-      "Both would use the owner key's next nonce, so this one would fail after its vote: finish or let the first expire, then try again.");
-  }
-  // Read before the proposal is filed, so its signature can only come later.
-  const dao = { ...(await signingRequest(generated.intent, owner)), since: await latestBlock() };
-  hold(generated.correlation_id, { type: generated.type, expiresAt: generated.expires_at, grantToken, releases, dao, paymentApproval });
+  const buildAndHold = async (assertHeld: () => void) => {
+    if (generated.intent.standard === "nep366") {
+      const waiting = delegateWaiting(owner.account_id);
+      if (waiting) {
+        if ((waiting.stage ?? "prepared") !== "prepared")
+          throw new Error(`Another owner action (${waiting.type}) has an unresolved delegate submission. Reconcile its existing record before preparing another.`);
+        throw new Error(`Another owner action (${waiting.type}) is waiting for the DAO's vote until ${waiting.expiresAt}. Finish or let it expire before preparing another delegate.`);
+      }
+    }
+    // Read before the proposal is filed, so its signature can only come later.
+    const dao = { ...(await signingRequest(generated.intent, owner)), since: await latestBlock() };
+    assertHeld();
+    hold(generated.correlation_id, { type: generated.type, expiresAt: generated.expires_at, grantToken, releases, dao, paymentApproval });
+    return dao;
+  };
+  const dao = generated.intent.standard === "nep366"
+    ? await withDelegateLock(owner.account_id, buildAndHold)
+    : await buildAndHold(assertOwnerLock);
   watch();
   const daoId = process.env.TREASURY_ACCOUNT!;
   // The intent is already held: a failed read only drops the one-click filings, leaving filing in Trezu.

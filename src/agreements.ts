@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
+import { z } from "zod";
 import { join } from "node:path";
 import { agentId } from "./env.js";
 import { getInvoice, invoiceId, listInvoices, type InvoiceInput } from "./invoice-store.js";
 import { validate } from "./invoices.js";
 import { appendSynced } from "./synced.js";
+import { readRecordLines } from "./record-lines.js";
 
 /**
  * Agreements with terms, `.agreements/<agent id>.jsonl`, append-only like the inbox. Either side
@@ -32,6 +34,21 @@ export type Agreement = { id: string; at: string; origin: Origin; payee: string;
 type Stored = Omit<Agreement, "status" | "terms">;
 type Line = { agreement: Stored } | { decline: string } | { terms: Terms; for: string };
 type Entry = Stored & { declined?: true; terms?: Terms };
+const timestamp = z.string().refine(value => Number.isFinite(Date.parse(value)));
+const amount = z.string().regex(/^\d+$/);
+const storedAgreement = z.object({ id: z.string().min(1), at: timestamp, origin: z.enum(["payee", "owner"]),
+  payee: z.string().min(1), amount, note: z.string(), submission: z.string().optional() });
+const terms = z.object({ maxAmount: amount, until: timestamp });
+const storedLine = z.union([
+  z.object({ agreement: storedAgreement }),
+  z.object({ decline: z.string().min(1) }),
+  z.object({ for: z.string().min(1), terms }),
+]);
+const agreementList = z.object({ agreements: z.array(storedAgreement.extend({ terms: terms.optional(),
+  status: z.enum(["requested", "proposed", "agreed", "filed", "declined"]) })) });
+const offerResponse = z.object({ id: z.string().refine(value => value.trim().length > 0) });
+const acknowledged = z.object({ ok: z.literal(true) });
+const errorResponse = z.object({ error: z.string().min(1) });
 
 /** Open requests kept at once: per account, and in all. Past either, a new one is turned away. */
 const PER_ACCOUNT = 3;
@@ -48,11 +65,7 @@ function read() {
   const path = file();
   const entries = new Map<string, Entry>();
   if (!existsSync(path)) return entries;
-  for (const text of readFileSync(path, "utf8").split("\n")) {
-    if (!text.trim()) continue;
-    // A crash mid-append leaves a partial line: skipped, like the inbox.
-    let line: Line;
-    try { line = JSON.parse(text) as Line; } catch { continue; }
+  for (const line of readRecordLines(path, storedLine)) {
     if ("decline" in line) {
       const entry = entries.get(line.decline);
       if (entry) entry.declined = true;
@@ -156,7 +169,7 @@ export function localStore(agreed: () => Promise<Set<string>>): AgreementStore {
 }
 
 export function remoteStore(url: string, secret: string): AgreementStore {
-  const call = async <T>(path: string, body?: unknown): Promise<T> => {
+  const call = async <T>(path: string, schema: z.ZodType<T>, body?: unknown): Promise<T> => {
     const res = await fetch(new URL(`/internal/agreements${path}`, url), {
       method: body === undefined ? "GET" : "POST",
       headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
@@ -164,14 +177,20 @@ export function remoteStore(url: string, secret: string): AgreementStore {
       // A hung invoice host fails this call, not the dashboard waiting on it.
       signal: AbortSignal.timeout(10_000),
     });
-    const json = (await res.json().catch(() => ({}))) as { error?: string };
-    if (!res.ok) throw new Error(json.error ?? `The invoice host answered ${res.status}`);
-    return json as T;
+    const json: unknown = await res.json().catch(() => undefined);
+    if (!res.ok) {
+      const error = errorResponse.safeParse(json);
+      throw new Error(error.success ? error.data.error : `The invoice host answered ${res.status}`);
+    }
+    const result = schema.safeParse(json);
+    // A mutation may already have been applied. Report the missing acknowledgment; never retry it.
+    if (!result.success) throw new Error("The invoice host returned an invalid response. The result could not be confirmed.");
+    return result.data;
   };
   return {
-    list: async () => (await call<{ agreements: Agreement[] }>("")).agreements,
-    propose: async (id, until) => void (await call("/propose", { id, until: until.toISOString() })),
-    offer: async (offer) => (await call<{ id: string }>("/offer", { ...offer, until: offer.until.toISOString() })).id,
-    decline: async (id) => void (await call("/decline", { id })),
+    list: async () => (await call("", agreementList)).agreements,
+    propose: async (id, until) => void (await call("/propose", acknowledged, { id, until: until.toISOString() })),
+    offer: async (offer) => (await call("/offer", offerResponse, { ...offer, until: offer.until.toISOString() })).id,
+    decline: async (id) => void (await call("/decline", acknowledged, { id })),
   };
 }

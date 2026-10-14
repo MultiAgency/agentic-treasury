@@ -1,3 +1,5 @@
+const { rpcValue } = require('./fixtures/rpc.cjs');
+const { openWorkspaceNavigation } = require("./fixtures/navigation.cjs");
 /**
  * Offline showcase regressions. Build first with pnpm build:web.
  * PLAYWRIGHT_MODULE=/path/to/playwright-core BROWSER_EXECUTABLE=/path/to/chrome \
@@ -6,7 +8,7 @@
  */
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { chromium } = require('./fixtures/browser.cjs');
 const root = path.resolve(process.argv[2] || 'web/dist');
 const { makeTick, recordingFor } = require('./fixtures/run.cjs');
 const plannedBriefs = /Purchase orders|Campaign payouts|Adaptive DCA|House Money|Bitcoin treasury/;
@@ -68,7 +70,7 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
           return route.fulfill({ status: 500, json: { json: { defined: false, code: 'INTERNAL_SERVER_ERROR', message: 'Fixture read unavailable' } } });
         }
         const kind = pathname.includes('/payables/') ? 'payables' : 'treasury';
-        const values = { setup: { ...setup, ...(options.noGrant && { grant: null }), ...(options.approveOnly && { executor: false }) }, overview: overview(kind), 'treasury/get': null, held: options.held && kind === 'payables' ? [{ at: new Date().toISOString(), request: { amount: '1000000', asset: 'usdc', recipient: 'payee.near' } }] : [], unresolved: options.unresolved && kind === 'payables' ? [{ at: new Date().toISOString(), key: 'fixture-unresolved' }] : [],
+        const values = { instance: { agentId: 'fixture', executor: !options.approveOnly }, setup: { ...setup, ...(options.noGrant && { grant: null }), ...(options.approveOnly && { executor: false }) }, overview: overview(kind), 'treasury/get': null, held: options.held && kind === 'payables' ? [{ at: new Date().toISOString(), request: { amount: '1000000', asset: 'usdc', recipient: 'payee.near' } }] : [], unresolved: options.unresolved && kind === 'payables' ? [{ at: new Date().toISOString(), key: 'fixture-unresolved' }] : [],
           'inbox/list': [], 'agreements/list': [], activity: [], invoices: [], reconcileBooks: [], 'owner/pending': [], 'owner/actions': [], paymentHistory: { items: [], complete: true },
           'autopilot/get': { on: true, everyMin: 60, maxUsd: 10 },
           'autopilot/evidence': { ticks: [run] } };
@@ -82,7 +84,7 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
           values[method] = { ticks: input.includes('since') ? [] : [run], corrupt: [] };
         }
         assert.ok(method in values, `Unexpected RPC: ${method}`);
-        return route.fulfill({ json: { json: values[method] } });
+        return route.fulfill({ json: { json: rpcValue(values, method) } });
       }
       if (pathname.startsWith('/static/')) return route.fulfill({ path: root + pathname,
         contentType: pathname.endsWith('.js') ? 'application/javascript' : pathname.endsWith('.css') ? 'text/css' : 'font/woff2' });
@@ -100,7 +102,7 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
     await page.getByRole('button', { name: 'Simulate owner approval', exact: true }).waitFor();
     await page.getByRole('link', { name: 'Review the agreement', exact: true }).click();
     await page.getByRole('link', { name: 'Create example invoice', exact: true }).click();
-    await page.getByRole('heading', { level: 1, name: 'Invoices', exact: true }).waitFor();
+    await page.getByRole('heading', { level: 1, name: 'Payments', exact: true }).waitFor();
     assert.match(await page.getByRole('main').innerText(), /Example logo delivery/);
     await page.getByRole('button', { name: 'Simulate owner approval', exact: true }).click();
     await page.getByRole('heading', { level: 1, name: 'Activity', exact: true }).waitFor();
@@ -108,7 +110,7 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
     assert.match(await page.getByRole('status').innerText(), /Example payout completed/);
     assert.ok(await page.getByRole('status').evaluate(e => e === document.activeElement));
     await page.goBack();
-    await page.getByRole('heading', { level: 1, name: 'Invoices', exact: true }).waitFor();
+    await page.getByRole('heading', { level: 1, name: 'Payments', exact: true }).waitFor();
     assert.match(await page.getByRole('main').innerText(), /Paid/);
     await page.reload();
     await page.getByLabel('Completed work', { exact: true }).waitFor();
@@ -123,16 +125,16 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
     assert.match(await page.getByRole('main').innerText(), /Shift 10 percentage points/);
     await page.getByRole('button', { name: 'Check authorization', exact: true }).click();
     await page.getByRole('button', { name: 'Run example rebalance', exact: true }).click();
-    await page.getByRole('heading', { level: 1, name: 'Activity', exact: true }).waitFor();
+    await page.getByRole('heading', { level: 1, name: 'Runs', exact: true }).waitFor();
     assert.match(await page.getByRole('status').innerText(), /Example rebalance completed/);
-    await page.getByRole('link', { name: 'Policy', exact: true }).click();
+    await page.getByRole('link', { name: 'Policy & grants', exact: true }).click();
     await page.getByLabel('Example grant', { exact: true }).selectOption('absent');
     await page.getByRole('link', { name: 'Try with this permission', exact: true }).click();
     await page.getByRole('button', { name: 'Preview plan', exact: true }).click();
     assert.match(await page.getByRole('status').innerText(), /Nothing is sent/);
     assert.doesNotMatch(await page.getByRole('table').innerText(), /Result/);
     await page.getByRole('link', { name: 'Inspect the outcome', exact: true }).click();
-    await page.getByRole('heading', { level: 1, name: 'Activity', exact: true }).waitFor();
+    await page.getByRole('heading', { level: 1, name: 'Runs', exact: true }).waitFor();
     assert.match(await page.getByRole('status').innerText(), /Stopped: owner permission absent/);
     assert.deepEqual(network.filter(p => p.startsWith('/gw/') || p.includes('/rpc')), []);
     assert.deepEqual(errors, []);
@@ -157,7 +159,7 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
   });
   await check('simulation: autoplay stops for explicit approval and preserves keyboard focus', async context => {
     const { page, calls, errors } = await open(context, '/', { public: true });
-    await page.getByRole('article', { name: 'Payables workflow' }).getByRole('button', { name: 'Try a quick demo' }).click();
+    await page.getByRole('article', { name: 'Payables workflow' }).getByRole('button', { name: 'Demo' }).click();
     const demo = page.getByRole('region', { name: 'Payables simulation' });
     await page.clock.install();
     const requests = [];
@@ -176,8 +178,8 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
     await page.keyboard.press('Enter');
     assert.match(await demo.getByRole('status').innerText(), /Example payout completed/);
     assert.ok(await demo.getByRole('status').evaluate(e => e === document.activeElement));
-    await demo.getByRole('button', { name: 'Previous step' }).click();
-    await demo.getByRole('button', { name: 'Previous step' }).click();
+    await demo.getByRole('button', { name: 'Try again' }).click();
+    await demo.getByRole('button', { name: 'Next step' }).click();
     await approval.waitFor();
     assert.ok(await demo.getByRole('button', { name: 'Play', exact: true }).isDisabled());
     await demo.getByRole('button', { name: 'Restart' }).click();
@@ -192,9 +194,9 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
   });
   await check('simulation: strategies change the plan and both treasury outcomes remain inspectable', async context => {
     const { page, calls } = await open(context, '/', { public: true });
-    const article = page.getByRole('article', { name: 'Treasury workflow' });
-    await article.getByRole('button', { name: 'Try a quick demo' }).click();
-    const demo = page.getByRole('region', { name: 'Treasury simulation' });
+    const article = page.getByRole('article', { name: 'Portfolio workflow' });
+    await article.getByRole('button', { name: 'Demo' }).click();
+    const demo = page.getByRole('region', { name: 'Portfolio simulation' });
     assert.match(await demo.getByRole('table').innerText(), /40%/);
     await demo.getByRole('combobox', { name: 'Example strategy', exact: true }).selectOption('reserve');
     assert.match(await demo.getByRole('table').innerText(), /70%/);
@@ -216,9 +218,9 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
   });
   await check('simulation: pause, background, offscreen, close and restart cancel playback', async context => {
     const { page, calls } = await open(context, '/', { public: true });
-    const article = page.getByRole('article', { name: 'Treasury workflow' });
-    await article.getByRole('button', { name: 'Try a quick demo' }).click();
-    const demo = page.getByRole('region', { name: 'Treasury simulation' });
+    const article = page.getByRole('article', { name: 'Portfolio workflow' });
+    await article.getByRole('button', { name: 'Demo' }).click();
+    const demo = page.getByRole('region', { name: 'Portfolio simulation' });
     await page.clock.install();
     await demo.getByRole('button', { name: 'Play', exact: true }).click();
     await page.clock.fastForward(6100);
@@ -243,7 +245,7 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
     await demo.getByRole('button', { name: 'Play', exact: true }).click();
     await article.getByRole('button', { name: 'Close demo' }).click();
     await page.clock.fastForward(20000);
-    await article.getByRole('button', { name: 'Try a quick demo' }).click();
+    await article.getByRole('button', { name: 'Demo' }).click();
     assert.equal(await demo.getByRole('status').innerText(), paused);
     await demo.getByRole('button', { name: 'Restart' }).click();
     assert.match(await demo.getByRole('status').innerText(), /Compare the example allocations/);
@@ -257,6 +259,107 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
     const { page } = await open(context, '/', { error: 'overview', unresolved: true });
     await page.getByText(/1 money action has no proven outcome/).waitFor({ timeout: 5000 });
     await page.getByText(/checks.*incomplete/i).first().waitFor();
+  });
+  await check('completion: quick demos restart current choices and explore the same area', async context => {
+    const { page, calls } = await open(context, '/', { public: true });
+    for (const name of ['Payables', 'Portfolio']) {
+      await page.getByRole('article', { name: `${name} workflow` }).getByRole('button', { name: 'Demo', exact: true }).click();
+      const demo = page.getByRole('region', { name: `${name} simulation` });
+      await demo.getByRole('combobox', { name: 'Owner permission to act' }).selectOption('absent');
+      await demo.getByRole('button', { name: 'Next step', exact: true }).click();
+      assert.match(await demo.getByRole('status').innerText(), /Nothing is sent/);
+      assert.equal(await demo.getByRole('link', { name: 'Explore', exact: true }).getAttribute('href'), `/#/explore/${name === 'Portfolio' ? 'treasury' : 'payables'}/overview`);
+      assert.equal(await demo.getByRole('button', { name: 'Play', exact: true }).count(), 0);
+      assert.equal(await demo.getByRole('button', { name: 'Previous step', exact: true }).count(), 0);
+      await demo.getByRole('button', { name: 'Try again', exact: true }).click();
+      assert.ok(await demo.getByRole('button', { name: 'Next step' }).evaluate(e => e === document.activeElement));
+      assert.equal(await demo.getByRole('combobox', { name: 'Owner permission to act' }).inputValue(), 'absent');
+      assert.equal(await demo.getByRole('button', { name: 'Try again', exact: true }).count(), 0);
+    }
+    assert.deepEqual(calls, []);
+  });
+  await check('completion: full flow restarts with current choices and history collapsed', async context => {
+    const { page } = await open(context, '/#/explore/treasury/automations', { public: true });
+    for (const name of ['Preview plan', 'Check authorization', 'Run example rebalance']) await page.getByRole('button', { name, exact: true }).click();
+    await page.getByRole('heading', { level: 1, name: 'Runs', exact: true }).waitFor();
+    assert.equal(await page.getByRole('list', { name: 'Example activity' }).isVisible(), false);
+    await page.getByRole('link', { name: 'Try again', exact: true }).click();
+    await page.getByRole('heading', { level: 1, name: 'Strategy', exact: true }).waitFor();
+    await page.getByRole('link', { name: 'Policy & grants', exact: true }).click();
+    await page.getByLabel('Example grant').selectOption('absent');
+    await page.getByRole('link', { name: 'Try with this permission' }).click();
+    await page.getByRole('button', { name: 'Preview plan', exact: true }).click();
+    assert.match(await page.getByRole('status').innerText(), /Nothing is sent/);
+  });
+  await check('review: edited invoice matches every emitted state', async context => {
+    const { page } = await open(context, '/#/explore/payables/invoices', { public: true });
+    await page.getByLabel('Completed work').fill('Logo handoff for October');
+    await page.getByRole('button', { name: 'Submit example invoice' }).click();
+    await page.getByRole('button', { name: 'Simulate owner approval' }).click();
+    await page.getByText('Inspect example AG-UI events', { exact: true }).click();
+    const events = JSON.parse(await page.locator('pre').innerText());
+    for (const event of events.filter(e => e.type === 'CUSTOM')) assert.equal(event.value.invoice.work, 'Logo handoff for October');
+  });
+  await check('review: reset restores grant, strategy and invoice defaults', async context => {
+    const { page } = await open(context, '/#/explore/treasury/automations', { public: true });
+    await page.getByLabel('Example strategy').selectOption('reserve');
+    await page.locator('a[href="#/explore/treasury/policy"]').click();
+    await page.getByLabel('Example grant').selectOption('absent');
+    await page.getByRole('button', { name: 'Reset example' }).click();
+    assert.equal(await page.getByLabel('Example grant').inputValue(), 'active');
+    assert.equal(await page.getByRole('heading', { level: 1 }).innerText(), 'Policy & grants');
+    await page.getByRole('link', { name: 'Strategy', exact: true }).click();
+    assert.equal(await page.getByLabel('Example strategy').inputValue(), 'standard');
+    await page.getByRole('link', { name: 'Explore Payables' }).click();
+    await page.getByRole('link', { name: 'Payments', exact: true }).click();
+    await page.getByLabel('Completed work').fill('Changed milestone');
+    await page.getByRole('button', { name: 'Reset example' }).click();
+    assert.equal(await page.getByLabel('Completed work').inputValue(), 'One completed design milestone');
+  });
+  await check('review: mobile overview prioritizes action and uses sequential headings', async context => {
+    const { page } = await open(context, '/#/explore/treasury/overview', { public: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const action = page.getByRole('link', { name: 'Preview a rebalance', exact: true });
+    await action.waitFor();
+    const box = await action.boundingBox();
+    assert.ok(box.y + box.height < 844, 'primary action fits in first mobile viewport');
+    assert.equal(await page.getByRole('heading', { name: 'Illustrative allocation', level: 2 }).count(), 1);
+  });
+  await check('review: connecting initializes the member wallet and signs the challenge', async context => {
+    await context.addInitScript(() => {
+      localStorage.setItem('member:selected-wallet:mainnet', 'fixture-wallet');
+      const accounts = [{ accountId: 'owner.near', publicKey: 'ed25519:fixture' }];
+      const wallet = { manifest: { id: 'fixture-wallet', name: 'Offline wallet', features: { signMessage: true }, permissions: {} },
+        getAccounts: async () => accounts, signIn: async () => accounts, signOut: async () => {},
+        signMessage: async () => ({ ...accounts[0], signature: 'offline-signature' }) };
+      window.addEventListener('near-selector-ready', () => window.dispatchEvent(new CustomEvent('near-wallet-injected', { detail: wallet })));
+    });
+    const { page, network, errors } = await open(context, '/', { public: true });
+    const challenge = { message: 'Offline sign-in', recipient: 'frontend.test', nonce: Buffer.alloc(32).toString('base64') };
+    let signed;
+    await page.route('**/gw/challenge', route => route.fulfill({ json: challenge }));
+    await page.route('**/gw/session', route => {
+      signed = route.request().postDataJSON();
+      return route.fulfill({ status: 503, json: { error: 'Offline signature received' } });
+    });
+    const nav = page.getByRole('navigation', { name: 'Landing page' });
+    await nav.getByRole('button', { name: 'Connect wallet', exact: true }).click();
+    await nav.getByText('Offline signature received', { exact: true }).waitFor();
+    assert.equal(signed.signature, 'offline-signature');
+    assert.equal(signed.nonce, challenge.nonce);
+    assert.equal(signed.accountId, 'owner.near');
+    assert.ok(network.some(url => url.includes('fastnear/near-connect') && url.endsWith('manifest.json')));
+    assert.ok(!network.some(url => url.includes('hot-dao/near-selector')));
+    assert.deepEqual(errors, []);
+  });
+  await check('review: public pages do not discover wallets before connection', async context => {
+    for (const path of ['/', '/#/explore/treasury/overview']) {
+      const { page, network } = await open(context, path, { public: true });
+      await page.getByRole('heading', { level: 1 }).waitFor();
+      await page.waitForTimeout(500);
+      assert.deepEqual(network.filter(url => url.includes('manifest.json')), []);
+      await page.close();
+    }
   });
   await check('claims: qualifications stay visible without aggregate guarantee scores', async context => {
     const { page, calls } = await open(context, '/', { public: true });
@@ -295,7 +398,7 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
     const { page, calls } = await open(context, '/a/treasury/activity', { noGrant: true });
     await page.getByRole('heading', { name: 'Activity', exact: true }).waitFor({ timeout: 3000 });
     assert.ok(calls.includes('activity'));
-    await page.getByText(/This instance has no grant/).waitFor();
+    await page.getByRole('heading', { name: 'Continue setup', exact: true }).waitFor();
     assert.ok(!calls.includes('autopilot/tick'));
   });
   for (const unavailable of ['noGrant', 'approveOnly']) {
@@ -312,16 +415,16 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
     await check(`explorer: landing entry and responsive page navigation at ${width}px`, async context => {
       const { page, calls, errors } = await open(context, '/', { public: true });
       await page.setViewportSize({ width, height: 900 });
-      await page.getByRole('article', { name: 'Payables workflow' }).getByRole('link', { name: 'Explore the prototype', exact: true }).click();
+      await page.getByRole('article', { name: 'Payables workflow' }).getByRole('link', { name: 'Explore', exact: true }).click();
       await page.getByRole('navigation', { name: 'Payables prototype' }).waitFor();
       assert.equal(await page.getByRole('heading', { level: 1 }).innerText(), 'Overview');
       assert.ok(await page.getByRole('main').evaluate(e => e === document.activeElement));
-      await page.getByRole('link', { name: 'Invoices', exact: true }).click();
-      await page.getByRole('heading', { level: 1, name: 'Invoices', exact: true }).waitFor();
+      await page.getByRole('link', { name: 'Payments', exact: true }).click();
+      await page.getByRole('heading', { level: 1, name: 'Payments', exact: true }).waitFor();
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `explorer-${width}.png`), fullPage: true });
-      await page.getByRole('link', { name: 'Explore Treasury', exact: true }).click();
-      await page.getByRole('navigation', { name: 'Treasury prototype' }).waitFor();
+      await page.getByRole('link', { name: 'Explore Portfolio', exact: true }).click();
+      await page.getByRole('navigation', { name: 'Portfolio prototype' }).waitFor();
       await page.getByRole('link', { name: 'Back to landing page', exact: true }).click();
       await page.getByRole('heading', { name: 'Two agents. Two workflows.', exact: true }).waitFor();
       assert.deepEqual(calls, []);
@@ -330,8 +433,8 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
     await check(`simulation: responsive players and event inspection at ${width}px`, async context => {
       const { page, calls, errors } = await open(context, '/', { public: true });
       await page.setViewportSize({ width, height: 900 });
-      for (const name of ['Payables', 'Treasury']) {
-        await page.getByRole('article', { name: `${name} workflow` }).getByRole('button', { name: 'Try a quick demo' }).click();
+      for (const name of ['Payables', 'Portfolio']) {
+        await page.getByRole('article', { name: `${name} workflow` }).getByRole('button', { name: 'Demo' }).click();
         const demo = page.getByRole('region', { name: `${name} simulation` });
         await demo.getByText('Inspect simulated AG-UI events', { exact: true }).click();
         assert.match(await demo.locator('pre').innerText(), /RUN_STARTED/);
@@ -347,7 +450,7 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
     await check(`public disclosure and area order at ${width}px`, async context => {
       const { page, calls, errors } = await open(context, '/', { public: true });
       await page.setViewportSize({ width, height: 900 });
-      const treasury = page.getByRole('heading', { name: 'Treasury', exact: true });
+      const treasury = page.getByRole('heading', { name: 'Portfolio', level: 2, exact: true });
       await treasury.waitFor();
       const summaries = page.getByRole('group', { name: /Evidence coverage/ });
       assert.equal(await summaries.count(), 2);
@@ -372,7 +475,7 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
       assert.ok(flowBox.y + flowBox.height <= (await summaries.first().boundingBox()).y);
       await page.getByRole('link', { name: 'Explore the workflows', exact: true }).click();
       assert.equal(new URL(page.url()).hash, '#workflows');
-      assert.equal(await page.getByRole('link', { name: /^(Payables|Treasury) requirement stages$/ }).count(), 0);
+      assert.equal(await page.getByRole('link', { name: /^(Payables|Portfolio) requirement stages$/ }).count(), 0);
       assert.ok(await page.getByRole('navigation', { name: 'Landing page' }).getByRole('button', { name: 'Connect wallet', exact: true }).isVisible());
       assert.ok((await page.getByRole('link', { name: 'Request a payment' }).boundingBox()).y < (await summaries.first().boundingBox()).y);
       await page.getByText('View requirements', { exact: true }).first().click();
@@ -402,16 +505,15 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
       assert.deepEqual(errors, []);
     });
   }
-  await check('compact cards retain evidence coverage and limitations', async context => {
+  await check('workspace leads with tasks and retains contextual evidence', async context => {
     const { page } = await open(context, '/');
-    await page.getByRole('link', { name: 'Open Treasury', exact: true }).waitFor();
-    const summaries = page.getByRole('group', { name: /Evidence coverage/ });
-    assert.equal(await summaries.count(), 2);
-    for (const summary of await summaries.all()) {
-      assert.ok(await summary.isVisible());
-      assert.match(await summary.innerText(), /Known limitations/);
-    }
-    assert.equal(await page.getByText('View requirements', { exact: true }).count(), 0);
+    await page.getByRole('heading', { name: 'Current status', exact: true }).waitFor();
+    assert.equal(await page.getByRole('link', { name: /^Open (Portfolio|Payables)$/ }).count(), 0);
+    await openWorkspaceNavigation(page);
+    await page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'Portfolio', exact: true }).click();
+    await page.getByRole('link', { name: 'Inspect evidence and limitations', exact: true }).click();
+    assert.ok(await page.getByRole('heading', { name: 'Portfolio: requirements and evidence', exact: true }).isVisible());
+    assert.ok(await page.getByText('Known limitations', { exact: true }).isVisible());
   });
   await check('payables evidence shows only its running brief', async context => {
     const { page } = await open(context, '/a/payables/');
@@ -420,28 +522,31 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
     assert.equal(await page.locator('#evidence details').count(), 1);
     assert.ok(await page.getByText(/Invoices filed at invoices.multiagency.ai, voted and paid/).isVisible());
   });
-  await check('entry-card loading remains explicit', async context => {
+  await check('workspace status loading remains explicit', async context => {
     const { page } = await open(context, '/', { delay: 'overview' });
-    await page.getByText('Loading treasury…', { exact: true }).waitFor();
-    assert.ok(await page.getByRole('link', { name: 'Open treasury →', exact: true }).isVisible());
+    await page.getByText('Checking treasury…', { exact: true }).waitFor();
+    await openWorkspaceNavigation(page);
+    assert.ok(await page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'Portfolio', exact: true }).isVisible());
   });
-  await check('entry-card unavailable read recovers through retry', async context => {
+  await check('workspace unavailable read recovers through retry', async context => {
     const { page, state } = await open(context, '/', { error: 'overview', onlyTreasury: true });
-    await page.getByText(/treasury is unavailable/).waitFor();
-    assert.ok(await page.getByRole('link', { name: 'Open treasury →', exact: true }).isVisible());
+    await page.getByText(/treasury: checks are incomplete/).waitFor();
+    await openWorkspaceNavigation(page);
+    assert.ok(await page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'Portfolio', exact: true }).isVisible());
     state.error = undefined;
+    if (await page.getByRole('dialog', { name: 'Workspace navigation' }).isVisible()) await page.getByRole('button', { name: 'Close', exact: true }).click();
     await page.getByRole('button', { name: /^(Retry|Check again)$/ }).last().click();
-    await page.getByRole('heading', { name: 'Treasury', exact: true }).waitFor();
-    assert.equal(await page.getByText(/treasury is unavailable/).count(), 0);
+    await page.getByRole('heading', { name: 'Portfolio', exact: true }).waitFor();
+    await page.getByText(/treasury: checks are incomplete/).waitFor({ state: 'hidden' });
   });
   await check('failed background refresh labels cached status as stale', async context => {
     const { page, state } = await open(context, '/', { onlyTreasury: true });
-    const heading = page.getByRole('heading', { name: 'Treasury', exact: true });
+    const heading = page.getByRole('heading', { name: 'Portfolio', exact: true });
     await heading.waitFor();
     state.error = 'overview';
-    await page.getByText(/Status could not be refreshed/).waitFor({ timeout: 45_000 });
+    await page.getByText(/treasury: checks are incomplete/).waitFor({ timeout: 45_000 });
     const header = heading.locator('..');
-    assert.ok(await header.getByText(/Last read/).isVisible());
+    assert.ok(await page.getByText(/cached items may be out of date/).isVisible());
     assert.equal(await header.getByText('Policy in force', { exact: true }).count(), 0);
   });
   await check('unavailable attention is never reported as an empty queue', async context => {

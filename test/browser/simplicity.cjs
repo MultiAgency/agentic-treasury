@@ -1,7 +1,8 @@
+const { rpcValue } = require('./fixtures/rpc.cjs');
 /** Offline browser checks: serve the built files via interception; abort every external request.
  * PLAYWRIGHT_MODULE=/path/to/playwright-core BROWSER_EXECUTABLE=/path/to/chrome node test/browser/simplicity.cjs [web/dist]
  */
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { chromium } = require('./fixtures/browser.cjs');
 const assert = require('node:assert/strict');
 const root = require('node:path').resolve(process.argv[2] || 'web/dist');
 const at = '2026-01-01T00:00:00.000Z', end = '2026-01-01T00:01:00.000Z';
@@ -41,12 +42,12 @@ const overview = { agentId: 'fixture', digest: 'fixture', grants: [], rebalance:
           const method = p.split('/rpc/')[1]; calls.push(method);
           if (method === "autopilot/log") await recordingGate;
           if (method === 'strategy/get' && unavailable) return route.fulfill({ status: 500, json: { json: { defined: false, code: 'INTERNAL_SERVER_ERROR', message: 'Readiness unavailable' } } });
-          const values = { setup, overview, 'treasury/get': null, held: [], unresolved: [], 'inbox/list': [], 'agreements/list': [], activity: [], 'owner/pending': [], 'owner/actions': [],
+          const values = { get instance() { return { agentId: this.setup?.agentId ?? null, executor: this.setup?.executor !== false }; }, setup, overview, 'treasury/get': null, held: [], unresolved: [], 'inbox/list': [], 'agreements/list': [], activity: [], 'owner/pending': [], 'owner/actions': [],
             'autopilot/get': { on: true, everyMin: 60, maxUsd: 10 }, 'strategy/get': ready,
             'autopilot/evidence': { ticks: [{ ...context, end: { endedAt: end, before: { error: 'unavailable' }, after: { error: 'unavailable' }, plan: null, steps: [], shields: [], rejected: [], refusal: null, outcome: 'awaiting outcome' } }] },
             'autopilot/log': mismatch ? { ...recording, agentId: 'wrong' } : recording };
           assert.ok(method in values, `Unexpected request: ${method}`);
-          return route.fulfill({ json: { json: values[method] } });
+          return route.fulfill({ json: { json: rpcValue(values, method) } });
         }
         if (p.startsWith('/static/')) return route.fulfill({ path: root + p, contentType: p.endsWith('.js') ? 'application/javascript' : p.endsWith('.css') ? 'text/css' : 'font/woff2' });
         return route.fulfill({ path: root + '/index.html', contentType: 'text/html' });

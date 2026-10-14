@@ -5,8 +5,8 @@ import { documentationUpdates, replaceGenerated, requirementsMarkdown } from "..
 import { PROTOTYPES, PROVEN, VERIFICATIONS, knownLabel, summarizeRequirements, type Requirement } from "../evidence/inventory.js";
 
 test("the app uses the canonical evidence inventory instead of a handwritten copy", () => {
-  const source = readFileSync(new URL("../web/src/beats.ts", import.meta.url), "utf8");
-  assert.match(source, /export \* from "\.\.\/\.\.\/evidence\/inventory\.js"/);
+  const source = readFileSync(new URL("../web/src/features/evidence/beats.ts", import.meta.url), "utf8");
+  assert.ok(source.includes('export * from "../../../../evidence/inventory.js"'));
   assert.doesNotMatch(source, /export const PROTOTYPES/);
 });
 

@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { z } from "zod";
 import { AgentApiError } from "@near-intents-agent-api/sdk";
 import { agentId } from "./env.js";
-import { appendSynced } from "./synced.js";
+import { appendSynced, mkdirSynced } from "./synced.js";
 import { claimInvoiceSubmission, invoiceOperations, recordInvoiceOperation, type PaymentState } from "./invoice-store.js";
 
 /**
@@ -13,7 +14,7 @@ import { claimInvoiceSubmission, invoiceOperations, recordInvoiceOperation, type
  */
 export function opsLog() {
   const id = agentId();
-  mkdirSync(".ops", { recursive: true });
+  mkdirSynced(".ops");
   return join(".ops", `${id}.jsonl`);
 }
 
@@ -102,21 +103,66 @@ export function settle(correlationId: string, status: string) {
   if (op) record({ idempotencyKey: op.idempotencyKey, correlation_id: correlationId, status });
 }
 
+const nonempty = z.string().min(1);
+const identity = { idempotencyKey: nonempty, at: z.string().optional() };
+// Unknown metadata is ignored. Known lifecycle fields cannot be silently discarded
+// by matching a different record shape.
+const noOutcome = { correlation_id: z.never().optional(), status: z.never().optional(), refused: z.never().optional(), submissionState: z.never().optional() };
+const preparationLine = z.object({ ...identity, ...noOutcome, at: z.string(), kind: nonempty, request: z.record(z.string(), z.unknown()),
+    method: z.enum(["swap", "transfer", "shield", "unshield"]).optional(), journalVersion: z.literal(2).optional(),
+    policyRevision: z.number().nullable().optional(), policyDigest: z.string().nullable().optional(),
+    usdIn: z.number().nullable().optional(), planId: z.string().optional() });
+const outcome = { ...identity, ...noOutcome, request: z.never().optional(), journalVersion: z.never().optional() };
+const journalLine = z.union([
+  preparationLine,
+  // Legacy snapshots could combine the request and its observed provider identity.
+  preparationLine.extend({ journalVersion: z.never().optional(), correlation_id: nonempty, status: nonempty.optional() }),
+  z.object({ ...outcome, submissionState: z.literal("SUBMISSION_ATTEMPTED") }),
+  z.object({ ...outcome, refused: nonempty }),
+  // Older logs may have a correlation ID without a status: still unresolved, never inferred terminal.
+  z.object({ ...outcome, correlation_id: nonempty, status: nonempty.optional() }),
+]);
+
 /** Every operation in the log, oldest first, folded with the outcomes recorded for it. */
 export function readOps(): Op[] {
   const log = opsLog();
   const ops = new Map<string, Op>();
-  for (const text of (existsSync(log) ? readFileSync(log, "utf8") : "").split("\n")) {
+  const correlations = new Map<string, string>();
+  for (const [index, text] of (existsSync(log) ? readFileSync(log, "utf8") : "").split("\n").entries()) {
     if (!text.trim()) continue;
-    const line = JSON.parse(text) as Line;
-    if ("request" in line) ops.set(line.idempotencyKey, {
-      ...line, ...(line.journalVersion === 2 && { submissionState: "PREPARED" as const }),
-    });
+    const invalid = (reason: string): never => { throw new Error(`Invalid operation journal at line ${index + 1}: ${reason}; restore or investigate before sending`); };
+    let raw: unknown;
+    try { raw = JSON.parse(text); } catch { invalid("malformed JSON"); }
+    const parsed = journalLine.safeParse(raw);
+    if (!parsed.success) invalid("unsupported record shape");
+    const line = parsed.data!;
+    if (line.request !== undefined) {
+      if (ops.has(line.idempotencyKey)) invalid("duplicate preparation");
+      ops.set(line.idempotencyKey, { ...line, ...("journalVersion" in line && line.journalVersion === 2 && { submissionState: "PREPARED" as const }) });
+      if (line.correlation_id === undefined) continue;
+    }
     const op = ops.get(line.idempotencyKey);
-    if (!op) continue;
-    if ("submissionState" in line) op.submissionState = line.submissionState;
-    if ("refused" in line) op.refused = line.refused;
-    if ("correlation_id" in line) Object.assign(op, { correlationId: line.correlation_id, status: line.status });
+    if (!op) invalid("record without preparation");
+    const existing = op!;
+    if (line.submissionState !== undefined) {
+      if (existing.journalVersion !== 2 || existing.submissionState !== "PREPARED" || existing.correlationId || isResolved(existing))
+        invalid("invalid submission claim");
+      existing.submissionState = line.submissionState;
+    }
+    if (line.refused !== undefined) {
+      if (existing.correlationId || existing.status || (existing.refused !== undefined && existing.refused !== line.refused)) invalid("refusal contradicts prior evidence");
+      if (line.refused === "never_submitted" && (existing.journalVersion !== 2 || existing.submissionState !== "PREPARED")) invalid("submission cannot be inferred absent");
+      existing.refused = line.refused;
+    }
+    if (line.correlation_id !== undefined) {
+      if (existing.refused !== undefined || (existing.journalVersion === 2 && (existing.submissionState !== "SUBMISSION_ATTEMPTED" || !line.status))) invalid("outcome without submission claim");
+      if (existing.correlationId && existing.correlationId !== line.correlation_id) invalid("operation identity changed");
+      if (isResolved(existing) && existing.status !== line.status) invalid("terminal outcome changed");
+      const owner = correlations.get(line.correlation_id);
+      if (owner && owner !== line.idempotencyKey) invalid("operation identity shared by different preparations");
+      correlations.set(line.correlation_id, line.idempotencyKey);
+      Object.assign(existing, { correlationId: line.correlation_id, status: line.status });
+    }
   }
   for (const op of invoiceOperations()) {
     if (ops.has(op.idempotencyKey)) throw new Error("Operation exists in both stores; reconcile before executing");
@@ -130,15 +176,16 @@ export class AuthorizationHeld extends Error {
   constructor(message: string) { super(`Execution held: ${message}`); }
 }
 
-/**
- * The code of a refusal the API documents as proven: nothing was sent, and the same key replays
- * the refusal. Anything else (a server failure, `retryable`, a lost response) may have taken effect.
- */
+/** Only recognized non-execution responses resolve a claimed submission. The SDK also wraps
+ * proxy HTML and empty errors as AgentApiError with retryable=false: that is not provider evidence.
+ * Unknown codes stay unresolved until their non-execution semantics have been established. */
 export function provenRefusal(error: unknown): string | undefined {
-  if (!(error instanceof AgentApiError) || error.retryable) return undefined;
-  if (error.status >= 500 && !PROVEN_5XX.has(error.code ?? "")) return undefined;
-  return error.code ?? `http_${error.status}`;
+  if (!(error instanceof AgentApiError) || error.retryable || !error.errors.length) return undefined;
+  const codes = error.status >= 500 ? PROVEN_5XX : error.status >= 400 ? PROVEN_4XX : undefined;
+  if (!codes || !error.errors.every((entry) => codes.has(entry.code) && entry.status === String(error.status) && entry.meta?.retryable !== true)) return undefined;
+  return error.code;
 }
+const PROVEN_4XX = new Set(["policy_denied", "spend_budget_exceeded"]);
 const PROVEN_5XX = new Set(["route_unavailable", "quote_unavailable", "spend_price_unavailable"]);
 
 /** Called under the money lock immediately before the sole send site. */

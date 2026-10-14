@@ -1,10 +1,11 @@
+const { rpcValue } = require('./fixtures/rpc.cjs');
 /** Offline regressions: all requests are fulfilled locally or aborted; no executor runs.
  * PLAYWRIGHT_MODULE=/path/to/playwright-core BROWSER_EXECUTABLE=/path/to/chrome
  * node test/browser/friction.cjs /path/to/frontend-build
  */
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { chromium } = require('./fixtures/browser.cjs');
 const root = path.resolve(process.argv[2] || 'web/dist');
 const results = [];
 
@@ -38,7 +39,7 @@ const results = [];
             return route.fulfill({ json: { json: { on: false } } });
           }
           const values = {
-            setup: { executor: true, agentId: 'fixture', wallet: 'agent.near', owner: { type: 'near', account_id: 'owner.near' }, grant: { label: 'treasury', expiresAt: '2030-01-01T00:00:00Z' }, dao: null },
+            get instance() { return { agentId: this.setup?.agentId ?? null, executor: this.setup?.executor !== false }; }, setup: { executor: true, agentId: 'fixture', wallet: 'agent.near', owner: { type: 'near', account_id: 'owner.near' }, grant: { label: 'treasury', expiresAt: '2030-01-01T00:00:00Z' }, dao: null },
             overview: { agentId: 'fixture', digest: 'sha256:' + 'a'.repeat(64), notInForce: null, agreed: [], unmanaged: [], target: { usdc: 1 }, rebalance: { minLegUsd: 1, maxCostBps: 100 }, book: [{ asset: 'usdc', symbol: 'USDC', decimals: 6, public: '0', confidential: '10000000', usd: 10, price: 1 }], policy: { status: 'APPLIED', revision: 1, policy: { actions: ['swap'], owner_approval: false, frozen: false, destinations: { mode: 'only', list: [{ action: 'transfer', address: 'payee.near', confidential: true }] }, assets: 'any', budget: {}, limits: {} }, usage: { budget: {} }, cooldowns: {} } },
             'treasury/get': null, held: [], unresolved: copying ? [{ key: 'fixture-operation', at: new Date().toISOString(), kind: 'swap', sent: true, status: 'PROCESSING' }] : [], 'inbox/list': [], 'agreements/list': [], activity: [], 'owner/pending': [], 'owner/actions': [], paymentHistory: { items: [], complete: true }, 'autopilot/get': settings, 'autopilot/evidence': { ticks: [] }, 'strategy/get': { strategy: { targetBps: { usdc: 10000 }, minLegUsd: 1, maxCostBps: 100, autopilot: { everyMin: 60, maxUsd: 10 } }, digest: 'fixture', executor: true, grantMatches: true, readiness: { canEnable: true, reasons: [] } }, invoices: [],
             ...(refusal || draft === 'topup' ? { pay: { outcome: 'refused', code: draft === 'topup' ? 'grant_missing' : draft } } : {}),
@@ -48,7 +49,7 @@ const results = [];
             values.overview.policy.policy.destinations.list.push({ action: 'transfer', address: 'agent.near', confidential: true });
           }
           if (!(method in values)) return route.fulfill({ status: 400, json: { error: 'Unexpected fixture request' } });
-          return route.fulfill({ json: { json: values[method] } });
+          return route.fulfill({ json: { json: rpcValue(values, method) } });
         }
         if (p.startsWith('/static/')) return route.fulfill({ path: root + p, contentType: p.endsWith('.js') ? 'application/javascript' : p.endsWith('.css') ? 'text/css' : 'font/woff2' });
         return route.fulfill({ path: path.join(root, 'index.html'), contentType: 'text/html' });

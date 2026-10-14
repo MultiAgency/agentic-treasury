@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
-import { AgentApiError } from "@near-intents-agent-api/sdk";
+import { AgentApi, AgentApiError } from "@near-intents-agent-api/sdk";
 import { type Action, dispatch, LocalRefusal, pay, send } from "../src/agent.js";
 import { api } from "../src/api.js";
 import { acquireMoneyLock, type MoneyLock, UnresolvedOperations } from "../src/lock.js";
-import { readOps, record } from "../src/ops.js";
+import { provenRefusal, readOps, record } from "../src/ops.js";
 import { mandateDigest } from "../src/mandate.js";
 import { ASSETS, payoutPolicy, treasuryPolicy } from "../src/policy.js";
 import { authorityFixture, policyView } from "./fixtures/authority.js";
@@ -33,6 +33,29 @@ beforeEach(() => {
   mock.method(api, "forGrant", () => ({ transfer: method, swap: method, shield: method, unshield: method }));
 });
 afterEach(() => mock.restoreAll());
+
+test("only recognized, consistent, non-retryable provider errors prove refusal", () => {
+  const error = (status: number, code: string, retryable = false) => new AgentApiError(status, {
+    errors: [{ status: String(status), code, title: code, meta: { retryable } }],
+    meta: {},
+  });
+  for (const code of ["policy_denied", "spend_budget_exceeded"]) {
+    assert.equal(provenRefusal(error(403, code)), code);
+    assert.equal(provenRefusal(error(403, code, true)), undefined);
+    assert.equal(provenRefusal(error(503, code)), undefined);
+  }
+  for (const code of ["route_unavailable", "quote_unavailable", "spend_price_unavailable"]) {
+    assert.equal(provenRefusal(error(503, code)), code);
+    assert.equal(provenRefusal(error(503, code, true)), undefined);
+  }
+  assert.equal(provenRefusal(new AgentApiError(409, { errors: [
+    { status: "409", code: "policy_denied", title: "Denied" },
+    { status: "409", code: "unknown_error", title: "Unknown" },
+  ], meta: {} })), undefined);
+  assert.equal(provenRefusal(new AgentApiError(409, { errors: [
+    { status: "403", code: "policy_denied", title: "Denied" },
+  ], meta: {} })), undefined);
+});
 
 test("a proven first-submission refusal resolves only that operation", async () => {
   answer = async () => { throw new AgentApiError(409, {
@@ -110,4 +133,18 @@ test("a payout's retryable API failure is not presented as a policy refusal", as
   await assert.rejects(pay({ asset: ASSETS.USDC, amount: "1", recipient: "fixture.near", confidential: true }), AgentApiError);
   assert.equal(calls.length, 1);
   assert.equal(readOps()[0]?.refused, undefined);
+});
+
+for (const response of [
+  { name: "HTML timeout", status: 408, body: "<html>Request Timeout</html>" },
+  { name: "empty conflict", status: 409, body: "" },
+  { name: "unknown structured error", status: 400, body: JSON.stringify({ errors: [{ status: "400", code: "new_unknown_error", title: "Unknown" }] }) },
+]) test(`${response.name} after submission remains unresolved and blocks a replacement`, async () => {
+  const sdk = new AgentApi({ apiKey: process.env.NEAR_INTENTS_AGENT_API_KEY!, fetch: async () => new Response(response.body, { status: response.status }) });
+  answer = () => sdk.forGrant(`ngt_${"a".repeat(43)}`).transfer(process.env.AGENT_ID!, action.request as never);
+  await assert.rejects(pay(action.request as never), AgentApiError);
+  assert.equal(readOps()[0]?.refused, undefined);
+  assert.equal(readOps()[0]?.submissionState, "SUBMISSION_ATTEMPTED");
+  await assert.rejects(pay(action.request as never), UnresolvedOperations);
+  assert.equal(calls.length, 1);
 });

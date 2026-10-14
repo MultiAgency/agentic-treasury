@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { tickLog } from "../src/agui.js";
 import type { Tick } from "../src/evidence.js";
-import { inspectRecording, observationLabel, recordingSummary } from "../web/src/recording-model.js";
+import { inspectRecording, observationLabel, recordingSummary } from "../web/src/features/evidence/recording-model.js";
 
 const at = "2026-01-01T00:00:00.000Z";
 const tick: Tick = {

@@ -1,15 +1,14 @@
-import { completeExecutionEvidence } from "./fixtures/authority.js";
+import { authorityFixture, balanceView, fixtureGrant, policyView, timedPrices } from "./fixtures/authority.js";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, mock, test } from "node:test";
-import { grantCommitment } from "@near-intents-agent-api/sdk";
 import { api } from "../src/api.js";
-import { saveSettings, settings, tick } from "../src/autopilot.js";
+import { saveSettings, settings, status, tick } from "../src/autopilot.js";
 import { exportRunLog } from "../src/run-log-export.js";
 import { sourceDigest, ticks } from "../src/evidence.js";
-import { dismiss, readInbox } from "../src/inbox.js";
+import { dismiss, post, readInbox } from "../src/inbox.js";
 import { prepareInvoice } from "../src/invoice-store.js";
 import { blocksDispatch, readOps, opsLog } from "../src/ops.js";
 import { ASSETS, treasuryPolicy } from "../src/policy.js";
@@ -37,21 +36,16 @@ beforeEach(() => {
   statusOf = () => "SUCCESS";
   grantLabel = () => `treasury:${strategyLabelSuffix(loadStrategy())}`;
   offline();
-  mock.method(api, "getPolicy", async () => ({ policy: { ...treasuryPolicy, frozen, budget: { daily_usd: "1000", weekly_usd: "1000", monthly_usd: "1000" } }, revision: 1, usage: null }));
-  mock.method(api, "getTokens", async () => Object.entries(ASSETS).map(([symbol, asset_id]) => ({ symbol, asset_id, decimals: 0, price: 1 })));
-  mock.method(api, "getBalances", async (_id: string, { source }: { source: "public" | "confidential" }) => ({
-    balances: Object.entries(book).map(([asset_id, balances]) => ({ asset_id, balance_raw: String(balances[source]) })),
-  }));
+  const authority = authorityFixture("treasury");
+  mock.method(api, "getAgent", authority.getAgent);
+  mock.method(api, "getWallet", authority.getWallet);
+  mock.method(api, "getHistory", authority.getHistory);
+  mock.method(api, "getPolicy", async () => policyView({ ...treasuryPolicy, frozen, budget: { daily_usd: "1000", weekly_usd: "1000", monthly_usd: "1000" } }, 1));
+  mock.method(api, "getTokens", async () => timedPrices(Object.entries(ASSETS).map(([symbol, asset_id]) => ({ symbol, asset_id, decimals: 0, price: 1 }))));
+  mock.method(api, "getBalances", async (_id: string, { source }: { source: "public" | "confidential" }) => balanceView(source,
+    Object.entries(book).map(([asset_id, balances]) => ({ asset_id, balance_raw: String(balances[source]) }))));
   mock.method(api, "getStatus", async (correlation_id: string) => ({ correlation_id, status: statusOf(correlation_id) }));
-  mock.method(api, "listGrants", async () => [
-    {
-      grant_id: "g",
-      label: grantLabel(),
-      revoked_at: null,
-      expires_at: new Date(Date.now() + 86_400_000).toISOString(),
-      owner_message: { credential: grantCommitment("ngt_test") },
-    },
-  ]);
+  mock.method(api, "listGrants", async () => [{ ...fixtureGrant(grantLabel()), grant_id: "g" }]);
   mock.method(api, "forGrant", () => ({
     shield: async (_id: string, request: { asset: string; amount: string }) => {
       sends.push(`shield ${request.asset}`);
@@ -67,7 +61,6 @@ beforeEach(() => {
       return { correlation_id: `op_${sends.length}` };
     },
   }));
-  completeExecutionEvidence({ grants: true });
 });
 afterEach(() => mock.restoreAll());
 
@@ -274,12 +267,30 @@ test("the source digest identifies a tree: same files, same digest; one changed 
   assert.notEqual(sourceDigest(dir), digest);
 });
 
-test("a damaged inbox line is skipped, so the scheduler's once-a-minute read never throws", () => {
+test("a damaged inbox makes scheduler history unavailable instead of implying no later run", () => {
   const entry = { id: "e1", at: new Date().toISOString(), level: "run", text: "book on target" };
   mkdirSync(".inbox", { recursive: true });
   // A crash mid-append leaves a partial last line.
   writeFileSync(join(".inbox", `${process.env.AGENT_ID}.jsonl`), `${JSON.stringify(entry)}\n{"id":"e2","at":"2026-`);
-  assert.deepEqual(readInbox().map((e) => e.id), ["e1"]);
+  assert.throws(readInbox, /line 2; history unavailable/);
+  assert.throws(status, /line 2; history unavailable/);
+});
+
+test("scheduler cadence follows the recorded run summary, not warnings or an interrupted evidence start", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2030-01-01T12:00:00Z") });
+  saveSettings({ on: true, everyMin: 60, maxUsd: 0 });
+  assert.equal(status().lastRun, null);
+  assert.equal(status().nextRun, "2030-01-01T12:00:00.000Z");
+  const completed = post("run", "Skipped: the agent is frozen.");
+  t.mock.timers.tick(15 * 60_000);
+  const warning = post("warn", "An observation is unavailable.");
+  dismiss(warning.id);
+  mkdirSync(".evidence", { recursive: true });
+  writeFileSync(join(".evidence", `${process.env.AGENT_ID}.jsonl`), JSON.stringify({ kind: "start", id: "interrupted", at: new Date().toISOString() }) + "\n");
+  assert.equal(status().lastRun, completed.at);
+  assert.equal(status().nextRun, "2030-01-01T13:00:00.000Z");
+  saveSettings({ on: false, everyMin: 60, maxUsd: 0 });
+  assert.equal(status().nextRun, null);
 });
 
 

@@ -1,6 +1,8 @@
+const { rpcValue } = require('./fixtures/rpc.cjs');
 /** Offline only: every application request is a fixture; no executor or wallet is started. */
 const assert = require('node:assert/strict');
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { chromium } = require('./fixtures/browser.cjs');
+const USDC = 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
 const root = require('node:path').resolve(process.argv[2] || 'web/dist');
 (async () => {
   const browser = await chromium.launch({ headless: true, executablePath: process.env.BROWSER_EXECUTABLE });
@@ -25,18 +27,18 @@ const root = require('node:path').resolve(process.argv[2] || 'web/dist');
           if (['pay', 'owner/prepare', 'owner/submit'].includes(method)) writes.push(method);
           if (method === 'pay' && scenario === 'budget-error') return route.fulfill({ status: 400, json: { json: { defined: false, code: 'BAD_REQUEST', message: 'Budget exceeded', data: details } } });
           const values = {
-            setup: { executor: true, agentId: 'fixture', wallet: 'agent.near', owner: { type: 'near', account_id: 'owner.near' }, grant: { id: 'live', label: 'payout', expiresAt: '2099-01-01T00:00:00Z' }, dao: null },
-            overview: { agentId: 'fixture', digest: 'sha256:' + 'a'.repeat(64), notInForce: null, agreed: ['payee.near'], grants: [], unmanaged: [], target: { usdc: 1 }, rebalance: { minLegUsd: 1, maxCostBps: 100 },
-              book: [{ asset: 'usdc', symbol: 'USDC', decimals: 6, public: '0', confidential: '10000000', price: scenario === 'no-price' ? null : 1, usd: scenario === 'no-price' ? null : 10, priceUpdatedAt: at, priceExpiresAt: expires }],
-              policy: { status: 'APPLIED', revision: 1, policy: { actions: payment ? ['transfer'] : ['swap', 'transfer'], owner_approval: true, frozen: false, destinations: { mode: 'only', list: [{ action: 'transfer', address: 'payee.near', confidential: true }] }, assets: ['usdc'], budget: {}, limits: {} }, usage: { budget: {} }, cooldowns: {} } },
+            get instance() { return { agentId: this.setup?.agentId ?? null, executor: this.setup?.executor !== false }; }, setup: { executor: true, agentId: 'fixture', wallet: 'agent.near', owner: { type: 'near', account_id: 'owner.near' }, grant: { id: 'live', label: 'payout', expiresAt: '2099-01-01T00:00:00Z' }, dao: null },
+            overview: { agentId: 'fixture', digest: 'sha256:' + 'a'.repeat(64), notInForce: null, agreed: ['payee.near'], grants: [], unmanaged: [], target: { [USDC]: 1 }, rebalance: { minLegUsd: 1, maxCostBps: 100 },
+              book: [...(budget ? [{ asset: 'nep141:wrap.near', symbol: 'wNEAR', decimals: 24, public: '0', confidential: '0', price: 1, usd: 0 }] : []), { asset: USDC, symbol: 'USDC', decimals: 6, public: '0', confidential: '10000000', price: scenario === 'no-price' ? null : 1, usd: scenario === 'no-price' ? null : 10, priceUpdatedAt: at, priceExpiresAt: expires }],
+              policy: { status: 'APPLIED', revision: 1, policy: { actions: payment ? ['transfer'] : ['swap', 'transfer'], owner_approval: true, frozen: false, destinations: { mode: 'only', list: [{ action: 'transfer', address: 'payee.near', confidential: true }] }, assets: [USDC], budget: {}, limits: {} }, usage: { budget: {} }, cooldowns: {} } },
             'treasury/get': null, held: [], unresolved: [], 'inbox/list': [], 'agreements/list': [], activity: [], 'owner/pending': [], 'owner/actions': [],
             paymentHistory: { items: payment ? [{ correlationId: 'payment', at }] : [], complete: true },
-            paymentStatus: { status: 'REFUNDED', failureCode: null, createdAt: at, updatedAt: at, request: { asset: 'usdc', recipient: 'payee.near', amount: '1000000', confidential: true }, approvalId: null, expiresAt: null, detailError: null,
+            paymentStatus: { status: 'REFUNDED', failureCode: null, createdAt: at, updatedAt: at, request: { asset: USDC, recipient: 'payee.near', amount: '1000000', confidential: true }, approvalId: null, expiresAt: null, detailError: null,
               evidence: scenario === 'evidence' ? evidence : { txHash: null, destinationTxHash: null, refundTxHash: null, refundTo: null, refundedAmount: null } },
             'autopilot/get': { on: false, everyMin: 60, maxUsd: 10 }, 'autopilot/evidence': { ticks: [] }, 'strategy/get': {}, invoices: [],
             pay: { outcome: 'refused', code: 'spend_budget_exceeded', details },
           };
-          return route.fulfill({ json: { json: values[method] ?? null } });
+          return route.fulfill({ json: { json: rpcValue(values, method) } });
         }
         if (p.startsWith('/static/')) return route.fulfill({ path: root + p, contentType: p.endsWith('.js') ? 'application/javascript' : p.endsWith('.css') ? 'text/css' : 'font/woff2' });
         return route.fulfill({ path: root + '/index.html', contentType: 'text/html' });
@@ -52,6 +54,7 @@ const root = require('node:path').resolve(process.argv[2] || 'web/dist');
         assert.doesNotMatch(await page.locator('body').innerText(), /Try again at/);
         assert.deepEqual(writes, ['pay']);
       } else if (payment) {
+        await page.getByText('Provider evidence', { exact: true }).click();
         const section = page.getByRole('region', { name: 'Provider-reported payment evidence' });
         await section.waitFor();
         await page.getByText('Provider reported refunded', { exact: true }).first().waitFor();

@@ -1,4 +1,34 @@
-import { closeSync, fstatSync, fsyncSync, openSync, readSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, mkdirSync, fstatSync, fsyncSync, openSync, readSync, statSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+
+/** Persist one directory entry; filesystem sync failures propagate. */
+function syncParent(path: string) {
+  const fd = openSync(dirname(resolve(path)), "r");
+  try { fsyncSync(fd); } finally { closeSync(fd); }
+}
+
+/** Ensure one state directory under an established parent. Always sync its entry:
+ * existence alone does not prove an earlier attempt (or another process) synced it. */
+export function mkdirSynced(path: string) {
+  try { mkdirSync(path); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST" || !statSync(path).isDirectory()) throw error;
+  }
+  syncParent(path);
+}
+
+/** Exclusive, durable execution claim. Keep a created marker even when syncing fails. */
+export function claimSynced(path: string): boolean {
+  let fd: number;
+  try { fd = openSync(path, "wx"); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw error;
+  }
+  try { fsyncSync(fd); } finally { closeSync(fd); }
+  syncParent(path);
+  return true;
+}
 
 /**
  * Appends one JSON line and syncs it to disk before returning; throws if it can't. After a crash
@@ -16,6 +46,7 @@ export function appendSynced(path: string, line: object) {
   } finally {
     closeSync(fd);
   }
+  syncParent(path);
 }
 
 /**
@@ -27,4 +58,5 @@ export function writeAtomic(path: string, text: string, mode?: number) {
   rmSync(tmp, { force: true }); // a leftover from a crash would keep its own mode
   writeFileSync(tmp, text, { mode, flush: true });
   renameSync(tmp, path);
+  syncParent(path);
 }

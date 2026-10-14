@@ -20,10 +20,11 @@ a dated observation with real funds, on this area's own agent or on another (the
 isolated test agent), and the row says which; **tested offline**; **per pinned provider source, with deployed behavior unverified**; or **not yet**. The provider and its
 custody are still trusted; [enforcement](enforcement.md) sets out how far, and what isn't established.
 
-The app shows only this area's running brief. Public and compact signed-in cards always show its
-evidence coverage by observation scope and its known limitations, without a completion score.
+The app shows only this area's running brief. Public cards show its evidence coverage by observation
+scope and its known limitations, without a completion score. The shared signed-in workspace leads
+with tasks and status; each area keeps its known limitations beside its detailed evidence.
 Mainnet observations do not establish every guarantee. Public cards also show its capability and safety targets,
-controls and evidence stages; members follow **Inspect evidence and limitations** on Overview
+controls and evidence stages; members follow **Inspect evidence and limitations** on Portfolio
 for the same requirements with their evidence. Roadmap briefs remain below for planning and are
 not displayed in the app. Both presentations use the [canonical inventory](../evidence/inventory.ts).
 The tables below are generated; edit the inventory and run `pnpm evidence:write`.
@@ -138,8 +139,8 @@ missing selected ID. Approve-only hosts refuse export. Current token metadata is
 enrichment, dated at export, and failure leaves explicit gaps rather than changing historical amounts.
 `test/run-log-export.test.ts` and `test/gateway-denial.test.ts` exercise these behaviors offline.
 
-To save a private recording, choose **View treasury runs** on Treasury's Overview, then
-**Inspect recording** and **Download recording**. Automations links to the same full run view. **Run to view** lists
+To save a private recording, open **Runs** in Treasury, then
+**Inspect recording** and **Download recording**. Strategy links to the same full run view. **Run to view** lists
 retained runs, including quiet runs. The download requests that run's exact ID and saves a JSON file locally;
 keep real files in `~/agencies/proto-releases`, never the repository or public assets. A tick without
 a recorded end downloads as incomplete, containing its known start and any recorded intermediate events. Downloading does not run or
@@ -156,7 +157,7 @@ reconcile a tick. The browser download flow has been built, but has not been che
 
 ## Strategy setup in the dashboard (offline-tested)
 
-Automations shows the saved Treasury strategy, with swap limits on demand. An operator on the
+Strategy shows the saved Treasury strategy, with swap limits on demand. An operator on the
 executor edits allocations, schedule and ceiling, reviews them, and saves with the schedule off.
 Saving needs no existing grant. A stale save preserves the draft and requires comparing the current
 strategy before reviewing again. The owner then reviews the exact saved strategy and issues its

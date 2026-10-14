@@ -65,49 +65,32 @@ The command line has only what the dashboard doesn't: owner actions signed with 
 
 ## Hosted demo
 
-Two pages on Railway. Signing in with a NEAR wallet signs a message, never a transaction.
+Two pages run on Railway. Signing in with a NEAR wallet signs a message, never a transaction.
 
-- **Dashboard**, https://proto.multiagency.ai. Signed out, it shows the two areas, Payables and
-  Treasury: each running brief from the Agent Connect catalog as capabilities (what the agent does) and guarantees
-  (what it can't do). Each guarantee names who stops a misbehaving agent (the signed policy, our server, or
-  nobody yet), and each row says how it's known: observed on mainnet, tested offline, per pinned provider source (deployed behavior unverified), or not yet.
-  The locally prepared cards always show **What has been demonstrated** for the running brief: mainnet observations
-  across our agents, offline-only tests, requirements not yet demonstrated and unsupported requirements.
-  Unsupported targets are excluded from working and offline-only counts.
-  Known limitations stay visible on public and compact signed-in cards. These are recorded observations,
-  not live status, a completion percentage or proof of every guarantee. The summary and limitations come
-  from the canonical inventory; detailed requirements remain under **View requirements**.
-  The public landing page leads with illustrative Payables and Treasury workflows, then requirement
-  stages and visible limitations. “Observed on mainnet” labels recorded observations across our agents.
-  A Connect wallet button in the header starts the existing NEAR sign-in flow; the illustrations use no agent records.
-  Each workflow has a browser-only interactive simulation built from authored AG-UI events, with
-  guided next/previous steps, optional six-second playback, pause and restart controls. Payables
-  keeps a fictional invoice visible and requires an explicit simulated approval. Treasury shows
-  illustrative allocations and proposed changes for two example strategies. Both let visitors
-  remove the grant to see where execution stops. Earlier steps and AG-UI events remain inspectable. These demos
-  use fictional events, read no agent data and submit no money actions; they are not mainnet evidence.
-  **Explore the prototype** opens a separate example workspace at `/#/explore/payables/overview`
-  or `/#/explore/treasury/overview`. Visitors can navigate example agreements, invoices, automations,
-  policy permission and activity. These routes run without gateway reads or wallet sign-in, keep
-  example progress within the current area in memory, and reset on reload or switching areas.
-  They illustrate selected prototype flows; authenticated agent dashboards still require sign-in.
-  It reads nothing from the server. Members of `agentic.sputnik-dao.near` sign in to see the treasury and
-  the proposals.
-  It is the treasury agent's executor and runs the payout agent approve-only.
-- **Invoices**, https://invoices.multiagency.ai, where anyone asks the DAO to be paid. It is the payout
-  agent's executor.
+- **Dashboard**, https://proto.multiagency.ai: the treasury executor and a payout approve-only instance.
+  Public pages show fictional workflows and recorded requirement stages from the canonical inventory,
+  with known limitations visible. The simulations and example workspace read no agent records and
+  submit no money actions. Members sign in to inspect their agents and owner actions.
+- **Invoices**, https://invoices.multiagency.ai: the payout executor, where payees request agreements,
+  file invoices and follow their existing payment identities.
 
-The frontend layout changes are prepared locally, not yet verified on the hosted deployment: signed-in
-entry cards retain loading/error/retry states; on mobile, visitors see both areas before the sign-in form.
-The cross-agent attention list keeps known items visible while independent checks load or fail.
-An existing agent’s records remain accessible without a grant; the run view explains why a new run
-is unavailable without a grant or on an approve-only host.
-Treasury's Overview summarizes the latest retained run, even after a quiet day, and links to retained history; Payables keeps
-payment timelines prominent. Overview labels incomplete attention checks, and its visible evidence link
-opens the running brief without nested disclosures. Public requirement stages remain expandable.
-Install the pinned browser once with `pnpm exec playwright install chromium`, then run
-`pnpm test:browser` to build the app and run all offline browser suites in `test/browser/`.
-They intercept requests and cover mobile layouts, unavailable data, retry and recorded run outcomes. Automations holds settings and manual previews, with a link to the run view and **Run now**.
+The locally prepared workspace has Home, Payables, Portfolio (the Treasury area), and Activity.
+Desktop navigation uses one rail; mobile uses a navigation drawer. Payments groups review, manual
+payment creation and invoice administration. Strategy separates saved configuration, owner
+authorization and scheduling; sweep is in Balances & funding. Area identities and permissions remain
+separate; balances are not combined. Payment approval and
+payment completion are separate outcomes. Treasury strategy configuration, owner authorization and
+schedule enablement remain separate decisions. Existing agent, payment and run URLs are retained.
+These interface changes are covered by offline browser fixtures, not verified on the deployed hosts.
+See [frontend responsibilities](docs/architecture.md#frontend-responsibilities-offline-tested) for
+query, recovery and navigation behavior, [Payables](docs/facilitator.md) and [Treasury](docs/treasury.md)
+for requirement evidence, and [DEMO.md](DEMO.md) for the walkthrough.
+
+Install the pinned browser once with `pnpm exec playwright install chromium`; `pnpm test:browser`
+builds the app and runs the offline browser suites. These intercept requests and start no executor.
+`pnpm test:e2e` additionally runs an isolated application stack with simulated provider, chain and wallet boundaries.
+`pnpm verify` runs the complete offline verification sequence. See [test boundaries and harnesses](docs/testing.md)
+for credential isolation, live-test submission blocking, fixture contracts and failure artifacts.
 
 Each agent in `deploy/dashboard.json` names its `owner`, and the gateway decides per agent who may see
 it, from that owner at most a minute old. When the owner is a Sputnik DAO, an account in any of its roles
@@ -198,6 +181,10 @@ of maintaining separate requirement statuses.
 
 ## Not done yet
 
+Sweep covers managed USDC, wNEAR and ETH only; it does not establish that other assets are confidential.
+Campaign winner identity and prize validation are not built. The local duplicate check covers only
+a manual payout matching an existing held payout; provider replay deduplication remains unverified.
+
 - Payment recovery reads and owner-action discovery are locally implemented and offline-tested, not
   verified on the deployed hosts. Recent payout discovery scans at most 250 provider records and
   filters to the past day; incomplete scans are explicit. Original terms depend on provider/local
@@ -232,8 +219,9 @@ as proof that a replacement payment is safe. See [recovery guidance](DEMO.md#the
 - The API keeps signing requests open for 5 to 10 minutes, so a slow council misses the window.
 - Trezu shows these proposals as a generic "sign on v1.signer", so a member voting there sees only a hash.
   The dashboard's "What am I voting on?" shows what each one does; check it there first.
-- Two owner actions signed as NEAR delegate actions (create, freeze, unfreeze, policy update) pending at
-  once share a nonce, so the second fails after its vote passes. File them one at a time.
+- DAO delegate preparations sharing owner-intent storage on one host are serialized per owner and
+  refuse while an earlier delegate submission is unresolved (offline-tested). Other hosts and signing
+  clients are not coordinated; file those actions one at a time. See [enforcement](docs/enforcement.md).
 - The policy's asset list limits what the agent spends, not what it buys: the wallet lets a swap into an
   unlisted asset through. This server refuses one before sending, but the wallet should enforce it.
 - The owner can't verify the enforced policy: it is stored encrypted to the custody keystore, and the

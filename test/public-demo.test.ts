@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { EventSchemas } from "@ag-ui/core/schemas";
-import { demoEvents, demoState, demoSteps } from "../web/src/demo-events.js";
+import { demoEvents, demoState, demoSteps } from "../web/src/public/demo-events.js";
 
 test("public simulation streams conform to AG-UI and preserve refusal at run completion", () => {
   for (const kind of ["facilitator", "treasury"] as const) {
@@ -44,9 +44,9 @@ test("example allocations conserve totals, reflect strategy and never show a res
 
 test("public simulation modules have only local playback and AG-UI dependencies", () => {
   for (const file of ["public-demo.tsx", "demo-events.ts", "prototype-explorer.tsx"]) {
-    const source = readFileSync(new URL(`../web/src/${file}`, import.meta.url), "utf8");
+    const source = readFileSync(new URL(`../web/src/public/${file}`, import.meta.url), "utf8");
     const imports = [...source.matchAll(/from "([^"]+)"/g)].map(m => m[1]);
-    assert.ok(imports.every(name => ["react", "./demo-events", "./public-demo", "@ag-ui/core"].includes(name!)));
+    assert.ok(imports.every(name => ["react", "./demo-events", "./public-demo", "@ag-ui/core", "../shared/task-labels"].includes(name!)));
     assert.doesNotMatch(source, /fetch\(|WebSocket|EventSource|sendBeacon|localStorage|sessionStorage|useQuery|client\./);
   }
 });

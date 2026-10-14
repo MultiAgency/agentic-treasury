@@ -1,15 +1,17 @@
+const { rpcValue } = require('./fixtures/rpc.cjs');
 /** Offline browser regressions. Every request is fulfilled by a fixture or aborted.
  * PLAYWRIGHT_MODULE=/path/to/playwright-core BROWSER_EXECUTABLE=/path/to/chrome
  * node test/browser/payment-recovery.cjs /path/to/build
  */
+const { openWorkspaceNavigation } = require('./fixtures/navigation.cjs');
 const assert = require('node:assert/strict');
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { chromium } = require('./fixtures/browser.cjs');
 const root = require('node:path').resolve(process.argv[2] || 'web/dist');
 const results = [];
 (async () => {
   const browser = await chromium.launch({headless:true, executablePath:process.env.BROWSER_EXECUTABLE});
   try {
-    for (const scenario of ['latest-terms','wallet-submitted','owner-read-error','receipt','history-error','unverified-history','status-error','rejection','grantless','focused-card','held-error','history-incomplete']) {
+    for (const scenario of ['local-history','latest-terms','wallet-submitted','owner-read-error','receipt','history-error','unverified-history','status-error','rejection','grantless','focused-card','held-error','history-incomplete']) {
       if (process.env.SCENARIO && process.env.SCENARIO !== scenario) continue;
       const page = await browser.newPage({viewport:{width:390,height:900}});
       page.setDefaultTimeout(5000);
@@ -31,7 +33,7 @@ const results = [];
           const settled=scenario==='rejection'||scenario==='unverified-history'||(scenario==='receipt'&&reloaded);
           const held=['latest-terms','wallet-submitted','owner-read-error','status-error','rejection','focused-card'].includes(scenario)||(scenario==='receipt'&&!reloaded);
           const values={
-            setup:{executor:false,agentId:'fixture',wallet:'agent.near',owner:{type:'near',account_id:'owner.near'},grant:scenario==='grantless'?null:{label:'payout',expiresAt},dao:null},
+            get instance() { return { agentId: this.setup?.agentId ?? null, executor: this.setup?.executor !== false }; }, setup:{executor:false,agentId:'fixture',wallet:'agent.near',owner:{type:'near',account_id:'owner.near'},grant:scenario==='grantless'?null:{label:'payout',expiresAt},dao:null},
             overview:{agentId:'fixture',digest:'fixture',notInForce:null,agreed:[],unmanaged:[],target:{usdc:1},rebalance:{minLegUsd:1,maxCostBps:100},book:[{asset:'usdc',symbol:'USDC',decimals:6,public:'0',confidential:'10000000',usd:10,price:1}],policy:{policy:{actions:['transfer'],frozen:false,destinations:{mode:'only',list:[]},assets:'any',budget:{},limits:{}},usage:{budget:{}},cooldowns:{}}},
             'treasury/get':null,held:scenario==='focused-card' ? [...(!reloaded?[{at,kind:'remote',request,correlationId:'payment',approvalId:'approval'}]:[]),{at,kind:'remote',request:{...request,amount:'2000000'},correlationId:'second-payment',approvalId:'second-approval'}] : held?[{at,kind:'remote',request,correlationId:'payment',approvalId:'approval'}]:[],unresolved:[],activity:[],'inbox/list':[],'agreements/list':scenario==='latest-terms' ? [
               {id:'declined',payee:'payee.near',status:'declined',terms:{maxAmount:'1',until:'2030-01-01T00:00:00Z'}},
@@ -44,14 +46,27 @@ const results = [];
             paymentStatus:{status:scenario==='rejection'?'FAILED':settled?'SUCCESS':'PENDING_APPROVAL',failureCode:null,createdAt:at,updatedAt:at,request,approvalId:scenario==='unverified-history'?null:'approval',expiresAt,detailError:null},
             'autopilot/get':{on:false,everyMin:60,maxUsd:10},'autopilot/evidence':{ticks:[]},'strategy/get':{},invoices:[],ledger:[],reconcileBooks:[],
           };
-          return route.fulfill({json:{json:values[method]??null}});
+          if (scenario === 'local-history') {
+            values.activity = [{ at, kind: 'invoices', request, correlationId: 'retained-payment', status: 'SUCCESS' }];
+            values.paymentHistory = { items: [], complete: false };
+          }
+          return route.fulfill({json:{json:rpcValue(values, method)}});
         }
         if(p.startsWith('/static/')) return route.fulfill({path:root+p,contentType:p.endsWith('.js')?'application/javascript':p.endsWith('.css')?'text/css':'font/woff2'});
         return route.fulfill({path:root+'/index.html',contentType:'text/html'});
       });
       try {
-        await page.goto('http://frontend.test/a/payables/'+(scenario==='grantless'?'activity':scenario==='unverified-history'?'follow/payment?payment=payment':''));
+        await page.goto('http://frontend.test/a/payables/'+(scenario==='grantless'?'activity':['local-history','history-error','held-error','history-incomplete'].includes(scenario)?'':'follow/payment?payment=payment'));
         await page.waitForTimeout(1800);
+        if (scenario === 'local-history') {
+          const record = page.getByRole('list', { name: 'Payment records' }).getByRole('link').filter({ hasText: 'retained-payment' });
+          await record.waitFor();
+          assert.match(await record.innerText(), /123\.456789 USDC to payee\.near/);
+          assert.equal(statusReads, 0, 'retained summaries must not poll individual payments');
+          await page.reload();
+          await record.waitFor();
+          assert.match(await record.innerText(), /123\.456789 USDC to payee\.near/);
+        }
         if(scenario==='latest-terms') { await page.getByText(/Each invoice up to 200 USDC/).waitFor(); await page.getByText('Within recorded terms',{exact:true}).waitFor(); assert.equal(await page.getByText('Outside agreed terms',{exact:true}).count(),0); }
         if(scenario==='receipt') { reloaded=true; await page.reload(); await page.getByText('Paid',{exact:true}).waitFor(); assert.match(await page.locator('body').innerText(),/123\.456789 USDC/); }
         if(scenario==='wallet-submitted') { await page.getByText(/Submission attempted.*checking/i).first().waitFor(); assert.equal(await page.getByRole('button',{name:'Sign approval',exact:true}).count(),0); assert.equal(await page.getByRole('button',{name:'Sign rejection',exact:true}).count(),0); await page.reload(); await page.getByText(/Submission attempted.*checking/i).first().waitFor(); assert.equal(await page.getByRole('button',{name:'Sign approval',exact:true}).count(),0); }
@@ -71,7 +86,7 @@ const results = [];
         if(scenario==='history-incomplete') { assert.match(await page.locator('body').innerText(),/history is incomplete/); assert.doesNotMatch(await page.locator('body').innerText(),/Nothing waits for a vote/); }
         if(scenario==='unverified-history') { await page.getByText('Paid',{exact:true}).waitFor(); assert.match(await page.locator('body').innerText(),/Approval history is unverified/); assert.doesNotMatch(await page.locator('body').innerText(),/invoice stays with the invoice host|Each payment is held until/); }
         if(scenario==='rejection') { const text=await page.locator('body').innerText(); assert.match(text,/Rejection submitted/); assert.doesNotMatch(text,/Not paid|nothing is paid/); }
-        if(scenario==='grantless') await page.getByRole('link',{name:'Activity',exact:true}).first().waitFor();
+        if(scenario==='grantless') { await openWorkspaceNavigation(page); await page.getByRole('navigation',{name:'Area',exact:true}).getByRole('link',{name:'Activity',exact:true}).waitFor(); }
         if(scenario==='focused-card') {
           const receiptLink=page.getByRole('link',{name:'Link to this payment',exact:true}).first();
           await receiptLink.focus();

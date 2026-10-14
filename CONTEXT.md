@@ -29,6 +29,17 @@ requirements distinguish mainnet observations, offline tests, pinned provider so
 behavior unverified, and requirements not yet demonstrated.
 _Avoid_: prototype (for an area), use case
 
+**Workspace**:
+The signed-in owner's interface, with a shared Home, Payables and Portfolio sections, and Activity.
+Each area retains its own agent, policy, grant, balance and access permissions. The shared Home
+routes attention to the relevant area; it does not combine balances or authorize money actions.
+Payables opens on Payments; Portfolio opens on Overview, with Strategy and Runs as task destinations.
+Payment queue rows link to one payment detail; approval and payment completion remain separate.
+The desktop navigation rail and mobile drawer share one hierarchy. Payments includes manual payment
+creation and invoice review; Agreements covers terms and policy inclusion. Sweep is in Balances &
+funding. Each task keeps its evidence summary and limitations nearby.
+_Avoid_: entering a prototype or switching dashboards for navigation within the workspace.
+
 **Executor**:
 The one instance that sends, reconciles and serves invoices for an agent. Any other instance of the same
 agent is **approve-only**: it reads and approves as the owner, and never sends.
@@ -39,6 +50,12 @@ Who may use the hosted dashboard, decided per agent from its owner. A member is 
 owner DAO's group roles (a token-weighted role names no one): reads everything and may file owner actions
 as proposals. An operator may also move money and change settings: an owner that is a wallet, for its own
 agents, or an account named beside an agent in the dashboard's configuration, for that agent.
+
+**Portfolio**:
+The product-facing label for the Treasury area across the landing page, example workspace and
+signed-in workspace.
+It covers allocations, rebalancing and strategy limits; the underlying treasury agent, purpose,
+grant labels and routes retain their existing names.
 
 ## Mandate
 
@@ -119,7 +136,7 @@ _Avoid_: pending approval (as a noun)
 A proven outcome that nothing was sent, recorded with a code.
 
 **Sweep**:
-Shielding every public balance into the confidential one: the agent keeps nothing public.
+Shielding the managed USDC, wNEAR and ETH public balances into their confidential balances. Other assets are not included.
 
 **Money lock**:
 The lock every money action runs under: one money-moving run at a time across this host's processes,
@@ -143,8 +160,9 @@ _Avoid_: bot, cron job
 
 **Tick**:
 One autopilot run: sweep, then rebalance if the strategy's grant approves it and the plan fits the
-limit. Scheduled on the strategy's interval, counted from the previous tick's end, or run by an
-operator. Each records a start and an end in the evidence. New ticks also record intermediate stage
+limit. Scheduled on the strategy's interval, counted from the latest recorded `run` summary in the
+inbox, or run by an operator. That summary is written before the final after-observation and evidence
+end; it is not proof that the tick or its operations settled. Each records a start and an end in the evidence. New ticks also record intermediate stage
 starts/returns and provider-accepted submissions in a supplementary progress file. These observations
 never authorize a send or establish settlement; older ticks have no reconstructed stages.
 

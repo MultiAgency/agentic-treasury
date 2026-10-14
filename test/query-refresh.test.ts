@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { QueryClient } from "@tanstack/react-query";
-import { refreshQueries } from "../web/src/query-refresh.js";
+import { refreshQueries } from "../web/src/shared/query-refresh.js";
 
 test("scoped refresh invalidates affected reads without invalidating unrelated provider observations", async () => {
   const client = new QueryClient();

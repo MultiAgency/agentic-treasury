@@ -228,3 +228,21 @@ test("a status read naming another operation isn't a mere read failure: the invo
   mock.method(api, "getStatus", async () => ({ correlation_id: "someone-else", agent_id: process.env.AGENT_ID, status: "SUCCESS" }));
   assert.equal((await mine(invoice.payee))[0]?.status, "unknown");
 });
+
+for (const [name, change] of [
+  ["USDC removed", { assets: [ASSETS.wNEAR] }],
+  ["transfers disabled", { actions: [] }],
+] as const) test(`approval refuses a current policy with ${name}`, async () => {
+  onDashboard();
+  withPolicy(() => change);
+  await assert.rejects(checkPaymentApproval(vote), /asset_not_allowed|action_not_allowed/);
+  assert.equal(signatures, 0);
+});
+
+for (const verdict of ["approve", "reject"] as const) test(`${verdict} refuses a status response naming another payment`, async () => {
+  onDashboard();
+  mock.method(api, "getStatus", async () => ({ correlation_id: "other-payment", agent_id: process.env.AGENT_ID,
+    type: "transfer", status: "PENDING_APPROVAL", details: { approval_id: "approval" } }));
+  await assert.rejects(checkPaymentApproval({ ...vote, verdict }), /another operation|identify/);
+  assert.equal(signatures, 0);
+});

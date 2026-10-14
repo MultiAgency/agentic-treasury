@@ -1,0 +1,22 @@
+import assert from "node:assert/strict";
+import { test, mock } from "node:test";
+import { createRouterClient } from "@orpc/server";
+import { router } from "../src/router.js";
+import { mayCall } from "../src/gateway/allowlist.js";
+import { freshDirectory } from "./fixtures/harness.js";
+freshDirectory("instance-status");
+test("instance identity is private member-readable configuration with no provider dependency", async () => {
+  mock.method(globalThis, "fetch", async () => assert.fail("Instance status must not call a provider"));
+  const client = createRouterClient(router);
+  process.env.AGENT_ID = "fixture";
+  process.env.EXECUTOR = "off";
+  assert.deepEqual(await client.instance(), { agentId: "fixture", executor: false });
+  process.env.EXECUTOR = "on";
+  assert.deepEqual(await client.instance(), { agentId: "fixture", executor: true });
+  assert.equal(mayCall("member", "instance"), true);
+  assert.equal(mayCall("member", "autopilot/stop"), false);
+  process.env.EXECUTOR = "off";
+  await assert.rejects(client.autopilot.stop(), /executor/);
+  delete process.env.AGENT_ID;
+  assert.deepEqual(await client.instance(), { agentId: null, executor: false });
+});

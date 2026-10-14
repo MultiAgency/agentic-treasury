@@ -18,6 +18,8 @@ const Config = z.object({
     .array(
       z.object({
         name: z.string().regex(/^[a-z0-9-]{1,32}$/),
+        /** Stable presentation identity, independent of the policy's current permissions. */
+        area: z.enum(["payables", "treasury"]).optional(),
         /**
          * The NEAR account the agent answers to: a Sputnik DAO, whose members sign in, or any other
          * account, which signs in itself (src/gateway/roles.ts).
@@ -43,6 +45,8 @@ export function loadConfig(file = process.env.DASHBOARD_FILE ?? "dashboard.json"
   const config = Config.parse(JSON.parse(readFileSync(file, "utf8")));
   const names = new Set(config.agents.map((a) => a.name));
   if (names.size !== config.agents.length) throw new Error("Agent names must be unique");
+  const ports = new Set(config.agents.map((a) => a.port));
+  if (ports.size !== config.agents.length) throw new Error("Agent ports must be unique");
   return config;
 }
 
@@ -52,8 +56,8 @@ export function loadConfig(file = process.env.DASHBOARD_FILE ?? "dashboard.json"
  * this agent's executor. Gateway-only settings stay out.
  */
 export function childEnv(agent: AgentEntry & { envFile: string }, parent: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const { SESSION_SECRET: _secret, DASHBOARD_FILE: _file, DASHBOARD_HOST: _host, EXECUTOR: _executor, ...shared } = parent;
-  return { ...shared, ENV_FILE: agent.envFile, PORT: String(agent.port), ...(agent.executor ? {} : { EXECUTOR: "off" }) };
+  const { SESSION_SECRET: _secret, DASHBOARD_FILE: _file, DASHBOARD_HOST: _host, DASHBOARD_AREA: _area, EXECUTOR: _executor, ...shared } = parent;
+  return { ...shared, ENV_FILE: agent.envFile, PORT: String(agent.port), ...(agent.area && { DASHBOARD_AREA: agent.area }), ...(agent.executor ? {} : { EXECUTOR: "off" }) };
 }
 
 /** A host as sign-in binds it ("dao.example.com", with a port if any), also when given as a URL. */

@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, beforeEach, mock } from "node:test";
@@ -15,8 +15,16 @@ export const TSX = fileURLToPath(new URL("../../node_modules/.bin/tsx", import.m
  */
 export function freshDirectory(prefix: string, { per = "test" }: { per?: "test" | "suite" } = {}) {
   const home = process.cwd();
-  (per === "test" ? beforeEach : before)(() => process.chdir(mkdtempSync(join(tmpdir(), `${prefix}-`))));
-  after(() => process.chdir(home));
+  const directories: string[] = [];
+  (per === "test" ? beforeEach : before)(() => {
+    const directory = mkdtempSync(join(tmpdir(), `${prefix}-`));
+    directories.push(directory);
+    process.chdir(directory);
+  });
+  after(() => {
+    process.chdir(home);
+    for (const directory of directories) rmSync(directory, { recursive: true, force: true });
+  });
 }
 
 /** Any network call fails, so a test that would reach the provider or a chain says so. */

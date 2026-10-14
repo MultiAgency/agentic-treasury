@@ -1,7 +1,8 @@
+const { rpcValue } = require('./fixtures/rpc.cjs');
 /** Offline browser checks: serve the built files via interception; abort every external request.
  * PLAYWRIGHT_MODULE=/path/to/playwright-core BROWSER_EXECUTABLE=/path/to/chrome node test/browser/live-run.cjs [web/dist]
  */
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { chromium } = require('./fixtures/browser.cjs');
 const assert = require('node:assert/strict');
 const root = require('node:path').resolve(process.argv[2] || 'web/dist');
 const at = new Date(Date.now() - 120_000).toISOString(), end = new Date(Date.now() - 60_000).toISOString();
@@ -89,11 +90,11 @@ const overview = { agentId: 'fixture', digest: 'fixture', grants: [], rebalance:
             return route.fulfill({ json: { json: mismatch ? { ...value, agentId: 'wrong' } : value } });
           }
           const shownOverview = payables ? { ...overview, notInForce: policyBlocked ? 'frozen' : null, agreed: agreed ? ['payee.near'] : [], policy: { ...overview.policy, policy: { ...overview.policy.policy, actions: ['transfer'], destinations: { mode: 'only', list: agreed ? [{ action: 'transfer', address: 'payee.near', confidential: true }] : [] } } } } : overview;
-          const values = { setup, overview: shownOverview, 'treasury/get': null, held: [], unresolved: [], 'inbox/list': [], 'agreements/list': payables ? [{ id: 'agreement-1', status: agreed ? 'agreed' : 'proposed', origin: 'owner', at, payee: 'payee.near', amount: '1000000', terms: { maxAmount: '1000000', until: '2030-01-01T00:00:00Z' } }] : [], activity: [], 'owner/pending': [], 'owner/actions': [],
+          const values = { get instance() { return { agentId: this.setup?.agentId ?? null, executor: this.setup?.executor !== false }; }, setup, overview: shownOverview, 'treasury/get': null, held: [], unresolved: [], 'inbox/list': [], 'agreements/list': payables ? [{ id: 'agreement-1', status: agreed ? 'agreed' : 'proposed', origin: 'owner', at, payee: 'payee.near', amount: '1000000', terms: { maxAmount: '1000000', until: '2030-01-01T00:00:00Z' } }] : [], activity: [], 'owner/pending': [], 'owner/actions': [],
             'autopilot/get': { on: true, everyMin: 60, maxUsd: 10 }, 'strategy/get': ready,
             'autopilot/evidence': { ticks: [{ ...context, id: 'tick-2', end: null }, { ...context, end: completed ? { endedAt: end, before: { error: 'unavailable' }, after: { error: 'unavailable' }, plan: null, steps: [], shields: [], rejected: [], refusal: null, outcome: 'awaiting outcome' } : null }] } };
           if (!(method in values)) { writes.push(method); return route.abort(); }
-          return route.fulfill({ json: { json: values[method] } });
+          return route.fulfill({ json: { json: rpcValue(values, method) } });
         }
         if (p.startsWith('/static/')) return route.fulfill({ path: root + p, contentType: p.endsWith('.js') ? 'application/javascript' : p.endsWith('.css') ? 'text/css' : 'font/woff2' });
         return route.fulfill({ path: root + '/index.html', contentType: 'text/html' });

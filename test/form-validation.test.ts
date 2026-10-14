@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { accountError, deadlineError, payeeError } from "../web/src/form-validation.js";
+import { accountError, deadlineError, payeeError } from "../web/src/shared/form-validation.js";
 
 test("payee entry accepts near.com accounts without changing owner-account validation", () => {
   for (const account of ["nearcom:Payee.near", "NEARCOM:0x" + "AB".repeat(20), "nearcom:" + "a".repeat(64)]) {

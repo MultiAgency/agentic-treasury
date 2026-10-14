@@ -1,6 +1,6 @@
 import { ArrowDown, LockSimple } from "@phosphor-icons/react";
-import { PublicWorkflows, PrototypeCard } from "./showcase";
-import { SignIn } from "./session";
+import { PublicWorkflows, PrototypeCard } from "./features/evidence/showcase";
+import { SignIn } from "./app/session";
 
 /**
  * The page for anyone not signed in: the two areas, each agent's capabilities and guarantees and how each is known,

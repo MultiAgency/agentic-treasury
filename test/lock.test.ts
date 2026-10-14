@@ -69,7 +69,7 @@ test("an operation cut off by a crash blocks every new money action after restar
 });
 
 test("only proven outcomes resolve an operation", async () => {
-  const request = (key: string) => JSON.stringify({ at: "t", idempotencyKey: key, kind: "k", method: "swap", request: {} });
+  const request = (key: string) => JSON.stringify({ at: "2026-10-14T00:00:00Z", idempotencyKey: key, kind: "k", method: "swap", request: {} });
   writeFileSync(
     opsLog(),
     [
@@ -96,7 +96,7 @@ test("an action held for the owner's approval doesn't block, and settles by its 
   writeFileSync(
     opsLog(),
     [
-      JSON.stringify({ at: "t", idempotencyKey: "held", kind: "payout", method: "transfer", request: {} }),
+      JSON.stringify({ at: "2026-10-14T00:00:00Z", idempotencyKey: "held", kind: "payout", method: "transfer", request: {} }),
       JSON.stringify({ idempotencyKey: "held", correlation_id: "op_held", status: "PENDING_APPROVAL" }),
       "",
     ].join("\n"),
@@ -114,7 +114,7 @@ test("a held action seen mid-settlement keeps waiting for its outcome without bl
   writeFileSync(
     opsLog(),
     [
-      JSON.stringify({ at: "t", idempotencyKey: "held", kind: "payout", method: "transfer", request: {} }),
+      JSON.stringify({ at: "2026-10-14T00:00:00Z", idempotencyKey: "held", kind: "payout", method: "transfer", request: {} }),
       JSON.stringify({ idempotencyKey: "held", correlation_id: "op_held", status: "PENDING_APPROVAL" }),
       "",
     ].join("\n"),

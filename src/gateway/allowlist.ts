@@ -10,6 +10,7 @@ import type { Role } from "./roles.js";
  */
 const MEMBER = new Set([
   "setup",
+  "instance",
   "overview",
   "policyHistory",
   "treasury/get",

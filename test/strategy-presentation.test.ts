@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { strategyPresentation } from "../web/src/strategy-presentation.js";
+import { strategyPresentation } from "../web/src/features/portfolio/strategy-presentation.js";
 import type { StrategyStatus } from "../src/strategy-status.js";
 import { DEFAULT_STRATEGY } from "../src/strategy-digest.js";
 const snapshot: StrategyStatus = { strategy: DEFAULT_STRATEGY, digest: "reviewed", grantSuffix: "fixture", executor: true,

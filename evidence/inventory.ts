@@ -202,10 +202,10 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
           {
             type: "guarantee",
             text: "A duplicate winner or inflated prize can't pay twice",
-            stoppedBy: "server",
-            known: "offline",
+            stoppedBy: "nothing",
+            known: "not-yet",
             evidence:
-              "The provider returns the original payment when a request repeats its key; a second request for the same payee and amount is refused by our server (test/authorize.test.ts)",
+              "Not built: campaign winner identity and prize validation. Offline tests cover only a manual payout matching the recipient, asset and amount of an existing held payout (test/authorize.test.ts). Provider replay deduplication is unverified.",
           },
           {
             type: "guarantee",
@@ -222,7 +222,7 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
       { on: "invoices", text: "Sign in with NEAR and ask to be paid. Someone the DAO hasn't agreed to pay files a request; nothing is paid." },
       { on: "dashboard", text: "On Agreements, agree to the request's terms. That files a policy update for the DAO's vote." },
       { on: "invoices", text: "Once agreed, the payee files the invoice. It is held for the DAO's vote." },
-      { on: "dashboard", text: "Approve it on the Overview, shown beside its terms. It is paid confidentially and shows in Activity." },
+      { on: "dashboard", text: "In Payments, open the invoice and review its terms before owner approval. Approval and settlement are separate: follow the payment until success, then inspect its record in Activity." },
     ],
   },
   treasury: {
@@ -420,8 +420,8 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
     ],
     demo: [
       { on: "dashboard", text: "Overview: the latest recorded run, the book against its target, and the binding USD budget left." },
-      { on: "dashboard", text: "Automations: preview a rebalance. Each leg is quoted and checked against the strategy's cost cap." },
-      { on: "dashboard", text: "View treasury runs → Run now: follow the recorded sends and compare the budget before and after." },
+      { on: "dashboard", text: "Strategy: preview a rebalance. Each leg is quoted and checked against the strategy's cost cap." },
+      { on: "dashboard", text: "Runs → Run now: follow the recorded sends and compare the budget before and after." },
       { on: "dashboard", text: "Activity: each swap with the policy revision it ran under." },
     ],
   },

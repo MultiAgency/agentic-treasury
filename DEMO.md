@@ -54,14 +54,33 @@ the DAO contract do; only a live check does.
 ## Local layout changes awaiting deployment
 
 The navigation instructions below describe the local frontend changes. They have not been checked
-on a deployed host; the deployment observations above remain historical. Public and compact signed-in cards show evidence coverage and known limitations without
-a completion score. Mainnet observations do not establish every guarantee. Public cards show the running briefs’ capabilities and guarantees; roadmap briefs remain in the planning docs. On mobile both areas appear before the sign-in form. Signed-in cards show
-loading, unavailable or current status with retry when needed. Overview shows the state of its attention
-checks and preserves known items during incomplete reads, then shows payments or a compact summary of the latest retained treasury run. Treasury’s full run history, recordings and
-**Run now** are at **View treasury runs**, linked from Overview and Automations. The local invoice page
+on a deployed host; the deployment observations above remain historical. Public cards show evidence
+coverage and known limitations without a completion score. Mainnet observations do not establish every
+guarantee. Public cards show the running briefs’ capabilities and guarantees; roadmap briefs remain
+in the planning docs. On mobile both areas appear before the sign-in form. The signed-in workspace
+shares Home, Payables, Portfolio and Activity in one desktop rail or mobile Menu drawer. Home preserves known attention items
+during incomplete reads and shows compact status with direct task links. Activity groups recent
+records by agent with an area filter. Each area retains its own controls, known limitations and
+evidence; Payables keeps payments prominent, and Treasury summarizes its latest retained run. Treasury’s full run history, recordings and
+**Run now** are under **Runs**, also linked from Portfolio and Strategy. The local invoice page
 also offers **Continue this prepared invoice** for an unchanged, never-submitted invoice, reusing its
 stored terms and identity. This continuation is offline-tested, not yet verified on a deployed host;
 it is unavailable for changed details or a previous submission attempt.
+
+## Following a task during a read failure
+
+These steps describe local offline-tested behavior, not a deployed-host observation:
+
+1. Open a saved payment, Activity or run URL. If setup or overview is unavailable, the page retains
+   its own read-only recovery view and identifies failed observations. Available records do not
+   establish a fresh provider outcome.
+2. On Strategy, an operator can stop scheduling while provider reads fail, once the private instance
+   read confirms an executor. Members and approve-only instances remain refused.
+3. After preparing an owner action, use **Follow owner action** to open its durable Activity record.
+   Leaving the initiating page stops its observation loop; server recovery continues. Return to the
+   same record after reload. Owner approval and payment settlement remain separate outcomes.
+4. On Home, an unavailable agreement or inbox read leaves known attention items and independently
+   available status visible. Treat the explicitly incomplete queue as incomplete.
 
 ## Before the demo
 
@@ -72,7 +91,7 @@ it is unavailable for changed details or a previous submission attempt.
    ```
    It prints `ok` or `FIX` for: the payout wallet's USDC, payments already waiting, the treasury's daily budget
    left (with its reset time), the autopilot's next tick, and the book's drift. It exits nonzero on any `FIX`.
-   An empty payout wallet is fixed from the payout agent's Overview: **Top up from the treasury** (operators).
+   An empty payout wallet is fixed from the payout agent's Payments page: **Top up from the treasury** (operators).
 2. Check both services from outside. It changes nothing:
    ```
    DASHBOARD_URL=https://proto.multiagency.ai INVOICES_URL=https://invoices.multiagency.ai pnpm smoke
@@ -104,7 +123,7 @@ evidence. What has been shown so far, and where this build differs from each bri
 
 | Outcome | Do | See | Leaves |
 |---|---|---|---|
-| Request → vote → paid confidentially | On the invoice page, an agreed payee submits; on the payout agent's Overview, approve; vote | The invoice moves from waiting to paid; the payee sees no member account | The approval's proposal # |
+| Request → vote → paid confidentially | On the invoice page, an agreed payee submits; on the payout agent's Payments page, open Review payment; approve; vote | The invoice moves from waiting to paid; the payee sees no member account | The approval's proposal # |
 | A new payee is routed to a new agreement | Sign in on the invoice page with an account the DAO hasn't agreed to pay, and submit | The page says it waits for the DAO; the request appears on **Agreements** | The request, then the policy update's proposal # once agreed |
 | Over-limit is refused | Submit an invoice over the per-payment cap | Expected: refused before anything is voted on (not yet shown on this agent) | A refusal with its code, and no proposal |
 | Chain watchers can't rebuild the payouts | Open the DAO's proposals on a block explorer or in Trezu | Approvals read "Approve the pending confidential request": no payee, no amount | The proposal #s |
@@ -113,7 +132,7 @@ evidence. What has been shown so far, and where this build differs from each bri
 
 | Outcome | Do | See | Leaves |
 |---|---|---|---|
-| Balances in, quoted plan out, swaps inside the caps | Automations → Preview, then View treasury runs → Run now | Each leg quoted and within the cost cap; the budget figure drops by the swaps' value | Each swap in Activity, with the policy revision it ran under |
+| Balances in, quoted plan out, swaps inside the caps | Strategy → Preview, then Runs → Run now | Each leg quoted and within the cost cap; the budget figure drops by the swaps' value | Each swap in Activity, with the policy revision it ran under |
 | A breach is refused | A run whose value exceeds the budget left | Activity shows it refused with `spend_budget_exceeded`; nothing moved | A refusal with its code |
 | Idle funds go confidential | When the agent holds a public balance, let the autopilot run | "Held privately" returns to 100% | The shield in Activity |
 
@@ -132,14 +151,14 @@ signed: don't retune the strategy or limits for a demo.
 1. **Steward** (an experiment, not in the menu: open `/a/treasury/steward`): ask it to propose a small swap of USDC into wNEAR. The
    model's plan appears in a few seconds.
 2. **Execute plan.** Every step goes through the same checks and policy as any other send. The swap settles in
-   about a minute: Overview's Allocation now drifts from the target, and the budget figure drops.
-3. **Automations → View treasury runs and run now → Run now.** The autopilot reads the book, plans the correction
+   about a minute: Portfolio's Allocation now drifts from the target, and the budget figure drops.
+3. **Runs → Run now.** The autopilot reads the book, plans the correction
    and quotes each leg. **Follow this run** shows its recorded observations and receipt when the end is recorded:
    the book before, the quoted plan, operation results, and the budget and book after. Check **Activity** for
    subsequent operation outcomes; a recorded run end alone does not prove settlement.
 4. **Activity** lists the steward's swap and the autopilot's correction, each with the policy revision it ran
    under.
-5. **The refusal.** When the daily budget is nearly used (`demo-check` and Overview show what's left), ask the
+5. **The refusal.** When the daily budget is nearly used (`demo-check` and Portfolio show what's left), ask the
    Steward for one more swap larger than what remains, and execute it. The provider refuses it, Activity shows
    "refused · over the USD budget", and nothing moves: the provider refuses a request over the budget the DAO
    signed, whoever asks.
@@ -154,7 +173,7 @@ the live run. Run on mainnet on 2026-10-13, per the operator's record: the stewa
    DAO member, so the payee never touches the DAO side) and submit a small invoice. In a few seconds the page
    shows it waiting for approval, and says nothing is paid until then.
 2. **The DAO hears about it.** The executor's Telegram alert arrives within about a minute; its link opens the
-   payout agent's Overview, where **Payments** shows the payment first, as a timeline, beside the payee's agreed
+   payout agent's Payments page, where **Payments** lists the payment. Open **Review payment** to see its timeline beside the payee's agreed
    terms (a payee agreed before terms existed shows none on record).
 3. **A member approves, in the timeline.** In the locally prepared UI, **File proposal and vote** lets a member who may propose and vote
    file and vote in one wallet confirmation; **File approval proposal** is shown otherwise. The proposal number and its hash appear beside it, with the signing
@@ -224,32 +243,43 @@ people who want to sign in and look for themselves.
 2. **What am I voting on?** lists each proposal asking the DAO to sign as the agents' owner. For an open one, the
    dashboard recomputes the hash from the action an agent prepared, so you see the action in words and that the hash
    really is that action. A hash nothing here prepared is flagged. The vote itself happens in Trezu.
-3. Open the treasury agent (**Treasury**). Its menu runs Overview, Automations,
-   Funding, Policy, Activity:
+3. Open the treasury agent (**Portfolio**). Its menu runs Overview, Strategy, Runs,
+   Balances & funding, Policy & grants, Activity:
    - **Overview**: attention items, the latest recorded run and a link to its full history, then the book
      against its target and the budget figure: whichever USD budget window (day, week or
      month) has least left, since that one refuses first, labelled by its period ("Daily budget left").
    - **Steward** (experimental, at `/a/treasury/steward`, not in the menu): a model proposes a plan inside the policy; nothing moves until it is executed.
-   - **Funding**: money in from the DAO and money out, back to it or to a listed payee.
-   - **Policy**: the mandate the DAO approved, with a digest anyone can recompute from the policy, and the agent's grants.
-   - **Automations**: the locally implemented strategy editor saves with the schedule off, then offers
+   - **Balances & funding**: reported public and confidential balances and separate held payout
+     records, followed by **Receive funds**, **Sweep** and **Send funds**. Returns to the linked account sit
+     with outgoing payments. **Available to spend** remains **Not established**: these independent
+     reads do not prove a spendable amount. Failed held-payout reads do not imply zero, and failed
+     linked-account reads do not imply an unlinked account. `test/browser/funding.cjs` checks these
+     states offline, including mobile layout; this is not a deployed observation.
+   - **Policy & grants**: the mandate the DAO approved, with a digest anyone can recompute from the policy, and the agent's grants.
+   - **Strategy**: the locally implemented strategy editor saves with the schedule off, then offers
      owner authorization and explicit enablement. This workflow is offline-tested, not yet verified
      on the hosted deployment. Manual previews and the run view remain available; scheduled actions
      require a grant matching the strategy the owner approved.
    - **Activity**: every execution, its assets and outcome, what kind of action it was and the policy revision it
      ran under (open a row for the digest), and the books reconciled against the API's records.
-4. Open the payout agent (**Payables**). Its menu runs Overview, Agreements, Funding,
-   Policy, Activity. Its Overview shows attention items when needed, then payments waiting for approval, each marked within or outside its
-   payee's agreed terms, approvable for 24 hours. Releasing one files a proposal, and nothing is paid
+4. Open the payout agent (**Payables**). Its menu runs Payments, Agreements, Balances & funding,
+   Policy & grants, Activity. Payments shows attention items and compact payment records, with
+   **Send a payment by hand** and invoice administration below. Activity retains a link to invoices. Open
+   **Review payment** to inspect exact terms and approval status, including whether the payment
+   is within the payee's recorded agreement terms. The locally prepared detail separates **Owner decision**
+   from **Payment outcome**; approval alone does not establish processing or completion. Current agreement
+   terms remain visible after settlement but do not establish which terms applied to that payment.
+   Provider evidence and payment history are expandable. `test/browser/payment-detail.cjs` checks
+   these distinctions and retained payment links offline. Payouts are approvable for 24 hours. Releasing one files a proposal, and nothing is paid
    until the DAO votes. **Agreements** lists requests from new payees and offers the DAO made; agreeing records the
    terms and files the policy update that lists the payee. In the locally prepared UI, direct payee setup is
    under **Add a payee without agreement terms**; it changes the policy without recording terms.
-   When no treasury account is linked, **Funding** leads with a deposit address and keeps optional
+   When no treasury account is linked, the funding controls in **Balances & funding** lead with a deposit address and keep optional
    account linking under **Link a treasury account**. Missing that link is not a send blocker.
    The locally prepared Treasury UI keeps outgoing-payment controls under **Send money to a payee**.
    On the locally prepared invoice page, existing agreements appear before the amount fields;
    **Use these terms** fills an owner's offer without submitting the invoice.
-5. On each agent's Overview, follow **Inspect evidence and limitations** to see who enforces each
+5. On each area's entry page, follow **Inspect evidence and limitations** to see who enforces each
    guarantee, how each requirement is known, and its evidence. The running brief is already open;
    **Recent activity** remains expandable. Roadmap briefs stay in the planning docs.
 
@@ -259,7 +289,7 @@ This is the one flow worth running in front of people. It joins the three views:
 and votes, and the agent pays confidentially.
 
 1. As the payee, submit a small invoice (step 2 above).
-2. As a member, approve it on the payout agent's Overview. A member who may both propose and vote files the
+2. As a member, open **Review payment** on the payout agent's Payments page and approve it there. A member who may both propose and vote files the
    proposal and votes in one wallet confirmation; anyone else files a proposal for the DAO to vote on.
 3. On the home page, "What am I voting on?" shows it with its hash verified. If it still waits for votes, vote in Trezu.
 4. The payment settles in the payout agent's Activity a minute or two later.
@@ -315,15 +345,15 @@ submit a new invoice. It's a limited check:
 Balances in, a plan out, two quoted swaps inside the caps, and the budget meter dropping. Three assets need at
 most two swaps to rebalance, so two is the honest number. Nothing signed changes.
 
-1. Pick a day with budget room: Policy shows the daily USD budget, and Automations the autopilot's ceiling per
+1. Pick a day with budget room: Policy shows the daily USD budget, and Strategy the autopilot's ceiling per
    run, which is about what the run needs.
 2. Just before, fund the treasury agent with USDC from the DAO (Funding → money in), enough to put USDC over its
-   target by about that ceiling. Overview's Allocation shows the gap.
-3. Automations → preview: the plan should show two legs, USDC → wNEAR and USDC → ETH, each above the minimum leg,
+   target by about that ceiling. Portfolio's Allocation shows the gap.
+3. Strategy → preview: the plan should show two legs, USDC → wNEAR and USDC → ETH, each above the minimum leg,
    totalling no more than the ceiling, each with its quote's worst cost under the strategy's cost cap. Prices move:
    if the total is over the ceiling, the autopilot would leave it for the owner, so adjust the top-up and preview
    again.
-4. Open **View treasury runs** from Automations, then choose **Run now**. Inspect each recorded send’s
+4. Open **Runs**, then choose **Run now**. Inspect each recorded send’s
    outcome and the before/after budget in the run view; Activity lists the operations with their policy
    revision and digest. A recorded run end alone does not prove every send settled.
 

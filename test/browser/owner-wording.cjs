@@ -1,3 +1,4 @@
+const { rpcValue } = require('./fixtures/rpc.cjs');
 /** Offline owner-facing copy regressions; every request is intercepted.
  * PLAYWRIGHT_MODULE and BROWSER_EXECUTABLE select an installed browser.
  * node test/browser/owner-wording.cjs /path/to/build
@@ -5,7 +6,7 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { chromium } = require('./fixtures/browser.cjs');
 const root = path.resolve(process.argv[2] || 'web/dist');
 (async () => {
   const browser = await chromium.launch({headless:true, executablePath:process.env.BROWSER_EXECUTABLE});
@@ -31,7 +32,7 @@ const root = path.resolve(process.argv[2] || 'web/dist');
         if (p.includes('/rpc/')) {
           const method = p.split('/rpc/')[1];
           const values = {
-            setup:{executor:false,agentId:'fixture',wallet:'agent.near',owner:{type:'near',account_id:dao?'owner.sputnik-dao.near':'owner.near'},grant:{label:treasury?'treasury':'payout',expiresAt},dao:null},
+            get instance() { return { agentId: this.setup?.agentId ?? null, executor: this.setup?.executor !== false }; }, setup:{executor:false,agentId:'fixture',wallet:'agent.near',owner:{type:'near',account_id:dao?'owner.sputnik-dao.near':'owner.near'},grant:{label:treasury?'treasury':'payout',expiresAt},dao:null},
             overview:{agentId:'fixture',digest:'fixture',notInForce:null,agreed:[],unmanaged:[],target:{usdc:1},rebalance:{minLegUsd:1,maxCostBps:100},book:[{asset:'usdc',symbol:'USDC',decimals:6,public:'0',confidential:'10000000',usd:10,price:1}],policy:{policy:{actions:treasury?['swap','transfer']:['transfer'],frozen:false,destinations:{mode:'only',list:[]},assets:'any',budget:{},limits:{}},usage:{budget:{}},cooldowns:{}}},
             'treasury/get':null,held:[],unresolved:treasury?[{key:'unresolved-fixture',at,kind:'swap',sent:true,status:'PROCESSING'}]:[],activity:[],'inbox/list':[],'agreements/list':[],
             'owner/pending':dao?[{correlationId:'owner-record',hash:'fixture-hash',state:'done',expiresAt,payment:{correlationId:'payment',verdict:'approve'}}]:[],
@@ -42,7 +43,7 @@ const root = path.resolve(process.argv[2] || 'web/dist');
             'autopilot/get':{on:scenario==='schedule-on',everyMin:60,maxUsd:10},'autopilot/evidence':{ticks:[]},
           };
           if (!(method in values)) { writes.push(method); return route.abort(); }
-          return route.fulfill({json:{json:values[method]}});
+          return route.fulfill({json:{json:rpcValue(values, method)}});
         }
         if (p.startsWith('/static/')) return route.fulfill({path:root+p,contentType:p.endsWith('.js')?'application/javascript':p.endsWith('.css')?'text/css':'font/woff2'});
         return route.fulfill({path:path.join(root,'index.html'),contentType:'text/html'});
@@ -54,10 +55,11 @@ const root = path.resolve(process.argv[2] || 'web/dist');
           if (treasury) {
             await page.getByText(scenario==='schedule-on'?'Schedule on: every 60 minutes; configured rebalance limit $10.00 per run.':'Autopilot is off.',{exact:false}).waitFor();
             await page.getByText(/Nothing new moves until it is resolved/).waitFor();
-            await page.getByRole('link',{name:'Automation settings',exact:true}).waitFor();
+            await page.getByRole('link',{name:'Strategy and schedule',exact:true}).waitFor();
             assert.doesNotMatch(await page.locator('body').innerText(),/executing rebalances/);
           } else {
             await page.getByText(scenario==='rejected'?'Provider reported failed':'Paid',{exact:true}).first().waitFor();
+            await page.getByText('Payment history and public visibility', { exact: true }).click();
             const title = scenario==='approved'?"Approved by the owner's wallet":scenario==='rejected'?"Rejected by the owner's wallet":scenario==='unknown'?'Owner wallet decision · unverified':'Proposal filed and voted';
             const stage = page.getByRole('heading',{name:new RegExp(`^${title.replaceAll("'", "['’]")}$`)}).locator('..');
             await stage.waitFor();

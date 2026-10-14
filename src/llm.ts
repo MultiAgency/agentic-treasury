@@ -129,12 +129,12 @@ function tools(plan: PlannedAction[], strategy: Strategy): Tool[] {
     ),
     tool(
       "shield_public",
-      "Propose moving every public balance into the confidential balance. Shielding does not spend the USD budget.",
+      "Propose moving public balances of the managed assets (USDC, wNEAR and ETH) into their confidential balances. Other assets are not included. Shielding does not spend the USD budget.",
       z.object({}),
       async () => {
         if (plan.some((a) => a.type === "shield")) return "ALREADY PROPOSED: the plan already shields the public balances";
         const exposed = (await holdings()).filter((h) => h.public > 0n);
-        if (exposed.length === 0) return "nothing public: every balance is already confidential";
+        if (exposed.length === 0) return "no public USDC, wNEAR or ETH balances found; other assets were not checked";
         for (const h of exposed) plan.push({ type: "shield", asset: h.asset, amount: h.public.toString() });
         return `PROPOSED as steps ${plan.length - exposed.length + 1}–${plan.length}: shield ${exposed.map((h) => format(h.public, h)).join(", ")}`;
       },

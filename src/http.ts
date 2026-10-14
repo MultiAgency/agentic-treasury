@@ -36,14 +36,18 @@ export function sendFailure(res: ServerResponse, error: unknown) {
 
 /** A request's JSON object body, at most 16 KB; anything but an object reads as `{}`. */
 export async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
-  let text = "";
+  const chunks: Buffer[] = [];
+  let size = 0;
   for await (const chunk of req) {
-    text += chunk;
-    if (text.length > 16_384) throw new BadRequest("The request is too large.");
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += bytes.length;
+    if (size > 16_384) throw new BadRequest("The request is too large.");
+    chunks.push(bytes);
   }
   try {
+    const text = Buffer.concat(chunks).toString("utf8");
     const value: unknown = JSON.parse(text || "{}");
-    return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   } catch {
     throw new BadRequest("The request isn't valid JSON.");
   }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DEFAULT_STRATEGY, Strategy } from "../src/strategy-digest.js";
-import { parseStrategyDraft, strategyDraft } from "../web/src/strategy-form.js";
+import { parseStrategyDraft, strategyDraft } from "../web/src/features/portfolio/strategy-form.js";
 
 test("unchanged strategy survives the editor without changing its grant binding", () => {
   assert.deepEqual(parseStrategyDraft(strategyDraft(DEFAULT_STRATEGY)).strategy, DEFAULT_STRATEGY);

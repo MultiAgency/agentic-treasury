@@ -36,7 +36,7 @@ export async function checkPaymentApproval(input: Pick<PaymentApproval, "approva
     api.getApproval(id, input.approvalId, options), api.getStatus(input.correlationId, options), api.getWallet(id, options),
     approving ? api.getPolicy(id, options) : undefined,
   ]);
-  if (status.agent_id !== id || status.status !== "PENDING_APPROVAL" || !("details" in status) ||
+  if (status.correlation_id !== input.correlationId || status.agent_id !== id || status.status !== "PENDING_APPROVAL" || !("details" in status) ||
       !("approval_id" in status.details) || status.details.approval_id !== input.approvalId || approval.approval_id !== input.approvalId ||
       approval.wallet_id !== wallet.wallet_id || approval.status !== "PENDING" || Date.parse(approval.expires_at) <= Date.now() ||
       !Number.isFinite(Date.parse(approval.expires_at)) || !approval.request_hash)

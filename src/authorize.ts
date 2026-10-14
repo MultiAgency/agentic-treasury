@@ -108,6 +108,8 @@ export function authorize(action: Action, c: Case): Refusal | null {
     // owner signs now, so what the policy no longer allows is refused here.
     if (purpose === "approval") {
       const { recipient, asset, amount } = action.request;
+      if (!policy.actions.includes("transfer")) return refuse("action_not_allowed", "The current policy does not permit transfers");
+      if (policy.assets !== "any" && !policy.assets.includes(asset)) return refuse("asset_not_allowed", "The current policy does not permit this payment asset");
       if (!agreedPayees(policy).has(recipient)) return refuse("payee_not_agreed", `${recipient} is not an agreed payee`);
       const cap = policy.limits.per_transaction?.[asset];
       if (cap !== undefined && BigInt(amount) > BigInt(cap))

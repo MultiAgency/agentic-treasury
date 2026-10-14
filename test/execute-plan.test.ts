@@ -7,7 +7,8 @@ import { freshDirectory } from "./fixtures/harness.js";
 
 // Live against the Agent API: reads the real account and quotes, but every case must be refused
 // before any money action, so the ops log in this temporary directory must stay empty.
-const live = { skip: !process.env.AGENT_GRANT_TOKEN && "no agent configured", timeout: 120_000 };
+if (process.env.PROTO_TEST_MODE !== "live" || !process.env.AGENT_GRANT_TOKEN) throw new Error("Run configured live checks with pnpm test:live");
+const live = { timeout: 120_000 };
 freshDirectory("execute-plan", { per: "suite" });
 
 const swap = (minAmountOut: string): PlannedAction => ({

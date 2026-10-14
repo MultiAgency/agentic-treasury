@@ -61,7 +61,7 @@ async function viewer(req: IncomingMessage) {
  * since every owner action is an on-chain proposal naming the agent; a wallet's agent is not.
  */
 async function agentsView(me: Awaited<ReturnType<typeof viewer>>) {
-  const all = await Promise.all(config.agents.map(async ({ name, owner }) => ({ name, owner, dao: (await ownerOf(owner)).policy !== null })));
+  const all = await Promise.all(config.agents.map(async ({ name, owner, area }) => ({ name, owner, ...(area && { area }), dao: (await ownerOf(owner)).policy !== null })));
   return all.filter((a) => (me ? Boolean(me.access[a.name]) : a.dao));
 }
 

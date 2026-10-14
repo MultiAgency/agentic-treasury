@@ -1,7 +1,7 @@
 /** Synthetic payee journey. All requests, including wallet-module imports, are intercepted. */
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { chromium } = require('./fixtures/browser.cjs');
 const { html, script } = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e',
   'import { invoicePage, invoiceBrowser } from "./src/invoice-page.ts"; console.log(JSON.stringify({html:invoicePage("Payee journey"),script:invoiceBrowser}));'], { encoding: 'utf8' }));
 (async () => {

@@ -7,7 +7,7 @@ export const invoiceBrowser = readFileSync(new URL("./invoice-browser.js", impor
 const escape = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /**
- * near-connect's wallet list, pinned to a reviewed commit (2026-09-24). Each wallet's own code still
+ * near-connect's wallet list, pinned to a reviewed commit. Each wallet's own code still
  * loads from the URL the list names (mostly raw.githubusercontent.com), so that code can change under
  * the same URL: wallets run sandboxed and every signature is verified here, so the remaining risk is
  * a wallet that phishes for keys. Bump this only after reviewing the new manifest.
@@ -61,7 +61,7 @@ ul.items{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}u
 [hidden]{display:none!important}code{word-break:break-all}
 </style></head><body><main>
 <h1>${escape(title)}</h1>
-<p>Sign in with the NEAR account you want to be paid to, enter the amount, and submit. You're paid in USDC once the invoice is approved.</p>
+<p>Sign in with the NEAR account you want to be paid to, enter the USDC amount, and submit. After approval, follow the invoice status until it shows Paid.</p>
 <section class="card" id="step-signin">
 <p>Your wallet signs a message proving you control the account. It doesn't send a transaction or spend anything.</p>
 <button id="signin">Sign in with NEAR</button>

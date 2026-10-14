@@ -200,8 +200,13 @@ let timer: NodeJS.Timeout | undefined;
 /** Checks every minute whether a tick is due, so settings saved from the dashboard apply at once. */
 export function startAutopilot() {
   timer ??= setInterval(() => {
-    const { on, nextRun } = status();
-    if (on && nextRun && new Date(nextRun).getTime() <= Date.now()) void tick("schedule");
+    const deferred = (error: unknown) => console.error("Scheduled tick deferred:", error instanceof Error ? error.message : "unknown error");
+    try {
+      const { on, nextRun } = status();
+      if (on && nextRun && new Date(nextRun).getTime() <= Date.now()) void tick("schedule").catch(deferred);
+    } catch (error) {
+      deferred(error);
+    }
   }, 60_000);
   timer.unref();
 }
