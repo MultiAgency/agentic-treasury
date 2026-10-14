@@ -44,7 +44,7 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
   facilitator: {
     name: "Payables",
     tagline:
-      "Anyone can ask the DAO to be paid. The payout agent holds funds in its confidential balance and files each payment for the DAO's vote; requesters never deal with members.",
+      "Payees submit invoices without contacting a DAO member. The payout agent holds funds in its confidential balance and files each payment for the DAO's vote.",
     briefs: [
       {
         catalog: "01",
@@ -236,7 +236,7 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
         limitations: [
           "Whether simultaneous requests can exceed asset limits or the USD budget remains unverified.",
           "This server checks which assets can be bought; the provider does not.",
-          "This server requests confidential swaps, but the policy also permits public swaps and unshielding. A confidential balance does not establish protection against every form of tracing.",
+          "This server requests confidential swaps, but the policy also permits public swaps and moving funds back to a public balance. A confidential balance does not establish protection against every form of tracing.",
           "The agent has not yet run unattended for days.",
         ],
         requirements: [
@@ -440,9 +440,10 @@ export const knownLabel = (r: Requirement) =>
 
 /** Mutually exclusive evidence categories, never a completion or enforcement score. */
 export function summarizeRequirements(requirements: readonly Requirement[]) {
-  const summary = { total: requirements.length, agent: 0, other: 0, offline: 0, unverified: 0 };
+  const summary = { total: requirements.length, agent: 0, other: 0, offline: 0, unverified: 0, unsupported: 0 };
   for (const requirement of requirements) {
-    if (requirement.known === "mainnet" && requirement.where === "agent") summary.agent++;
+    if (requirement.stoppedBy === "impossible") summary.unsupported++;
+    else if (requirement.known === "mainnet" && requirement.where === "agent") summary.agent++;
     else if (requirement.known === "mainnet" && requirement.where === "other") summary.other++;
     else if (requirement.known === "offline") summary.offline++;
     else summary.unverified++;

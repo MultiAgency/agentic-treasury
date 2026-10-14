@@ -35,7 +35,7 @@ export async function signOut() {
   location.assign("/");
 }
 
-export function SignIn({ daos }: { daos: string[] }) {
+export function SignIn({ daos, compact = false }: { daos: string[]; compact?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const signIn = async () => {
@@ -56,6 +56,14 @@ export function SignIn({ daos }: { daos: string[] }) {
       setBusy(false);
     }
   };
+  const action = <>
+    <ErrorBox error={error} />
+    <span role="status" className="sr-only">{busy ? "Complete sign-in in your NEAR wallet." : ""}</span>
+    <Button className="w-fit" onClick={signIn} disabled={busy}>
+      {busy ? <Spinner /> : <SignInIcon size={16} aria-hidden="true" />} {busy ? "Connecting…" : "Connect wallet"}
+    </Button>
+  </>;
+  if (compact) return <div className="flex max-w-sm flex-col items-start gap-2">{action}</div>;
   return (
     <Card>
       <div className="flex flex-col gap-2">
@@ -65,11 +73,7 @@ export function SignIn({ daos }: { daos: string[] }) {
           a message, not a transaction: nothing is sent on chain.
         </p>
       </div>
-      <ErrorBox error={error} />
-      <span role="status" className="sr-only">{busy ? "Complete sign-in in your NEAR wallet." : ""}</span>
-      <Button className="w-fit" onClick={signIn} disabled={busy}>
-        {busy ? <Spinner /> : <SignInIcon size={16} />} {busy ? "Signing in…" : "Sign in with NEAR"}
-      </Button>
+      {action}
     </Card>
   );
 }

@@ -1,7 +1,8 @@
 import { ArrowRight, ChartPieSlice, HandCoins, Receipt } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
-import { type Brief, type Kind, type Known, knownLabel, REQUIREMENTS_CONTEXT, PROTOTYPES, PROVEN, type Requirement, STOPPER_LABEL, summarizeRequirements } from "./beats";
+import { type Brief, type Kind, type Known, knownLabel, REQUIREMENTS_CONTEXT, PROTOTYPES, type Requirement, STOPPER_LABEL, summarizeRequirements } from "./beats";
 import { Card, Details } from "./ui";
+import { PublicDemo } from "./public-demo";
 
 /** How a requirement is known, as one mark: full when seen on mainnet, half when tested offline, empty when deployed behavior is unverified. */
 export function KnownMark({ known, size = 14 }: { known: Known; size?: number }) {
@@ -138,23 +139,23 @@ function Requirements({ requirements }: { requirements: Requirement[] }) {
 function ProgressSummary({ brief, name }: { brief: Brief; name: string }) {
   const summary = summarizeRequirements(brief.requirements);
   const categories = [
-    ["Mainnet · this agent", summary.agent],
-    ["Mainnet · another agent", summary.other],
+    ["Observed on mainnet", summary.agent + summary.other],
     ["Offline only", summary.offline],
     ["Not yet demonstrated", summary.unverified],
+    ["Not supported", summary.unsupported],
   ] as const;
   return (
     <div role="group" aria-label={`Evidence coverage for ${name}`} className="flex flex-col gap-3 border-t pt-4">
-      <h3 className="text-sm font-medium">Evidence coverage <span className="font-normal text-muted-foreground">· {summary.total} requirements</span></h3>
+      <h3 className="text-sm font-medium">What has been demonstrated <span className="font-normal text-muted-foreground">· {summary.total} requirements</span></h3>
+      <p className="text-sm text-muted-foreground">Counts describe recorded observations across our agents, not live checks or proof of every guarantee.</p>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
         {categories.map(([label, count]) => (
           <div key={label} className="flex min-w-0 flex-col gap-1">
             <dt className="text-sm text-muted-foreground">{label}</dt>
-            <dd className="text-lg font-medium tabular-nums">{count}</dd>
+            <dd className={`text-lg tabular-nums ${count === 0 ? "text-muted-foreground" : "font-medium"}`}>{count}</dd>
           </div>
         ))}
       </dl>
-      <p className="text-xs text-muted-foreground">Recorded observations, not live status. Observations do not establish every guarantee.</p>
       <div className="flex flex-col gap-1 text-sm">
         <h4 className="font-medium">Known limitations</h4>
         {brief.limitations?.length ? (
@@ -167,22 +168,64 @@ function ProgressSummary({ brief, name }: { brief: Brief; name: string }) {
   );
 }
 
+/** Static illustrations explain the two workflows without reading agent records. */
+export function PublicWorkflows({ invoices }: { invoices: string | null }) {
+  const workflows = [
+    { kind: "facilitator" as const, title: "Pay invoices confidentially.", description: "An agreed payee requests payment. The owner approves each held payout.", steps: [
+      ["The payee submits an invoice", "New payees first request an agreement with the owner."],
+      ["The payout is held", "The owner reviews the invoice and its agreed terms."],
+      ["Approval lets payment proceed", "The payout agent makes the confidential transfer."],
+    ] },
+    { kind: "treasury" as const, title: "Rebalance toward a strategy.", description: "The owner sets the target. The treasury agent plans the swaps and can act on a schedule.", steps: [
+      ["The owner sets a strategy", "Target allocations and limits define the rebalance."],
+      ["The agent prepares a plan", "Each proposed swap is quoted before execution."],
+      ["Authorization precedes execution", "Scheduled execution requires a live grant and must fit the strategy’s auto-execute limit."],
+    ] },
+  ];
+  return (
+    <section id="workflows" aria-labelledby="workflows-heading" className="scroll-mt-8">
+      <div className="mb-8 flex flex-wrap items-baseline justify-between gap-3">
+        <h2 id="workflows-heading" className="text-3xl font-semibold tracking-tight">Two agents. Two workflows.</h2>
+        <p className="text-sm text-muted-foreground">Illustrative workflows</p>
+      </div>
+      <div className="grid overflow-hidden rounded-2xl border bg-card lg:grid-cols-2">
+        {workflows.map(({ kind, title, description, steps }) => {
+          const Icon = PROTOTYPE_ICON[kind];
+          return (
+            <article key={kind} aria-label={`${PROTOTYPES[kind].name} workflow`} className="flex flex-col gap-6 p-5 first:border-b sm:p-8 lg:p-10 lg:first:border-r lg:first:border-b-0">
+              <div className="flex items-center gap-3 font-medium text-brand-strong"><Icon size={24} aria-hidden="true" />{PROTOTYPES[kind].name}</div>
+              <div className="flex flex-col gap-3">
+                <h3 className="max-w-[20ch] text-3xl font-semibold tracking-tight text-balance">{title}</h3>
+                <p className="min-h-18 leading-relaxed text-muted-foreground">{description}</p>
+              </div>
+              <PublicDemo kind={kind} overview={steps} />
+              <div className="mt-auto flex flex-wrap gap-3 pt-2">
+                <a href={`/#/explore/${kind === "facilitator" ? "payables" : "treasury"}/overview`} className="inline-flex min-h-11 items-center gap-2 rounded-full border border-border-strong px-5 py-2 font-medium hover:bg-accent">Explore the prototype</a>
+                {kind === "facilitator" && invoices && <a href={invoices} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-primary px-5 py-2 font-medium text-primary-foreground hover:bg-primary/90"><Receipt size={18} aria-hidden="true" />Request a payment (opens invoice service)</a>}
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 /** Public cards disclose requirement stages without private evidence; member cards lead into the area. */
-export function PrototypeCard({ kind, open, invoices, status, compact = false }: { kind: Kind; open?: string; invoices?: string | null; status?: ReactNode; compact?: boolean }) {
+export function PrototypeCard({ kind, open, invoices, status, compact = false, stagesOnly = false }: { kind: Kind; open?: string; invoices?: string | null; status?: ReactNode; compact?: boolean; stagesOnly?: boolean }) {
   const { name, tagline, briefs, demo } = PROTOTYPES[kind];
   const Icon = PROTOTYPE_ICON[kind];
   const [running] = briefs;
   return (
     <Card>
       <div className="flex flex-col gap-3">
-        <h2 className="flex items-center gap-3 font-heading text-2xl font-semibold tracking-tight">
-          <Icon size={26} className="shrink-0 text-brand-strong" /> {name}
+        <h2 id={stagesOnly ? `${kind}-requirements` : undefined} className="flex scroll-mt-8 items-center gap-3 font-heading text-2xl font-semibold tracking-tight">
+          <Icon size={26} className="shrink-0 text-brand-strong" aria-hidden="true" /> {name}
         </h2>
         {status}
-        <p className="max-w-prose text-muted-foreground">{tagline}</p>
+        {!stagesOnly && <p className="max-w-prose text-muted-foreground">{tagline}</p>}
       </div>
-      <ProgressSummary brief={running} name={name} />
-      <div className="mt-auto flex flex-wrap gap-3">
+      {(open || (kind === "facilitator" && invoices)) && <div className="flex flex-wrap gap-3">
         {open && (
           <a className="inline-flex h-11 items-center gap-2 rounded-full bg-primary px-5 font-medium text-primary-foreground hover:bg-primary/90" href={open}>
             Open {name} <ArrowRight size={16} />
@@ -193,16 +236,17 @@ export function PrototypeCard({ kind, open, invoices, status, compact = false }:
             <Receipt size={16} /> Request a payment
           </a>
         )}
-      </div>
+      </div>}
+      <ProgressSummary brief={running} name={name} />
       {!compact && (
         <>
-          <Details summary="Requirements and stages">
+          <Details summary="View requirements">
             <p className="text-sm text-muted-foreground">{REQUIREMENTS_CONTEXT}</p>
             <KnownLegend />
             <h3><BriefTitle brief={running} /></h3>
             <Requirements requirements={running.requirements} />
           </Details>
-          <Details summary="How the demo runs">
+          <Details summary={stagesOnly ? "Dashboard walkthrough" : "How it works"}>
             <ol className="flex list-decimal flex-col gap-1 pl-5">
               {demo.map((step) => (
                 <li key={step.text}>
@@ -215,21 +259,5 @@ export function PrototypeCard({ kind, open, invoices, status, compact = false }:
         </>
       )}
     </Card>
-  );
-}
-
-/** What our code has shown on mainnet beyond the briefs (beats.ts): claims only, as the front door shows them. */
-export function ProvenOnMainnet() {
-  return (
-    <section className="flex flex-col gap-3">
-      <h2 className="flex items-center gap-2 font-heading text-lg font-semibold">
-        <KnownMark known="mainnet" /> Also working on mainnet, October 12–13, 2026
-      </h2>
-      <ul className="grid gap-x-8 gap-y-2 text-muted-foreground sm:grid-cols-2">
-        {PROVEN.map((claim) => (
-          <li key={claim}>{claim}</li>
-        ))}
-      </ul>
-    </section>
   );
 }

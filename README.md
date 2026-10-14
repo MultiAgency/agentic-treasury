@@ -71,11 +71,26 @@ Two pages on Railway. Signing in with a NEAR wallet signs a message, never a tra
   Treasury: each running brief from the Agent Connect catalog as capabilities (what the agent does) and guarantees
   (what it can't do). Each guarantee names who stops a misbehaving agent (the signed policy, our server, or
   nobody yet), and each row says how it's known: observed on mainnet, tested offline, per pinned provider source (deployed behavior unverified), or not yet.
-  The locally prepared cards always show **Evidence coverage** for the running brief: mainnet observations
-  on this agent, observations on another agent, offline-only tests and requirements not yet demonstrated.
+  The locally prepared cards always show **What has been demonstrated** for the running brief: mainnet observations
+  across our agents, offline-only tests, requirements not yet demonstrated and unsupported requirements.
+  Unsupported targets are excluded from working and offline-only counts.
   Known limitations stay visible on public and compact signed-in cards. These are recorded observations,
   not live status, a completion percentage or proof of every guarantee. The summary and limitations come
-  from the canonical inventory; detailed requirements remain under **Requirements and stages**.
+  from the canonical inventory; detailed requirements remain under **View requirements**.
+  The public landing page leads with illustrative Payables and Treasury workflows, then requirement
+  stages and visible limitations. “Observed on mainnet” labels recorded observations across our agents.
+  A Connect wallet button in the header starts the existing NEAR sign-in flow; the illustrations use no agent records.
+  Each workflow has a browser-only interactive simulation built from authored AG-UI events, with
+  guided next/previous steps, optional six-second playback, pause and restart controls. Payables
+  keeps a fictional invoice visible and requires an explicit simulated approval. Treasury shows
+  illustrative allocations and proposed changes for two example strategies. Both let visitors
+  remove the grant to see where execution stops. Earlier steps and AG-UI events remain inspectable. These demos
+  use fictional events, read no agent data and submit no money actions; they are not mainnet evidence.
+  **Explore the prototype** opens a separate example workspace at `/#/explore/payables/overview`
+  or `/#/explore/treasury/overview`. Visitors can navigate example agreements, invoices, automations,
+  policy permission and activity. These routes run without gateway reads or wallet sign-in, keep
+  example progress within the current area in memory, and reset on reload or switching areas.
+  They illustrate selected prototype flows; authenticated agent dashboards still require sign-in.
   It reads nothing from the server. Members of `agentic.sputnik-dao.near` sign in to see the treasury and
   the proposals.
   It is the treasury agent's executor and runs the payout agent approve-only.

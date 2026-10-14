@@ -84,7 +84,7 @@ await check('navigation focuses main; public disclosures make no private request
  await page.waitForTimeout(100);if(!await page.getByRole('main').evaluate(e=>e===document.activeElement))return false;
  const pub=await pageFor('/',{public:true});await pub.page.keyboard.press('Tab');if(!await pub.page.getByRole('link',{name:'Skip to main content'}).evaluate(e=>e===document.activeElement))return false;
  await pub.page.keyboard.press('Enter');if(!await pub.page.getByRole('main').evaluate(e=>e===document.activeElement))return false;
- await pub.page.getByText('Requirements and stages',{exact:true}).first().click();return pub.calls.length===0;
+ await pub.page.getByText('View requirements',{exact:true}).first().click();return pub.calls.length===0;
 });
 await check('startup announces loading before the gateway responds',async()=>{
  const {page}=await pageFor('/',{public:true,gatewayDelay:true,fast:true});return await page.getByRole('status').getByText('Loading dashboard…',{exact:true}).count()===1;

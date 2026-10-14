@@ -52,7 +52,7 @@ These are catalog targets, not established guarantees. Evidence stages describe 
 
 - Whether simultaneous requests can exceed asset limits or the USD budget remains unverified.
 - This server checks which assets can be bought; the provider does not.
-- This server requests confidential swaps, but the policy also permits public swaps and unshielding. A confidential balance does not establish protection against every form of tracing.
+- This server requests confidential swaps, but the policy also permits public swaps and moving funds back to a public balance. A confidential balance does not establish protection against every form of tracing.
 - The agent has not yet run unattended for days.
 
 ## 09 Adaptive DCA (roadmap)

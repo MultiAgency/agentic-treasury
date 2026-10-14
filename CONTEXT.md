@@ -157,6 +157,13 @@ in the dashboard. The inspector is read-only, with no timed playback or live str
 gaps, unknown timing and later observations explicit. The inspector and export access controls are
 tested offline, not mainnet-observed.
 
+**Interactive simulation**:
+A public, browser-only illustration driven by authored AG-UI events. Its example strategies,
+approval and refusal are fictional. It reads no agent records and submits no money actions;
+playback timing is illustrative, and a simulation is never evidence of mainnet behavior.
+The **example workspace** presents selected prototype flows as navigable pages using this fictional
+state. It is public, requires no wallet, and never mounts the authenticated dashboard or its reads.
+
 **Inbox**:
 What the agent tells its owner while no one is watching: a record of each tick, and warnings or
 requests that stay open until the owner dismisses them.

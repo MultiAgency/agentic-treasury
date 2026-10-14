@@ -1,11 +1,12 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
-import { StrictMode } from "react";
+import { StrictMode, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { DaoHome } from "./dao";
 import { BASE } from "./lib";
 import { router } from "./router";
 import { PublicHome } from "./public";
+import { PrototypeExplorer } from "./prototype-explorer";
 import { ErrorBox, Button, Loading } from "./ui";
 import { loadGateway, ownersOf } from "./session";
 import { ViewerContext, viewerOf } from "./viewer";
@@ -42,6 +43,17 @@ function GatewayPage() {
   );
 }
 
+const subscribeHash = (notify: () => void) => {
+  window.addEventListener("hashchange", notify);
+  return () => window.removeEventListener("hashchange", notify);
+};
+function App() {
+  const hash = useSyncExternalStore(subscribeHash, () => location.hash);
+  const example = hash.match(/^#\/explore\/(payables|treasury)(?:\/([^/?#]+))?\/?$/);
+  if (example) return <PrototypeExplorer key={example[1]} area={example[1] as "payables" | "treasury"} page={example[2] || "overview"} />;
+  return <GatewayPage />;
+}
+
 createRoot(document.getElementById("root")!).render(
-  <StrictMode><QueryClientProvider client={queryClient}><GatewayPage /></QueryClientProvider></StrictMode>,
+  <StrictMode><QueryClientProvider client={queryClient}><App /></QueryClientProvider></StrictMode>,
 );

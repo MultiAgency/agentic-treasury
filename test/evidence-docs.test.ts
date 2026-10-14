@@ -17,15 +17,15 @@ test("coverage separates observation scope and never promotes missing scope or o
   assert.deepEqual(summarizeRequirements([
     requirement("mainnet", "agent"), requirement("mainnet", "other"), requirement("mainnet"),
     requirement("offline"), requirement("not-yet"),
-  ]), { total: 5, agent: 1, other: 1, offline: 1, unverified: 2 });
-  assert.deepEqual(summarizeRequirements([]), { total: 0, agent: 0, other: 0, offline: 0, unverified: 0 });
+  ]), { total: 5, agent: 1, other: 1, offline: 1, unverified: 2, unsupported: 0 });
+  assert.deepEqual(summarizeRequirements([]), { total: 0, agent: 0, other: 0, offline: 0, unverified: 0, unsupported: 0 });
 });
 
 test("running brief coverage excludes roadmap requirements and retains limitations despite mainnet observations", () => {
   assert.deepEqual(summarizeRequirements(PROTOTYPES.facilitator.briefs[0].requirements),
-    { total: 9, agent: 6, other: 1, offline: 1, unverified: 1 });
+    { total: 9, agent: 6, other: 1, offline: 0, unverified: 1, unsupported: 1 });
   assert.deepEqual(summarizeRequirements(PROTOTYPES.treasury.briefs[0].requirements),
-    { total: 8, agent: 7, other: 1, offline: 0, unverified: 0 });
+    { total: 8, agent: 7, other: 1, offline: 0, unverified: 0, unsupported: 0 });
   for (const kind of ["facilitator", "treasury"] as const) {
     const limitations = PROTOTYPES[kind].briefs[0].limitations;
     assert.ok(limitations?.length);
@@ -76,5 +76,14 @@ test("provider-source claims are not labeled or counted as offline tests", () =>
   assert.match(knownLabel(requirement), /pinned provider source; deployed behavior unverified/);
   assert.match(requirement.evidence, /b8c58c0/);
   assert.deepEqual(summarizeRequirements([requirement]),
-    { total: 1, agent: 0, other: 0, offline: 0, unverified: 1 });
+    { total: 1, agent: 0, other: 0, offline: 0, unverified: 1, unsupported: 0 });
+});
+
+test("unsupported requirements never count as working or offline-only", () => {
+  const requirements: Requirement[] = ["mainnet", "offline", "provider-source", "not-yet"].map(known => ({
+    type: "guarantee", text: "Unsupported target", evidence: "Fixture", stoppedBy: "impossible",
+    known: known as Requirement["known"], where: "agent",
+  }));
+  assert.deepEqual(summarizeRequirements(requirements),
+    { total: 4, agent: 0, other: 0, offline: 0, unverified: 0, unsupported: 4 });
 });
