@@ -39,7 +39,8 @@ The same flow at the custom domains, with both executors on Railway: an invoice 
 invoices.multiagency.ai, approved from proto.multiagency.ai and voted in Trezu (proposal #47), was paid.
 The invoice before it was held, approved an hour later (#46), and then failed: the payout wallet was
 empty, and the API had taken it to `PENDING_APPROVAL` anyway. The treasury agent refilled the wallet
-without a vote.
+without a vote. Later that evening a held payout was approved by #50 (filed 21:47:10Z, on chain 21:47:16Z) and settled
+at 21:48:03Z, per the payout agent's history; the walkthrough's record has it as an invoice.
 
 ## One-click approval, 2026-10-12 22:17 UTC
 
@@ -157,3 +158,22 @@ confidential, so there was nothing to shield, and every leg was under the minimu
 wallet owning, granting and running the agent, and its autopilot moving money on its own under the
 wallet-issued grant. It ran locally; behind the hosted gateway a wallet-owned agent is offline-tested only.
 
+## One-click approvals paid, 2026-10-13
+
+Two invoice payouts, each held for the DAO, approved from the dashboard by a member who files and votes in
+one transaction; both proposals read Approved on chain with one vote.
+
+| Proposal | Held | Approval filed → signed | Paid |
+|---|---|---|---|
+| #53 | 15:23:23Z | 15:26:01Z → 15:26:20Z | 15:26:25Z |
+| #54 | 17:07:54Z | 17:10:54Z → 17:11:17Z | 17:11:25Z |
+
+Each payout settled within about 25 seconds of its approval being filed (the payout agent's own history).
+The payout before them, approved by #51 on 2026-10-12, had failed with an empty wallet.
+
+## The treasury's resting position, 2026-10-13T23:03Z
+
+A read-only check of the treasury agent: no public NEAR Intents balance on chain (`intents.near`
+`mt_tokens_for_owner` empty), and the API reports all three of its assets in the confidential balance.
+This shows the position private at that moment. It is kept so by this server's requests, not by the policy,
+which allows public swaps and unshield ([enforcement](enforcement.md)).

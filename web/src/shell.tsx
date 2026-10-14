@@ -4,7 +4,6 @@ import {
   ClockCounterClockwise,
   Lightning,
   type Icon,
-  Robot,
   ShieldCheck,
   SquaresFour,
   UsersThree,
@@ -36,7 +35,7 @@ export function useAgent() {
  * Each area's pages, in the order its story runs, named for what they are in it. A page not listed
  * for an agent's kind isn't part of that area, and the shell says so instead of showing it.
  */
-const NAV: Record<Kind, { to: LinkProps["to"]; label: string; icon: Icon; tag?: string }[]> = {
+const NAV: Record<Kind, { to: LinkProps["to"]; label: string; icon: Icon }[]> = {
   facilitator: [
     { to: "/", label: "Overview", icon: SquaresFour },
     { to: "/payees", label: "Agreements", icon: UsersThree },
@@ -46,7 +45,6 @@ const NAV: Record<Kind, { to: LinkProps["to"]; label: string; icon: Icon; tag?: 
   ],
   treasury: [
     { to: "/", label: "Overview", icon: SquaresFour },
-    { to: "/steward", label: "Steward", icon: Robot, tag: "experimental" },
     { to: "/automations", label: "Automations", icon: Lightning },
     { to: "/funding", label: "Funding", icon: Bank },
     { to: "/policy", label: "Policy", icon: ShieldCheck },
@@ -57,9 +55,10 @@ const NAV: Record<Kind, { to: LinkProps["to"]; label: string; icon: Icon; tag?: 
 /**
  * Pages an agent shows that aren't in its menu, opened from its Overview instead. A payout agent's
  * Automations holds only Sweep and the autopilot, reached from the attention items that need them.
- * The timelines follow one held payment (from Held payouts) or the latest autopilot run.
+ * The timelines follow one held payment (from Held payouts) or the latest autopilot run. The treasury's
+ * Steward is an experiment, reached only by its address.
  */
-const OFF_NAV: Record<Kind, LinkProps["to"][]> = { facilitator: ["/automations", "/follow/payment"], treasury: ["/follow/run"] };
+const OFF_NAV: Record<Kind, LinkProps["to"][]> = { facilitator: ["/automations", "/follow/payment"], treasury: ["/follow/run", "/steward"] };
 
 /** The mark, drawn as the favicon is (web/rsbuild.config.ts): a safe in the logo blue, a tick cut from its dial. */
 function Logo() {
@@ -92,7 +91,7 @@ function Brand({ data }: { data?: Overview }) {
 function Nav({ className, data }: { className: string; data?: Overview }) {
   return (
     <nav className={className}>
-      {(data ? NAV[kindOf(data)] : NAV.treasury.slice(0, 1)).map(({ to, label, icon: Icon, tag }) => (
+      {(data ? NAV[kindOf(data)] : NAV.treasury.slice(0, 1)).map(({ to, label, icon: Icon }) => (
         <Link
           key={to}
           to={to}
@@ -101,7 +100,6 @@ function Nav({ className, data }: { className: string; data?: Overview }) {
           activeProps={{ className: "bg-muted font-medium text-foreground" }}
         >
           <Icon size={18} /> {label}
-          {tag && <span className="rounded-full bg-muted px-2 text-xs text-muted-foreground">{tag}</span>}
         </Link>
       ))}
     </nav>

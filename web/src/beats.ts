@@ -54,8 +54,17 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
             known: "mainnet",
             where: "agent",
             evidence:
-              "Invoices filed, voted and paid on the payout agent, 2026-10-12",
-            proposals: [47, 50],
+              "Invoices filed at invoices.multiagency.ai, voted and paid on the payout agent, 2026-10-12 and 2026-10-13 (docs/mainnet-log.md; DEMO.md \"What is verified\")",
+            proposals: [47, 50, 53, 54],
+          },
+          {
+            type: "capability",
+            text: "Requests reach the DAO without contacting a member",
+            known: "mainnet",
+            where: "agent",
+            evidence:
+              "A payee signs in on the invoice page and files there; the DAO votes on the held payment. Invoices filed and paid that way on the payout agent, 2026-10-12 and 2026-10-13",
+            proposals: [47, 53, 54],
           },
           {
             type: "guarantee",
@@ -64,8 +73,8 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
             known: "mainnet",
             where: "agent",
             evidence:
-              "The payout policy holds every payment for the owner, and the owner is the DAO, so only its on-chain vote releases one. Held, voted and paid on the payout agent, 2026-10-12",
-            proposals: [47, 50],
+              "The payout policy holds every payment for the owner, and the owner is the DAO, so only its on-chain vote releases one. Held and released by vote on the payout agent, 2026-10-11 to 2026-10-13",
+            proposals: [26, 47, 53, 54],
           },
           {
             type: "guarantee",
@@ -105,7 +114,7 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
             stoppedBy: "policy",
             known: "offline",
             evidence:
-              "The policy caps each payment; per OutLayer source the keystore re-checks the per-transaction cap before signing, after the vote. Our approval re-check is tested offline (test/authorize.test.ts, test/two-machine.test.ts). A cap refusal was seen on the treasury agent, 2026-10-11, but with no vote",
+              "Enforced by the signed policy, per OutLayer source: the keystore re-checks the per-transaction cap before signing, after the vote; not observed. Our approval re-check is tested offline (test/authorize.test.ts, test/two-machine.test.ts). A cap refusal was seen on the treasury agent, 2026-10-11, with no vote involved",
           },
           {
             type: "guarantee",
@@ -114,7 +123,7 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
             known: "mainnet",
             where: "agent",
             evidence:
-              "Payees are confidential destinations in the policy, so a public payout matches none. The payout agent's account has no public transactions and the payee sees no sender, 2026-10-11. Each approval's proposal and its timing are public",
+              "Payees are confidential destinations in the policy, so a public payout matches none. The payout agent's account has no public transactions and the payee sees no sender, 2026-10-11. Limits: each approval is a public proposal whose timing shows, and 1Click and NEAR Intents can see the mapping",
           },
         ],
       },
@@ -229,7 +238,7 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
             known: "mainnet",
             where: "agent",
             evidence:
-              "The policy caps every asset per transaction, hour, day and month. A transfer over the hourly cap refused with policy_denied on the treasury agent, 2026-10-11; the monthly cap also refused on an isolated test agent, 2026-10-13",
+              "The policy caps every asset per transaction, hour, day and month. On the treasury agent, a transfer over its hourly cap was refused with policy_denied (policy revision 8, 2026-10-11); a swap over the monthly cap was refused on an isolated test agent, 2026-10-13",
           },
           {
             type: "capability",
@@ -242,9 +251,10 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
           {
             type: "capability",
             text: "Shows budget headroom ticking down with each dispatch",
-            known: "offline",
+            known: "mainnet",
+            where: "other",
             evidence:
-              "The Overview shows the provider's usage for the window with least left (test/budget-window.test.ts); no dated observation on the treasury agent",
+              "The provider charges each swap to the USD budget: charged on an isolated test agent, 2026-10-13; on the treasury agent, the 13:57Z spend_budget_exceeded followed usage from earlier swaps, 2026-10-12. The Overview shows the window with least left (test/budget-window.test.ts)",
           },
           {
             type: "guarantee",
@@ -275,9 +285,10 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
             type: "guarantee",
             text: "The resting position can't be traced on chain",
             stoppedBy: "server",
-            known: "not-yet",
+            known: "mainnet",
+            where: "agent",
             evidence:
-              "Our deposits and swaps ask for the confidential balance, but the policy allows public swaps and unshield, so this rests on our requests (docs/enforcement.md). Funds still can't leave: the destination list is empty",
+              "No public NEAR Intents balance on chain and all three assets confidential, read-only check, 2026-10-13T23:03Z. Kept so by our deposits' and swaps' requests: the policy allows public swaps and unshield (docs/enforcement.md). Funds still can't leave: the destination list is empty",
           },
         ],
       },
@@ -419,4 +430,5 @@ export const PROVEN: string[] = [
   "One executor per agent", // DEMO.md: one live deployment each, 2026-10-12 22:13Z
   "Signed-out callers are refused every agent read", // DEMO.md: pnpm smoke, live, read-only, 2026-10-12 22:13Z
   "Every policy revision reproduces its hash, and the owner's grant and approval signatures verify", // docs/mainnet-log.md, 2026-10-13T04:10Z
+  "A person's wallet owns, grants and runs an agent; its autopilot swapped under the wallet's grant", // docs/mainnet-log.md, 2026-10-13T21:26Z (run locally)
 ];

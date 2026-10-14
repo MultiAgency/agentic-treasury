@@ -17,18 +17,17 @@ known, and reads nothing from the server.
 ## What is verified
 
 The table was checked on the 2026-10-12 build: dao `aa6ec064` and invoices `a3aa194a`, from commit `fe3330c`.
-The current deployment is dao `cd3115ee` and invoices `1be6e29c` (2026-10-13, 18:31–18:32Z), from a clean export of
-commit `37cbba2` per the deployer (Railway records no commit). After it, `pnpm smoke` passed against both and
-`/gw/public` answered 404, so the signed-out page no longer serves the roster or proposals. The table hasn't been
-re-checked on it. Operation ids and amounts for the rows below are in the private release record.
-
-The walkthrough below describes the build in this tree, which is not deployed yet. Until it is, the live site
-differs in its menus (Steward reachable only at `/a/treasury/steward`), its Overview figures and its signed-out
-page.
+The current deployment is invoices `fcdc06a6` (22:46:57Z) and dao `2d08148b` (22:48:02Z), 2026-10-13, from a clean
+export of commit `9b2941a` per the deployer (Railway records no commit). After both were up, `pnpm smoke` passed
+against both, including that signed out only DAO-owned agents are listed, and the operator signed in and opened
+both agents under the per-agent owner check. The walkthrough below describes this build, except that Steward has since left the treasury menu (reached at
+`/a/treasury/steward`), which is not deployed yet. Of the table, only the
+first row has been re-checked on it. The deployment before it was dao `cd3115ee` and invoices `1be6e29c` (2026-10-13, 18:31–18:32Z,
+from `37cbba2`). Operation ids and amounts for the rows below are in the private release record.
 
 | Claim | How it is known | When |
 |---|---|---|
-| Both hosts healthy; signed-out callers refused every agent read; cross-site writes refused | `pnpm smoke`, live, read-only | 2026-10-12 22:13Z |
+| Both hosts healthy; signed-out callers refused every agent read; cross-site writes refused | `pnpm smoke`, live, read-only | 2026-10-12 22:13Z; re-checked on dao `2d08148b` / invoices `fcdc06a6`, 2026-10-13 23:05Z |
 | One executor per agent | Railway: one live deployment each, older ones removed | 2026-10-12 22:13Z |
 | State survives a restart and a redeploy | Signed-in smoke snapshot before and after | 2026-10-12 20:50–21:37Z |
 | Autopilot runs on schedule on that build | First tick's evidence: scheduled, build digests match | 2026-10-12 21:37Z |
@@ -105,7 +104,7 @@ signed: don't retune the strategy or limits for a demo.
 
 ### Agentic Treasury Management: the AI proposes, the autopilot corrects
 
-1. **Steward** (in the menu, marked experimental): ask it to propose a small swap of USDC into wNEAR. The
+1. **Steward** (an experiment, not in the menu: open `/a/treasury/steward`): ask it to propose a small swap of USDC into wNEAR. The
    model's plan appears in a few seconds.
 2. **Execute plan.** Every step goes through the same checks and policy as any other send. The swap settles in
    about a minute: Overview's Allocation now drifts from the target, and the budget figure drops.
@@ -197,11 +196,11 @@ people who want to sign in and look for themselves.
 2. **What am I voting on?** lists each proposal asking the DAO to sign as the agents' owner. For an open one, the
    dashboard recomputes the hash from the action an agent prepared, so you see the action in words and that the hash
    really is that action. A hash nothing here prepared is flagged. The vote itself happens in Trezu.
-3. Open the treasury agent (**Treasury**). Its menu runs Overview, Steward, Automations,
+3. Open the treasury agent (**Treasury**). Its menu runs Overview, Automations,
    Funding, Policy, Activity:
    - **Overview**: the book against its target, and the budget figure: whichever USD budget window (day, week or
      month) has least left, since that one refuses first, labelled by its period ("Daily budget left").
-   - **Steward** (experimental): a model proposes a plan inside the policy; nothing moves until it is executed.
+   - **Steward** (experimental, at `/a/treasury/steward`, not in the menu): a model proposes a plan inside the policy; nothing moves until it is executed.
    - **Funding**: money in from the DAO and money out, back to it or to a listed payee.
    - **Policy**: the mandate the DAO approved, with a digest anyone can recompute from the policy, and the agent's grants.
    - **Automations**: the autopilot, how often it runs, its ceiling and its last run. It acts only while its grant

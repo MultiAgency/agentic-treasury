@@ -30,13 +30,13 @@ changes here first, then there.
 | Type | Requirement | Who stops it | How it's known | Evidence |
 |---|---|---|---|---|
 | Capability | Rebalances to target allocations on a schedule | — | Working on mainnet | The autopilot executed a rebalance alone, its plan bound to the strategy digest, 2026-10-12 16:17Z (`test/autopilot.test.ts`, `test/rebalance.test.ts`) |
-| Guarantee | Can't exceed per-asset limits | The signed policy | Held on mainnet | The policy caps every asset per transaction, hour, day and month. A transfer over the hourly cap refused with `policy_denied` on the treasury agent, 2026-10-11; the monthly cap also refused on an isolated test agent, 2026-10-13 |
+| Guarantee | Can't exceed per-asset limits | The signed policy | Held on mainnet | The policy caps every asset per transaction, hour, day and month. On the treasury agent, a transfer over its hourly cap was refused with `policy_denied` (policy revision 8, 2026-10-11); a swap over the monthly cap was refused on an isolated test agent, 2026-10-13 |
 | Capability | Quotes every route before executing | — | Working on mainnet | Two quoted legs executed on the treasury agent, 2026-10-12 20:36Z (`test/rebalance.test.ts`, `test/plans.test.ts`) |
-| Capability | Shows budget headroom ticking down with each dispatch | — | Tested offline | The Overview shows the provider's usage for the window with least left (`test/budget-window.test.ts`); no dated observation on the treasury agent |
+| Capability | Shows budget headroom ticking down with each dispatch | — | Working on mainnet, on another agent | The provider charges each swap to the USD budget: charged on an isolated test agent, 2026-10-13; on the treasury agent, the 13:57Z `spend_budget_exceeded` followed usage from earlier swaps, 2026-10-12. The Overview shows the window with least left (`test/budget-window.test.ts`) |
 | Guarantee | A rebalance over the budget is refused before anything moves | The signed policy | Held on mainnet | Refused with `spend_budget_exceeded`, nothing moved, on the treasury agent, 2026-10-12 13:57Z and 14:06Z |
 | Guarantee | Can't spend more than the USD budget, even with simultaneous requests | The signed policy | Held on mainnet, on another agent | Five simultaneous swaps on an isolated test agent: one settled, the rest refused, no overshoot, 2026-10-13 (one trial) |
 | Capability | Sweeps idle stables into the confidential balance | — | Tested offline | Our autopilot shields public balances each tick (`test/autopilot.test.ts`). Never run on the treasury agent: deposits land confidential, and the only shield was a one-off script on an isolated test agent |
-| Guarantee | The resting position can't be traced on chain | Our server | Not yet | Our deposits and swaps ask for the confidential balance, but the policy allows public swaps and unshield, so this rests on our requests (`docs/enforcement.md`). Funds still can't leave: the destination list is empty |
+| Guarantee | The resting position can't be traced on chain | Our server | Held on mainnet | No public NEAR Intents balance on chain and all three assets confidential, read-only check, 2026-10-13T23:03Z. Kept so by our deposits' and swaps' requests: the policy allows public swaps and unshield (`docs/enforcement.md`). Funds still can't leave: the destination list is empty |
 
 ## 09 Adaptive DCA (roadmap)
 
