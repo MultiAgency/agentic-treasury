@@ -28,6 +28,18 @@ pending actions cannot be read. Preserve the damaged file, stop writers before r
 only from verified records. Do not delete evidence merely to resume a schedule or prepare an action.
 Manual ticks and operation-journal authorization retain their existing behavior.
 
+Own and peer owner-intent readers now reject malformed or contradictory lifecycle records. A missing
+stage is compatible only with an unsigned legacy preparation; a retained signature must never be
+converted back to a first submission. Keep the original file intact, stop writers, and investigate
+against verified outcome evidence. This is validation of existing records, not a format conversion.
+Onboarding now acquires the executor lease and starts its background loops without a restart. If
+ownership is unavailable, recover the original creation action after resolving executor ownership;
+do not create another agent or submit the signature again.
+The cumulative autopilot ceiling reads existing per-operation `planId` and `usdIn` records; it adds no
+counter or state conversion. Preserve those records with the full state above. Missing valuation
+evidence refuses a new swap rather than resetting the amount already submitted, and a claimed plan
+remains single-use after restart. These local checks do not resume partially executed plans.
+
 Gateway configuration rejects duplicate agent ports before starting listeners or child processes.
 Distinct names must point to distinct loopback servers, including externally started servers.
 
@@ -141,7 +153,11 @@ change to recovery or authorization separately.
 3. Deploy the reviewed candidate to `invoices` first, reusing its existing `/data` volume and
    configuration, with one replica and no old executor still running. Keep new submissions paused;
    check `/health`. Startup reconciliation may update records, so preserve any new state even if
-   the next deployment fails.
+   the next deployment fails. Before restarting, review retained prepared and submitted owner
+   actions: the owner-intent watcher can submit a signature already produced by a passed DAO vote.
+   Pausing new approvals and schedules does not make startup status-only, and a policy freeze
+   does not block every kind of owner action. Record any automatic progression without deleting
+   or replacing the retained action.
 4. Deploy the same candidate to `dao`, reusing `/data/state`, one replica, and the existing
    treasury-executor/payout-approve-only mapping. Every other copy of either agent stays
    `EXECUTOR=off`. Do not use restore/bootstrap variables to overwrite existing state. Check
@@ -259,6 +275,13 @@ old writer after new SQLite payments without reconciling/exporting the new recor
 
 
 ## Journal v2 and owner-intent locking upgrade
+
+The journal reader also recognizes standalone version-1 authorization snapshots attached to an
+unversioned preparation. These historical records remain unchanged and are ignored for lifecycle
+decisions: they never establish that an operation was submitted, settled or safe to retry. Unknown
+versions, orphan snapshots and snapshots mixed with lifecycle fields still refuse. No conversion
+is required. Validate the retained journal with the candidate reader on a disposable backup copy
+before starting the executor; source-only tests do not establish compatibility with every history.
 
 This is an additive state-format migration. Stop the executor and every server/CLI that writes this
 agent's operations or this instance's owner intents before installing the new build. Do not perform

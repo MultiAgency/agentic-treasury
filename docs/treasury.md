@@ -44,7 +44,7 @@ These are catalog targets, not established guarantees. Evidence stages describe 
 | Safety target | Can't exceed per-asset limits | The signed policy | Observed on mainnet | The policy caps every asset per transaction, hour, day and month. On the treasury agent, a transfer over its hourly cap was refused with policy_denied (policy revision 8, 2026-10-11); a swap over the monthly cap was refused on an isolated test agent, 2026-10-13 |
 | Capability target | Quotes every route before executing | — | Observed on mainnet | Two quoted legs executed on the treasury agent, 2026-10-12 20:36Z (test/rebalance.test.ts, test/plans.test.ts) |
 | Capability target | Shows budget headroom ticking down with each dispatch | — | Observed on mainnet | On the treasury agent, a Run now swap took the daily budget left down by its value, shown as before and after under Automations' Latest run, 2026-10-14 00:50Z. The Overview and each run show the window with least left (test/budget-window.test.ts) |
-| Safety target | A rebalance over the budget is refused before anything moves | The signed policy | Observed on mainnet | Refused with spend_budget_exceeded, nothing moved, on the treasury agent, 2026-10-12 13:57Z and 14:06Z |
+| Safety target | An over-budget operation is refused; earlier operations in its run may complete | The signed policy | Observed on mainnet | Refused with spend_budget_exceeded, nothing moved, on the treasury agent, 2026-10-12 13:57Z and 14:06Z |
 | Safety target | Can't spend more than the USD budget, even with simultaneous requests | The signed policy | Observed on mainnet, on another agent | Five simultaneous swaps on an isolated test agent: one settled, the rest refused, no overshoot, 2026-10-13 (one trial) |
 | Capability target | Sweeps idle stables into the confidential balance | — | Observed on mainnet | A small USDC deposit to a public deposit address landed in the treasury agent's public balance; the dashboard's Sweep (the same sweep the autopilot runs each tick) shielded it, and nothing was left public, 2026-10-14 00:33Z to 00:39Z (test/autopilot.test.ts) |
 | Safety target | The resting position can't be traced on chain | Our server | Observed on mainnet | No public NEAR Intents balance on chain and all three assets confidential, read-only check, 2026-10-13T23:03Z. Kept so by our deposits' and swaps' requests: the policy allows public swaps and unshield (docs/enforcement.md). Funds still can't leave: the destination list is empty |
@@ -148,11 +148,12 @@ reconcile a tick. The browser download flow has been built, but has not been che
 
 ## Next (planned, not built)
 
-- **Undo window.** The policy's `timelock_ms` holds each execution; the dashboard lists them
-  (`listScheduledExecutions`) with a countdown and a cancel (`execution_cancel`), so the owner has a
-  veto on every autopilot swap. Needs its own money-path design first: today a queued execution
-  counts as unresolved and blocks new sends, and provider timelocks are held because their
-  release-time checks aren't established ([architecture](architecture.md#how-the-money-path-stays-safe-on-one-host)).
+- **Undo window (planned).** Investigate provider `timelock_ms`, scheduled-execution listing and
+  cancellation to give the owner a veto window before an autopilot swap executes. Release-time checks
+  and cancellation behavior need verification before implementation. Today, an observed queued
+  execution remains unresolved and blocks new sends, but this server does not reject a policy merely
+  because it has a timelock and does not inspect the provider's scheduled-execution queue
+  ([architecture](architecture.md#how-the-money-path-stays-safe-on-one-host)).
 
 
 ## Strategy setup in the dashboard (offline-tested)
@@ -171,7 +172,9 @@ An operator explicitly enables the saved strategy afterward.
 Server controls serialize dashboard saves and schedule changes on this host, persist off before
 strategy replacement, reject stale digests, and check policy, held grant and unresolved operations
 before enabling. Stop writes only the schedule flag and remains available during failed provider
-reads. The old settings endpoint cannot combine settings changes and enablement. Approve-only
+reads. It prevents future scheduled ticks; a tick already started can submit further operations, and
+submitted operations may finish. **Run now** remains available with the schedule off. The old settings
+endpoint cannot combine settings changes and enablement. Approve-only
 instances cannot configure strategies; Payables has no Treasury setup and retains stop for an
 existing schedule. No state format migration is required.
 
@@ -179,3 +182,10 @@ existing schedule. No state format migration is required.
 and synthetic wallet/DAO workflows. This is offline-tested behavior, not deployed or mainnet-observed.
 Dispatch still authorizes every operation; the settings lock is not distributed fencing and does not
 coordinate manual file edits or make provider observations atomic with subsequent sends.
+
+Planned swaps require fresh input/output valuation before each send, including before an automatic
+shield. Autopilot also checks the sum of prior submitted swaps for that plan plus the proposed swap
+against its ceiling; shields are excluded and refunds do not replenish the limit. Unknown valuation
+refuses. The journal supplies these existing records, so no counter migration is needed. This is
+offline-tested in `test/planning-valuation.test.ts`; it does not establish settlement-time cost or
+provider budget accounting. See [execution valuation](enforcement.md#how-each-claim-is-known).

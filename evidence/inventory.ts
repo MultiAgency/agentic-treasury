@@ -275,7 +275,7 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
           },
           {
             type: "guarantee",
-            text: "A rebalance over the budget is refused before anything moves",
+            text: "An over-budget operation is refused; earlier operations in its run may complete",
             stoppedBy: "policy",
             known: "mainnet",
             where: "agent",
@@ -498,7 +498,7 @@ export const VERIFICATIONS: { claim: string; evidence: string; when: string; pub
     "when": "2026-10-12 21:48Z"
   },
   {
-    "claim": "Same flow, not paid",
+    "claim": "Same flow, provider reported FAILED; nonpayment not independently verified",
     "evidence": "Submitted at 22:16Z, inferred, by the deployed `invoices` service; approval prepared and signed by the user's local approve-only server running the one-click code, uncommitted at the time (proposal 51); executed by the provider: FAILED, reason redacted (an empty wallet afterwards suggests insufficient funds, unproven)",
     "when": "2026-10-12 22:17Z"
   },

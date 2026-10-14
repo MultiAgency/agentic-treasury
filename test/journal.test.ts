@@ -132,3 +132,47 @@ test("additional metadata and opaque timestamps do not change submission evidenc
   await assert.rejects(acquireMoneyLock(), /no proven outcome/);
   assert.equal(readOps()[0]?.refused, undefined);
 });
+
+const legacyAuthorization = { at: "2026-10-12T00:00:01Z", idempotencyKey: "review",
+  authorization: { version: 1, evaluatedAt: "2026-10-12T00:00:01Z", policy: { note: "historical metadata only" } } };
+const { journalVersion: _legacyVersion, ...legacyPreparation } = preparation;
+
+test("standalone legacy authorization metadata cannot resolve or replay an operation", async () => {
+  const raw = [legacyPreparation, legacyAuthorization].map(line => JSON.stringify(line)).join("\n") + "\n";
+  writeFileSync(opsLog(), raw);
+  const [op] = readOps();
+  assert.equal(op?.submissionState, undefined);
+  assert.equal(op?.journalVersion, undefined);
+  assert.equal(op?.refused, undefined);
+  assert.equal(op?.status, undefined);
+  await assert.rejects(acquireMoneyLock(), /no proven outcome/);
+  assert.equal(readFileSync(opsLog(), "utf8"), raw);
+});
+
+test("legacy authorization metadata preserves separately recorded settlement", async () => {
+  const raw = [legacyPreparation, legacyAuthorization,
+    { idempotencyKey: "review", correlation_id: "legacy-op", status: "SUCCESS" },
+  ].map(line => JSON.stringify(line)).join("\n") + "\n";
+  writeFileSync(opsLog(), raw);
+  const lock = await acquireMoneyLock();
+  await lock.release();
+  assert.equal(readOps()[0]?.status, "SUCCESS");
+  assert.equal(readOps()[0]?.submissionState, undefined);
+  assert.equal(readFileSync(opsLog(), "utf8"), raw);
+});
+
+for (const [name, lines] of Object.entries({
+  orphan: [legacyAuthorization],
+  "versioned operation": [preparation, legacyAuthorization],
+  "unknown metadata version": [legacyPreparation, { ...legacyAuthorization, authorization: { version: 2 } }],
+  "malformed metadata": [legacyPreparation, { ...legacyAuthorization, authorization: null }],
+  "mixed refusal": [legacyPreparation, { ...legacyAuthorization, refused: "never_submitted" }],
+  "mixed outcome": [legacyPreparation, { ...legacyAuthorization, correlation_id: "legacy-op", status: "SUCCESS" }],
+  "mixed claim": [legacyPreparation, { ...legacyAuthorization, submissionState: "SUBMISSION_ATTEMPTED" }],
+})) test(`invalid legacy authorization metadata (${name}) keeps recovery blocked`, async () => {
+  const raw = lines.map(line => JSON.stringify(line)).join("\n") + "\n";
+  writeFileSync(opsLog(), raw);
+  assert.throws(readOps, /Invalid operation journal/);
+  await assert.rejects(acquireMoneyLock(), /Invalid operation journal/);
+  assert.equal(readFileSync(opsLog(), "utf8"), raw);
+});

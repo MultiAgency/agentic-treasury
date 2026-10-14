@@ -29,8 +29,13 @@ export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
   function fail(message) { $("error").textContent = message; $("error").hidden = false; }
   /** @param {string} method @param {string} path @param {unknown} [payload] */
   async function call(method, path, payload) {
+    const session = sessionVersion;
     $("error").hidden = true;
     const res = await fetch(path, { method, headers: { "content-type": "application/json" }, body: payload === undefined ? undefined : JSON.stringify(payload) });
+    if ((res.status === 401 || res.status === 403) && path.startsWith("/api/invoices")) {
+      if (session === sessionVersion) expireSession();
+      throw new Error("Sign in again to review the existing invoice.");
+    }
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || "Something went wrong.");
     return json;
@@ -77,6 +82,11 @@ export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
       $("amount").value = saved?.amount || ""; $("note").value = saved?.note || "";
       refresh();
     }
+  }
+  function expireSession() {
+    // Keep the account-scoped draft and its submission identity for a later authenticated return.
+    signedIn(null, false);
+    fail("Your session expired or access is unavailable. Sign in again to review your existing invoices. Your retained submission identity has not changed.");
   }
   /** @param {string | null} raw */
   const usdc = (raw) => raw === null ? "" : (Number(raw) / 1e6).toLocaleString("en-US", { maximumFractionDigits: 6 }) + " USDC";
@@ -166,7 +176,8 @@ export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
     try {
     const res = await fetch("/api/invoices");
     if (version !== refreshVersion) return;
-    if (!res.ok) throw new Error(res.status === 401 ? "Session expired. Sign out, then sign in again to check your invoices." : "Invoice status could not be checked. Showing the last loaded records.");
+    if (res.status === 401 || res.status === 403) { expireSession(); return; }
+    if (!res.ok) throw new Error("Invoice status could not be checked. Showing the last loaded records.");
     /** @type {InvoiceList} */
     const { invoices, agreements, agreed } = await res.json();
     if (version !== refreshVersion) return;

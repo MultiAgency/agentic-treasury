@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -10,6 +11,9 @@ import { test } from "node:test";
 // This is a build-input check, not a Linux image or runtime validation.
 test("dashboard Dockerfile copies every source needed for its web build", { timeout: 60_000 }, () => {
   const root = fileURLToPath(new URL("../", import.meta.url));
+  const launcher = join(root, "node_modules/.bin/rsbuild");
+  const launcherHash = () => createHash("sha256").update(readFileSync(launcher)).digest("hex");
+  const launcherBefore = launcherHash();
   const dir = mkdtempSync(join(tmpdir(), "dashboard-build-"));
   try {
     const dockerfile = readFileSync(join(root, "Dockerfile.dashboard"), "utf8");
@@ -25,7 +29,10 @@ test("dashboard Dockerfile copies every source needed for its web build", { time
       });
     }
     symlinkSync(join(root, "node_modules"), join(dir, "node_modules"), "dir");
-    const result = spawnSync("pnpm", ["build:web"], { cwd: dir, encoding: "utf8", timeout: 45_000 });
+    // pnpm in a relocated fixture can rewrite the shared .bin shims. Run the same bundler directly.
+    const result = spawnSync(process.execPath, [join(root, "node_modules/@rsbuild/core/bin/rsbuild.js"), "build", "--root", "web"],
+      { cwd: dir, encoding: "utf8", timeout: 45_000 });
     assert.equal(result.status, 0, `${result.error ?? ""}\n${result.stdout}\n${result.stderr}`);
+    assert.equal(launcherHash(), launcherBefore, "The isolated build must not rewrite shared dependency launchers");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

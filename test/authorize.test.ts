@@ -15,7 +15,7 @@ process.env.AGENT_ID = "a".repeat(64);
 process.env.AGENT_GRANT_TOKEN = "ngt_fixture";
 
 const NOW = Date.parse("2026-10-13T12:00:00Z");
-const strategy = DEFAULT_STRATEGY;
+const strategy = { ...DEFAULT_STRATEGY, autopilot: { ...DEFAULT_STRATEGY.autopilot, maxUsd: 10 } };
 const USDC = (whole: number) => String(whole * 1_000_000);
 const NEAR = (whole: number) => (BigInt(whole) * 10n ** 24n).toString();
 
@@ -32,7 +32,7 @@ const common = (policy: Policy, label: string | null) => ({
 const tokens = timedPrices([
   { asset_id: ASSETS.USDC, symbol: "USDC", decimals: 6, price: 1 },
   { asset_id: ASSETS.wNEAR, symbol: "wNEAR", decimals: 24, price: 2 },
-]) as Facts["treasury"]["tokens"];
+], NOW) as Facts["treasury"]["tokens"];
 
 const swap = (to: string = ASSETS.USDC, amount = NEAR(1)): Action =>
   ({ method: "swap", request: { origin_asset: ASSETS.wNEAR, destination_asset: to, amount, confidential: true } as never });
@@ -42,14 +42,16 @@ const pay = (recipient = "payee.near", amount = USDC(1), asset: string = ASSETS.
 function facts(purpose: Purpose, change: Record<string, unknown> = {}): never {
   const base = {
     treasury: { ...common(treasury, "treasury:anything"), plan: null, strategy, tokens },
-    autopilot: { ...common(treasury, `treasury:${strategyLabelSuffix(strategy)}`), plan: null, strategy, tokens },
+    autopilot: { ...common(treasury, `treasury:${strategyLabelSuffix(strategy)}`), plan: null, strategy, tokens, submittedSwapUsd: 0 },
     payout: { ...common(payout, "payout"), available: USDC(100), heldPayouts: [] },
     invoice: { ...common(payout, "invoices"), available: USDC(100) },
     approval: common(payout, null),
   }[purpose];
   return { ...base, ...change } as never;
 }
-const actionFor = (purpose: Purpose) => (purpose === "treasury" || purpose === "autopilot" ? swap() : pay());
+const actionFor = (purpose: Purpose): Action => purpose === "autopilot"
+  ? { method: "shield", request: { asset: ASSETS.wNEAR, amount: NEAR(1) } }
+  : purpose === "treasury" ? swap() : pay();
 const PURPOSES: Purpose[] = ["treasury", "autopilot", "payout", "invoice", "approval"];
 const code = (purpose: Purpose, action: Action, change: Record<string, unknown> = {}) => authorize(action, { purpose, facts: facts(purpose, change) })?.code ?? "ok";
 
@@ -164,4 +166,40 @@ test("a plan's send is refused once anything it was previewed under has changed"
     // 1 wNEAR at $2 with a floor of 1.9 USDC costs 500 bps, over the strategy's 250.
     assert.equal(code(purpose, swap(), { plan: sending({}, { minAmountOut: USDC(1.9) }) }), "swap_cost_exceeded", purpose);
   }
+});
+
+test("planned swaps need fresh finite valuations before shielding and before swapping", () => {
+  const leg = { type: "swap" as const, from: ASSETS.wNEAR, to: ASSETS.USDC, amount: NEAR(1), amountOut: USDC(2), minAmountOut: USDC(2), costBps: 0 };
+  const plan = { agentId: process.env.AGENT_ID!, expiresAt: new Date(NOW + 60_000).toISOString(),
+    policyRevision: 11, policyDigest: mandateDigest(treasury), strategyDigest: strategyDigest(strategy) } as Plan;
+  const actions: Action[] = [swap(), { method: "shield", request: { asset: ASSETS.wNEAR, amount: NEAR(1) } }];
+  for (const purpose of ["treasury", "autopilot"] as const) {
+    for (const action of actions) {
+      for (const asset of [ASSETS.wNEAR, ASSETS.USDC]) {
+        for (const change of [{ price: null }, { price: Infinity }, { price: -1 }, { price_updated_at: null },
+          { price_expires_at: "invalid" }, { price_expires_at: new Date(NOW).toISOString() },
+          { price_updated_at: new Date(NOW + 1).toISOString() }]) {
+          const observed = tokens.map(token => token.asset_id === asset ? { ...token, ...change } : token);
+          assert.equal(code(purpose, action, { plan: { plan, leg }, tokens: observed }), "valuation_unavailable");
+        }
+      }
+    }
+  }
+});
+
+test("automatic swaps require known cumulative plan value, while manual swaps and sweeps keep their scope", () => {
+  const leg = { type: "swap" as const, from: ASSETS.wNEAR, to: ASSETS.USDC, amount: NEAR(1), amountOut: USDC(2), minAmountOut: USDC(2), costBps: 0 };
+  const plan = { agentId: process.env.AGENT_ID!, expiresAt: new Date(NOW + 60_000).toISOString(),
+    policyRevision: 11, policyDigest: mandateDigest(treasury), strategyDigest: strategyDigest(strategy) } as Plan;
+  const planned = { plan, leg };
+  const shield: Action = { method: "shield", request: { asset: ASSETS.wNEAR, amount: NEAR(1) } };
+  for (const action of [swap(), shield]) {
+    assert.equal(code("autopilot", action, { plan: planned, submittedSwapUsd: 8 }), "ok");
+    assert.equal(code("autopilot", action, { plan: planned, submittedSwapUsd: 8.01 }), "autopilot_limit_exceeded");
+    for (const value of [null, undefined, NaN, Infinity, -1])
+      assert.equal(code("autopilot", action, { plan: planned, submittedSwapUsd: value }), "valuation_unavailable");
+    assert.equal(code("treasury", action, { plan: planned, submittedSwapUsd: 100 }), "ok");
+  }
+  assert.equal(code("autopilot", swap()), "valuation_unavailable", "no plan cannot imply an unused ceiling");
+  assert.equal(code("autopilot", shield, { submittedSwapUsd: null }), "ok", "a sweep does not consume the swap ceiling");
 });

@@ -119,10 +119,10 @@ createServer(async (req, res) => {
     // A DAO's recent signing proposals, for a viewer who may see one of the agents it owns.
     if (pathname === "/gw/proposals") {
       const me = await viewer(req);
-      if (!me) return json(res, 401, { error: "Sign in first" });
+      if (!me) return json(res, 401, { error: "Sign in first", access: "session" });
       const dao = url.searchParams.get("dao") ?? "";
       const owned = config.agents.filter((a) => a.owner === dao && me.access[a.name]);
-      if (!owned.length) return json(res, 403, { error: `No agent here you may see is owned by ${dao || "that account"}` });
+      if (!owned.length) return json(res, 403, { error: `No agent here you may see is owned by ${dao || "that account"}`, access: "procedure" });
       if (!(await ownerOf(dao)).policy) return json(res, 400, { error: `${dao} is not a DAO` });
       return json(res, 200, await recentSignProposals(dao, owned));
     }
@@ -131,7 +131,7 @@ createServer(async (req, res) => {
     if (pathname === "/gw/interventions") {
       const me = await viewer(req);
       const operated = new Set(Object.entries(me?.access ?? {}).filter(([, a]) => a.role === "operator").map(([agent]) => agent));
-      if (!operated.size) return json(res, me ? 403 : 401, { error: "Operators only" });
+      if (!operated.size) return json(res, me ? 403 : 401, { error: "Operators only", access: me ? "procedure" : "session" });
       const { calls, corrupt } = interventions(url.searchParams.get("since") ?? "");
       // An unreadable line can't be attributed to an agent, so every operator is told it exists.
       return json(res, 200, { calls: calls.filter((c) => operated.has(c.agent)), corrupt });
@@ -144,10 +144,10 @@ createServer(async (req, res) => {
       const agent = config.agents.find((a) => a.name === call[1]);
       if (!agent) return json(res, 404, { error: "No such agent" });
       const me = await viewer(req);
-      if (!me) return json(res, 401, { error: "Sign in first" });
+      if (!me) return json(res, 401, { error: "Sign in first", access: "session" });
       const access = me.access[agent.name];
-      if (!access) return json(res, 403, { error: `${me.account} may not see the ${agent.name} agent` });
-      if (!mayCall(access.role, call[2]!)) return json(res, 403, { error: "Operators only" });
+      if (!access) return json(res, 403, { error: `${me.account} may not see the ${agent.name} agent`, access: "agent" });
+      if (!mayCall(access.role, call[2]!)) return json(res, 403, { error: "Operators only", access: "procedure" });
       // Anything beyond a member's reads is an intervention: recorded before it runs, or not run.
       if (!mayCall("member", call[2]!)) {
         try {

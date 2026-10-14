@@ -124,14 +124,14 @@ Create `exploration/drop-response` to drop the next simulator transfer response;
 `exploration/stop` to capture the final trace and stop the local processes. These controls are files
 outside the application, not test-control HTTP routes. Close the agent-browser session afterward.
 
-This initial suite does not cover all roles, multi-agent access, strategy scheduling, provider outages,
+This suite does not cover all DAO roles, scheduled tick execution, arbitrary provider outages,
 or production canaries end to end. Existing narrower tests cover parts of those behaviors; they must
 not be counted as full-stack production observations. Deployed verification and money actions remain
 separately owner-run.
 
 ### Challenging the E2E assertions
 
-`pnpm test:e2e:challenge` first requires all three baseline cases to pass without skips or retries.
+`pnpm test:e2e:challenge` first requires all five baseline cases to pass without skips or retries.
 It then creates three separate disposable copies of that tested snapshot and deliberately introduces
 one fault into each: duplicate transfer submission, a premature Paid invoice label, or removal of the
 approve-only dispatch guard. It rebuilds each copy and runs the relevant journey. Working application
@@ -164,3 +164,57 @@ These cases do not verify successful money submission or settlement. Any future 
 submit requires a separately named, explicitly authorized workflow; do not disable this barrier to
 make a refusal test pass. Test results describe the observed run, not the identity of a future provider
 deployment. Deployed smoke checks and recorded mainnet observations retain their separate scopes.
+
+
+## Candidate and deployed verification
+
+`pnpm verify:candidate` captures all Git-visible files, including uncommitted changes, into an isolated
+source directory and runs the complete `pnpm verify` pipeline there. The manifest records the base
+commit, per-file hashes and modes, and a combined source hash. It rejects edits during capture, checks
+that captured source remains unchanged after verification, and reports whether the working tree still
+matches. It neither stages changes nor commits, deploys, restarts or changes live settings. Existing
+`node_modules` is shared; keep dependencies fixed during the run. The workspace disables pnpm's
+automatic pre-script installation; install dependencies explicitly before capturing source. The
+dashboard build fixture invokes the bundler directly and checks that shared launchers stay unchanged.
+This is a tested source snapshot,
+not a frozen Git release: reconcile review findings and identify the final release commit before shipping.
+Logs and nested browser/E2E artifacts remain under `.test-artifacts/candidates/candidate-*`.
+
+Release acceptance requires a passing result with both `snapshotUnchanged` and
+`workingTreeStillMatches` true. Then run `pnpm test:e2e:challenge` from that candidate's `source/`
+directory, with the same dependencies and runtime. Its baseline and disposable fault copies must
+descend from that captured source, not the current checkout. Require all baseline cases and all three
+designated fault detections, then recheck the candidate files. Any source correction requires a fresh
+candidate and challenge run. Match the release commit's complete file set, contents and executable
+modes to the manifest, and retain the full commit, source/archive hashes and results privately before
+the owner deploys. A passing snapshot whose working tree differs is not a releasable working tree.
+
+The workspace E2E cases use a separate Portfolio executor, provider identity and store alongside the
+Payables executor and approve-only server. They cover full-document cross-agent navigation and back,
+per-agent wallet/operator access, forbidden direct reads and settings writes, strategy save with the
+schedule off, stale save/authorization/enable refusal, actual local grant signing, explicit enablement,
+and stopping after a declared provider outage. Database/provider records and persisted settings support
+browser assertions. They do not establish DAO role coverage or scheduled money execution end to end.
+
+Before calling a candidate deployed-verified, complete this checklist in a private release record:
+
+1. Record the candidate source hash and full pipeline results. Resolve the other review session's
+   findings; any source change needs a new candidate. Match the final commit/source archive to the
+   tested files. Follow the existing [owner-run rollout](operations.md#owner-run-rollout).
+2. Record UTC time, deployment ID and source/image identity separately for `dao` and `invoices`.
+   Obtain these from deployment records; `/health` and asset names alone do not identify source.
+   Establish that both services use the reviewed candidate. An unknown deployed revision remains unknown.
+3. Run `DASHBOARD_URL=https://proto.multiagency.ai INVOICES_URL=https://invoices.multiagency.ai pnpm smoke`.
+   Without an authenticated session this covers public health, headers and access boundaries only.
+4. In an authenticated browser, inspect existing Payments, Agreements, Strategy, Runs and Activity.
+   Check cross-agent navigation/back/reload, retained recovery wording, owner decision versus payment
+   outcome, and keyboard/mobile layouts at 320, 390 and 1280 pixels. Record empty views and unavailable
+   evidence as such. Do not populate views by creating invoices, approving payments or starting runs.
+   Some page reads refresh retained observations; view-only inspection is not a storage-immutability claim.
+5. Keep screenshots and account/payment details in restricted private artifacts, separate from offline
+   fictional fixtures. Record failures and authentication blockers; a local mock cannot replace a hosted
+   observation. Do not export cookies to enable browser access.
+6. Money verification is a separate owner-authorized operation. Retain its reviewed policy/strategy
+   binding, operation identity, provider correlation, owner action where required, terminal provider
+   outcome and durable records. Approval is not settlement. Unknown outcomes remain unresolved; never
+   retry with a new identity merely to obtain a passing result. Do not test crash/restart faults live.

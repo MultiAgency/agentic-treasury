@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { dispatch } from "../src/agent.js";
 import { held } from "../src/payouts.js";
+import { recover } from "../src/recover.js";
 import { api } from "../src/api.js";
 import { acquireMoneyLock, MoneyLockBusy, STALE_MS, UnresolvedOperations } from "../src/lock.js";
 import { opsLog, readOps, settle } from "../src/ops.js";
@@ -110,7 +111,7 @@ test("an action held for the owner's approval doesn't block, and settles by its 
   assert.ok(!Number.isNaN(Date.parse(last.at)));
 });
 
-test("a held action seen mid-settlement keeps waiting for its outcome without blocking", async () => {
+test("a released held action blocks new sends until reconciliation proves its outcome", async () => {
   writeFileSync(
     opsLog(),
     [
@@ -120,17 +121,24 @@ test("a held action seen mid-settlement keeps waiting for its outcome without bl
     ].join("\n"),
   );
   // Released by a vote, not settled yet: the status read in between is not an outcome.
-  Object.assign(api, { getStatus: async () => ({ correlation_id: "op_held", status: "PROCESSING", details: null }) });
+  Object.assign(api, {
+    getStatus: async () => ({ correlation_id: "op_held", status: "PROCESSING", details: null }),
+    getHistory: async () => ({ data: [], next_cursor: null }),
+  });
   assert.deepEqual(await held(), []);
-  assert.equal(readOps()[0]?.status, "PENDING_APPROVAL");
-  const lock = await acquireMoneyLock();
-  await lock.release();
+  assert.equal(readOps()[0]?.status, "PROCESSING");
+  await assert.rejects(acquireMoneyLock(), UnresolvedOperations);
 
   // An outcome nobody can vouch for is recorded, and blocks until reconciled.
   Object.assign(api, { getStatus: async () => ({ correlation_id: "op_held", status: "UNCERTAIN", details: null }) });
-  await held();
+  await recover();
   assert.equal(readOps()[0]?.status, "UNCERTAIN");
   await assert.rejects(acquireMoneyLock(), UnresolvedOperations);
+
+  Object.assign(api, { getStatus: async () => ({ correlation_id: "op_held", status: "SUCCESS", details: null }) });
+  await recover();
+  assert.equal(readOps()[0]?.status, "SUCCESS");
+  await (await acquireMoneyLock()).release();
 });
 
 test("a payout another instance filed is listed from the API's history and never written here", async () => {

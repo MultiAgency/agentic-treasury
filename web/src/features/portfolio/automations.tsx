@@ -1,5 +1,6 @@
 import { TaskEvidence } from "../evidence/task-evidence";
 import { ConfirmButton } from "../owner/confirm-button";
+import { SCHEDULE_STOPPED, SCHEDULE_STOP_SCOPE } from "../../shared/schedule-copy";
 import { queries } from "../../shared/queries";
 import { ArrowRight, ArrowsLeftRight, CheckCircle } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
@@ -132,10 +133,10 @@ export function PayablesSchedule() {
   if (status.isPending) return <Loading label="Checking for an existing schedule…" />;
   if (!status.data.on && !message) return null;
   return <Card>
-    {status.data.on && <><p>An existing schedule is on. Portfolio strategy configuration is not available for Payables.</p>
+    {status.data.on && <><p>An existing schedule is on. Portfolio strategy configuration is not available for Payables.</p><p>{SCHEDULE_STOP_SCOPE}</p>
       <Button variant="outline" disabled={busy || !operator || !executor} onClick={() => attempt(async () => {
         await client.autopilot.stop();
-        return "Schedule off. Operations already submitted may still finish.";
+        return SCHEDULE_STOPPED;
       })}>Turn off</Button></>}
     {message && <p role="status">{message}</p>}
     <ErrorBox error={error} />

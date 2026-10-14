@@ -2,7 +2,7 @@ import { api } from "./api.js";
 import { bindingWindow } from "./budget-window.js";
 import { agentId } from "./env.js";
 import { ASSETS } from "./policy.js";
-import { usdValue } from "./value.js";
+import { tokenUsd } from "./valuation.js";
 
 export type Holding = {
   asset: string;
@@ -23,7 +23,7 @@ type Unmanaged = { asset: string; symbol: string; decimals: number | null; amoun
 
 /**
  * Everything the agent holds, across public and confidential balances, valued at the API's token
- * prices: the treasury's assets, which the strategies manage, and anything else, such as an asset a
+ * fresh prices: the treasury's assets, which the strategies manage, and anything else, such as an asset a
  * swap bought outside the policy, which they leave alone but the owner must see.
  */
 export async function allHoldings(): Promise<{ managed: Holding[]; unmanaged: Unmanaged[] }> {
@@ -32,11 +32,13 @@ export async function allHoldings(): Promise<{ managed: Holding[]; unmanaged: Un
     api.getBalances(agentId(), { source: "public" }),
     api.getBalances(agentId(), { source: "confidential" }),
   ]);
+  const now = Date.now();
   const managed = Object.values(ASSETS).map((asset) => {
     const token = tokens.find((t) => t.asset_id === asset);
-    if (!token?.price) throw new Error(`No price for ${asset}`);
     const balance = { public: rawBalance(open, asset), confidential: rawBalance(shielded, asset) };
-    return { asset, symbol: token.symbol, decimals: token.decimals, price: token.price, ...balance, usd: usdValue(balance.public + balance.confidential, token.decimals, token.price) };
+    const usd = tokenUsd(balance.public + balance.confidential, token, now);
+    if (!token || usd === null) throw new Error(`No fresh price or finite valuation for ${asset}`);
+    return { asset, symbol: token.symbol, decimals: token.decimals, price: token.price!, ...balance, usd };
   });
   const treasury = new Set<string>(Object.values(ASSETS));
   const others = new Set([...open.balances, ...shielded.balances].map((b) => b.asset_id).filter((asset) => !treasury.has(asset)));
@@ -44,7 +46,7 @@ export async function allHoldings(): Promise<{ managed: Holding[]; unmanaged: Un
     const amount = rawBalance(open, asset) + rawBalance(shielded, asset);
     if (amount === 0n) return [];
     const token = tokens.find((t) => t.asset_id === asset);
-    const usd = token?.price ? usdValue(amount, token.decimals, token.price) : null;
+    const usd = tokenUsd(amount, token, now);
     return [{ asset, symbol: token?.symbol ?? asset, decimals: token?.decimals ?? null, amount, usd }];
   });
   return { managed, unmanaged };

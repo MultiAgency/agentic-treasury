@@ -13,6 +13,27 @@ records instead of treating them as no pending action. These behaviors are offli
 `test/delegate-waiting.test.ts`. Records still require verified recovery; automatic reconstruction
 is not implemented.
 
+Own and peer owner-intent readers also reject malformed lifecycle states and unsigned preparations
+that retain a signature or outcome. Missing stages remain compatible only for unsigned legacy
+preparations. Offline regressions reproduce the prior duplicate signature submission from retained records and verify
+refusal without rewriting the evidence (`test/owner-records.test.ts`, `test/delegate-waiting.test.ts`).
+The local reader also refuses a settled record without a recognized terminal outcome; a lifecycle
+label alone cannot stop outcome polling. Peer records with incomplete settlement evidence remain
+blocking. These checks do not independently prove the provider's terminal outcome.
+
+Server startup and onboarding now share executor activation: acquire the single-host lease before
+publishing a newly created agent identity, then start reconciliation, notifications and scheduling
+once. A failed acquisition leaves creation recoverable with the original signature attempt;
+approve-only instances start no money loops and retain their first agent identity. Shutdown cannot
+publish an identity or start loops after waiting for a lease. This is offline-tested in `test/onboarding-executor.test.ts`,
+`test/executor-lifecycle.test.ts` and `test/executor-creation.test.ts`, not observed on a deployed host.
+
+Held-payout refresh now records released `PROCESSING` and `QUEUED` observations, which block new
+sends until reconciliation establishes an outcome. A tick binds its captured ceiling, grant check
+and plan to one strategy digest; replacing the strategy during provider reads stops that tick.
+`test/payout-review.test.ts`, `test/lock.test.ts` and `test/autopilot.test.ts` reproduce these failures
+and verify the corrections offline.
+
 DAO delegate preparation now takes an owner-scoped lock across the pending-action scan, delegate
 construction and durable preparation. It acquires the instance lock first, never locks a peer's
 instance file, and rechecks ownership before persistence. A contender refuses for retry; a different
@@ -117,9 +138,23 @@ allocation when a held managed asset lacks a fresh price. Unmanaged holdings rem
 Prices expire against the browser clock even if a refresh fails.
 The demo preflight also refuses an unavailable or invalid managed-book USD total instead of
 counting missing values as zero (`test/demo-check.test.ts`, offline fixtures).
-This read-only projection is separate from execution's holdings calculations and adds no authorization
-rule. Managed-asset metadata falls back to this application's fixed asset definitions if the catalogue
+The execution holdings calculation now also requires fresh prices and finite managed valuations before
+planning (`test/planning-valuation.test.ts`). Managed-asset metadata in the dashboard falls back to this
+application's fixed asset definitions if the catalogue
 omits an asset; unknown unmanaged decimals remain unknown.
+
+**Execution valuation (offline-tested).** Dispatch records the input value and authorizes a planned
+swap using one observation time after its provider reads. Missing, expired or invalid input/output
+valuation refuses with `valuation_unavailable`, including before a prerequisite shield. The swap is
+checked again before submission. For autopilot, prior submitted swaps for the same plan are counted
+once at their recorded gross values, plus the proposed swap at its current observed value. An excess
+refuses with `autopilot_limit_exceeded`; equality is permitted. Shields, proven refusals and
+never-submitted preparations do not count. Missing historical values refuse rather than count as zero;
+refunds do not replenish the ceiling. Manual plans retain their separate execution behavior.
+`test/planning-valuation.test.ts` covers freshness, cumulative accounting and recovery. The plan remains
+single-use, and an unresolved operation still blocks new sends. These are local strategy checks, not
+provider budget enforcement or a bound on settlement-time prices, fees or exact decimal accounting.
+No deployed observation is claimed.
 
 RPC errors and immediate payment refusals carry only validated budget-remaining and availability
 metadata. Availability is an observation, not permission to retry; ambiguous outcomes remain unresolved.
@@ -165,11 +200,16 @@ A missing operation ID on a claimed or legacy operation cannot be repaired by st
 
 ## Local presentation limits
 
-Payment queues and normal payment details hide retained records when a member read returns HTTP
-401 or 403, as the recovery view already did. Offline browser regressions reproduce the previous
-cached-payee exposure and verify the correction. A transient provider failure still permits explicitly
-stale observations. Policy digests identify reported policy JSON; they do not verify the owner's
-signature or the provider's enforcement. Neither correction establishes hosted behavior.
+An explicit session or agent-access denial hides retained private records in the shared Home and agent
+views and refreshes gateway permissions. This includes decoded proposals cached for a DAO shared by
+multiple agents: denied-agent payloads are removed while permitted sibling proposals remain, and late
+responses cannot restore denied payloads. An operator-only procedure refusal leaves permitted member
+reads available without repeatedly invalidating its own query. Expired invoice-page sessions clear rendered records and invalidate outstanding reads;
+account-scoped draft submission identity is retained for signing in again. Offline browser regressions
+in `test/browser/access-expiry.cjs` and `test/browser/invoice-expiry.cjs` reproduce the previous cached-data
+exposure and verify the correction. A transient provider failure still permits explicitly stale
+observations. Policy digests identify reported policy JSON; they do not verify the owner's signature
+or the provider's enforcement. These tests do not establish hosted behavior.
 
 The public and member requirement views list individual controls and evidence stages without counting
 them as guarantees enforced by the signed policy. This presentation change is browser-fixture tested,
@@ -441,8 +481,13 @@ correlation IDs, terminal rewrites and a `never_submitted` refusal after a submi
 the read with a line number. The reader leaves the evidence unchanged. Legacy records remain
 readable, including combined request/outcome records and correlation IDs without status; legacy
 preparations never become proven unsent. `test/journal.test.ts` covers rejection, preservation and
-compatibility, alongside the existing real-process crash tests. Extra metadata is ignored and
-timestamps remain opaque strings; neither changes submission evidence.
+compatibility, alongside the existing real-process crash tests. Additional metadata on recognized
+records is ignored and timestamps remain opaque strings; neither changes submission evidence.
+Standalone version-1 authorization snapshots are accepted only after an unversioned preparation,
+as historical metadata. They cannot establish submission, settlement or a refusal. Orphan snapshots,
+unknown versions, malformed payloads and snapshots mixed with lifecycle fields stop the read.
+This compatibility is offline-tested in `test/journal.test.ts`; historical shapes beyond those
+recognized by the reader remain unverified and require retained-state validation before rollout.
 
 Plan execution markers now sync their file and directory entries before execution proceeds.
 Journal appends and atomic replacements sync their containing directory. Journal and plan directory

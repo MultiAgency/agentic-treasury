@@ -25,8 +25,8 @@ export function authorityFixture(purpose: "treasury" | "payout" = "payout") {
   };
 }
 export const balanceView = <T>(source: string, balances: T[]) => ({ near_account_id: fixtureWallet.near_account_id, source, balances });
-export const timedPrices = <T extends object>(tokens: T[]): Array<Omit<{ price_updated_at: string; price_expires_at: string }, keyof T> & T> => tokens.map((t) => ({
-  price_updated_at: new Date().toISOString(), price_expires_at: new Date(Date.now() + 600_000).toISOString(), ...t }));
+export const timedPrices = <T extends object>(tokens: T[], now = Date.now()): Array<Omit<{ price_updated_at: string; price_expires_at: string }, keyof T> & T> => tokens.map((t) => ({
+  price_updated_at: new Date(now).toISOString(), price_expires_at: new Date(now + 600_000).toISOString(), ...t }));
 /** The provider reports a policy budget in its own format: "25" as "25.00". */
 const usd = (value: string | null) => value === null ? null : Number(value).toFixed(2);
 export function policyView(policy: Policy, revision = 1) {

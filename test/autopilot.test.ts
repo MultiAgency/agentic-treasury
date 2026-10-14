@@ -13,7 +13,10 @@ import { prepareInvoice } from "../src/invoice-store.js";
 import { blocksDispatch, readOps, opsLog } from "../src/ops.js";
 import { ASSETS, treasuryPolicy } from "../src/policy.js";
 import { loadStrategy } from "../src/strategy.js";
-import { strategyLabelSuffix } from "../src/strategy-digest.js";
+import { strategyDigest, strategyLabelSuffix } from "../src/strategy-digest.js";
+import { enableSchedule, saveReviewedStrategy } from "../src/strategy-controls.js";
+import { prepare, submit } from "../src/owner-intents.js";
+import { walletIntent, walletSignature, walletSigner } from "./fixtures/wallet-signature.js";
 import { freshDirectory, offline } from "./fixtures/harness.js";
 
 // Offline: an in-memory book behind the API, so each tick runs the real sweep, rebalance, plan
@@ -208,6 +211,54 @@ test("changing the limit stops auto-execution until the owner signs a grant for 
   assert.deepEqual(sends, []);
   grantLabel = () => `treasury:${strategyLabelSuffix(loadStrategy())}`;
   assert.match(await tick("schedule"), /step 1: SUCCESS/);
+});
+
+for (const changeDuring of ["mandate", "sweep", "planning"] as const) test(`a strategy replaced during ${changeDuring} cannot borrow a running tick's old ceiling`, async () => {
+  saveSettings({ ...settings(), on: true, maxUsd: 100 });
+  let currentGrant = fixtureGrant(grantLabel());
+  let grantReads = 0;
+  let balanceReads = 0;
+  let ownerSubmissions = 0;
+  let requestedGrant: { label: string; credential: string } | undefined;
+  mock.method(api, "generateIntent", async (request: { type: string; label: string; credential: string }) => {
+    assert.equal(request.type, "grant_issue");
+    requestedGrant = request;
+    return { type: request.type, correlation_id: "replacement-grant", expires_at: new Date(Date.now() + 600_000).toISOString(),
+      preview: {}, intent: walletIntent, signer: walletSigner };
+  });
+  mock.method(api, "submitIntent", async () => {
+    ownerSubmissions++;
+    assert.ok(requestedGrant);
+    const grant = fixtureGrant(requestedGrant.label);
+    currentGrant = { ...grant, owner_message: { ...grant.owner_message, credential: requestedGrant.credential } };
+    return { status: "SUCCESS" };
+  });
+  const replaceStrategy = async () => {
+    const before = loadStrategy();
+    const saved = await saveReviewedStrategy({ ...before, autopilot: { ...before.autopilot, maxUsd: 1 } }, strategyDigest(before));
+    const prepared = await prepare({ type: "grant_issue", label: "treasury", expectedStrategyDigest: saved.digest });
+    await submit(prepared.correlationId, await walletSignature());
+    await enableSchedule(saved.digest);
+  };
+  mock.method(api, "listGrants", async () => {
+    // The first read records the tick's starting evidence; the second checks its mandate.
+    if (++grantReads === 2 && changeDuring === "mandate") await replaceStrategy();
+    return [currentGrant];
+  });
+  const balances = api.getBalances.bind(api);
+  mock.method(api, "getBalances", async (...args: Parameters<typeof api.getBalances>) => {
+    // Each observation reads public/confidential balances: before, sweep, then planning.
+    if (++balanceReads === (changeDuring === "sweep" ? 3 : changeDuring === "planning" ? 5 : -1)) await replaceStrategy();
+    return balances(...args);
+  });
+
+  await tick("schedule");
+  assert.equal(ownerSubmissions, 1, "the replacement grant passed the real owner-signature flow");
+  assert.equal(settings().maxUsd, 1);
+  assert.equal(settings().on, true, "the replacement was explicitly enabled; this is not stop cancellation");
+  assert.equal(currentGrant.label, `treasury:${strategyLabelSuffix(loadStrategy())}`);
+  assert.deepEqual(sends, [], "the old tick must not spend $50 using its stale $100 ceiling under the new $1 strategy");
+  assert.deepEqual(readOps(), []);
 });
 
 test("every tick records its start and its end: trigger, settings, mandate, book before and after, plan and steps, no credentials", async () => {

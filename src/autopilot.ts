@@ -11,7 +11,7 @@ import { executePlan } from "./plans.js";
 import { context, newTickId, observe, recordEnd, recordStart, type TickEnd, type TickStart } from "./evidence.js";
 import { ageMinutes, recover } from "./recover.js";
 import { loadStrategy, saveStrategy } from "./strategy.js";
-import { grantApproves, type Strategy, strategyLabelSuffix } from "./strategy-digest.js";
+import { grantApproves, type Strategy, strategyDigest, strategyLabelSuffix } from "./strategy-digest.js";
 import { rebalance, sweep } from "./treasury.js";
 
 /**
@@ -53,9 +53,9 @@ export function status() {
  * every autopilot send without it; checked first so that such a tick waits for the owner instead of
  * recording refusals.
  */
-async function mandateApproved() {
+async function mandateApproved(strategy: Strategy) {
   const grant = liveGrant(await api.listGrants(agentId()), process.env.AGENT_GRANT_TOKEN);
-  return grant !== undefined && grantApproves(grant.label, loadStrategy());
+  return grant !== undefined && grantApproves(grant.label, strategy);
 }
 
 let running = false;
@@ -111,8 +111,14 @@ export async function tick(trigger: TickStart["trigger"]): Promise<string> {
 async function run(found: Found, progress: (event: ProgressEvent) => void): Promise<string> {
   const onSubmitted = (method: "swap" | "shield" | "transfer" | "unshield", correlationId: string) =>
     progress({ type: "CUSTOM", name: "treasury.observation", value: { stage: "submission", method, correlationId } });
-  const { maxUsd } = settings();
+  // The ceiling and the grant must describe the same strategy as the plan. An owner can
+  // replace and authorize a strategy while this tick awaits provider observations.
+  const strategy = loadStrategy();
+  const expectedStrategy = strategyDigest(strategy);
+  const { maxUsd } = strategy.autopilot;
+  const strategyChanged = () => strategyDigest(loadStrategy()) !== expectedStrategy;
   const done = (text: string) => post("run", text).text;
+  const changed = () => done("Skipped: the strategy changed during this tick. Review it again on the next run.");
   try {
     const { policy } = await api.getPolicy(agentId());
     if (!policy) return done("Skipped: the agent's policy is not applied yet.");
@@ -130,7 +136,8 @@ async function run(found: Found, progress: (event: ProgressEvent) => void): Prom
 
     const report: string[] = [];
     // Every send, a sweep's shield included, needs the owner's grant for the strategy in force.
-    const approved = await mandateApproved();
+    const approved = await mandateApproved(strategy);
+    if (strategyChanged()) return changed();
     if (!approved) report.push("sweep left for the owner: the owner's grant doesn't approve this strategy");
     else {
       progress({ type: "STEP_STARTED", stepName: "sweep" });
@@ -144,15 +151,19 @@ async function run(found: Found, progress: (event: ProgressEvent) => void): Prom
       progress({ type: "STEP_FINISHED", stepName: "sweep" });
     }
 
+    if (strategyChanged()) return changed();
+
     if (policy.actions.includes("swap")) {
       progress({ type: "STEP_STARTED", stepName: "planning" });
       let usd = 0;
       let planId: string | undefined;
+      let plannedStrategy: string | undefined;
       let legs: { usd: number }[] = [];
       for await (const event of rebalance()) {
         if (event.type === "plan") legs = event.legs;
         if (event.type === "saved") {
           planId = event.plan.id;
+          plannedStrategy = event.plan.strategyDigest;
           found.plan = { id: event.plan.id, usd: 0, legs: event.plan.actions.flatMap((a) => a.type === "swap"
             ? [{ from: a.from, to: a.to, amount: a.amount, amountOut: a.amountOut, minAmountOut: a.minAmountOut, costBps: a.costBps }] : []) };
           usd = legs.reduce((sum, leg, i) => sum + (event.steps[i] === undefined ? 0 : leg.usd), 0);
@@ -160,6 +171,7 @@ async function run(found: Found, progress: (event: ProgressEvent) => void): Prom
         }
       }
       progress({ type: "STEP_FINISHED", stepName: "planning" });
+      if (strategyChanged() || (plannedStrategy !== undefined && plannedStrategy !== expectedStrategy)) return changed();
       if (!planId) report.push(legs.length ? "rebalance skipped: all proposed swaps exceed the cost limit" : "no rebalance legs meet the minimum size");
       else if (usd > maxUsd) {
         post("action", `A rebalance of $${usd.toFixed(2)} is above the $${maxUsd.toFixed(2)} auto-execute limit. Preview and execute it from Automations.`);

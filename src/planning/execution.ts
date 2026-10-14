@@ -22,7 +22,7 @@ export type PlanEvent =
       failureCode: string | null | undefined;
     };
 
-const PLAN_REFUSALS = new Set(["plan_expired", "plan_agent_changed", "strategy_changed", "plan_policy_changed", "swap_cost_exceeded"]);
+const PLAN_REFUSALS = new Set(["plan_expired", "plan_agent_changed", "strategy_changed", "plan_policy_changed", "swap_cost_exceeded", "valuation_unavailable", "autopilot_limit_exceeded"]);
 
 const legFor = (book: Holding[], action: Extract<PlannedAction, { type: "swap" }>) => {
   const from = book.find((h) => h.asset === action.from)!;

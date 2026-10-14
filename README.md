@@ -185,6 +185,10 @@ Sweep covers managed USDC, wNEAR and ETH only; it does not establish that other 
 Campaign winner identity and prize validation are not built. The local duplicate check covers only
 a manual payout matching an existing held payout; provider replay deduplication remains unverified.
 
+- The cumulative auto-execute ceiling currently adds numeric USD estimates with floating-point
+  arithmetic. Offline reproductions show that rounding can admit a value just above the ceiling or
+  refuse values that sum to the ceiling. Exact decimal comparison remains outstanding.
+
 - Payment recovery reads and owner-action discovery are locally implemented and offline-tested, not
   verified on the deployed hosts. Recent payout discovery scans at most 250 provider records and
   filters to the past day; incomplete scans are explicit. Original terms depend on provider/local
@@ -198,7 +202,8 @@ a manual payout matching an existing held payout; provider replay deduplication 
 - The inline Treasury strategy workflow is locally implemented and offline/browser-fixture tested,
   not deployed or mainnet-observed. Operators edit allocations and limits, save with the schedule off,
   and explicitly enable only after the owner authorizes the saved strategy. Server controls reject
-  stale reviews; stop does not require provider availability. Configuration coordination is single-host,
+  stale reviews; stop does not require provider availability and prevents future scheduled ticks. A tick
+  already started can submit further operations; submitted operations may finish. Configuration coordination is single-host,
   not distributed fencing; direct file edits and provider changes after a read remain outside it.
 - Prepared-invoice continuation is locally implemented and offline-tested (`test/invoice-http.test.ts`),
   but not yet verified on a deployed host. It reuses the authenticated payee’s stored terms and operation

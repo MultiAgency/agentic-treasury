@@ -97,7 +97,7 @@ const root = path.resolve(process.argv[2] || 'web/dist');
     await check('stop survives cold overview failure', { fail: 'overview' }, async (page, calls) => {
       await page.getByText('Fixture observation unavailable', { exact: true }).waitFor();
       await page.getByRole('button', { name: 'Turn off', exact: true }).click();
-      await page.getByText('Schedule off. Operations already submitted may still finish.', { exact: true }).waitFor();
+      await page.getByText('Future scheduled runs are off. A run already started can still submit further operations; submitted operations may finish.', { exact: true }).waitFor();
       assert.deepEqual(calls.filter(c => /stop|enable|prepare|submit|tick|save/.test(c)), ['autopilot/stop']);
     });
     for (const options of [{ member: true, fail: 'overview' }, { approveOnly: true, fail: 'overview' }, { fail: 'setup' }])

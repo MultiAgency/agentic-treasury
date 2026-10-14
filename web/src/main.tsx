@@ -1,10 +1,12 @@
-import { gatewayQueries } from "./app/queries";
+import { gatewayQueries, redactProposalCaches } from "./app/queries";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { StrictMode, Suspense, lazy, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { PublicHome } from "./public";
 import { ErrorBox, Button, Loading } from "./shared/ui";
 import { ownersOf } from "./app/session";
+import { BASE } from "./shared/client";
+import { deniedAt, onAccessDenial, recheckAccess, useAccessState } from "./shared/access";
 import "./styles.css";
 
 const AuthenticatedApp = lazy(() => import("./app/authenticated-app").then(module => ({ default: module.AuthenticatedApp })));
@@ -17,6 +19,24 @@ applyTheme();
 dark.addEventListener("change", applyTheme);
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false } } });
+onAccessDenial(denial => {
+  if (denial.scope !== "procedure") {
+    redactProposalCaches(queryClient);
+    const name = denial.base.slice("/a/".length);
+    const affected = (query: { queryKey: readonly unknown[] }) => {
+      const [scope, agent] = query.queryKey;
+      if (scope === "gateway" || scope === "gw") return false;
+      if (denial.scope === "session") return true;
+      if (scope === "fleet" || scope === "sibling") return agent === name;
+      return Boolean(BASE) && BASE === denial.base;
+    };
+    // Discard late reads as well as cached observations; unrelated agents keep their records.
+    void queryClient.cancelQueries({ predicate: affected }).then(() => queryClient.removeQueries({ predicate: affected }));
+  }
+  // Infinity permits explicit invalidation; static staleTime would ignore it.
+  void queryClient.invalidateQueries({ queryKey: ["gateway"], exact: true });
+  void queryClient.invalidateQueries({ queryKey: ["gw", "me"], exact: true });
+});
 
 /**
  * Served by a local agent server, this is that agent's dashboard. Behind the hosted gateway, a
@@ -24,19 +44,45 @@ const queryClient = new QueryClient({ defaultOptions: { queries: { refetchOnWind
  * `/a/<agent>/` retains that agent's client, cache and permissions.
  */
 function GatewayPage({ activity }: { activity: boolean }) {
+  const access = useAccessState();
   const query = useQuery({ ...gatewayQueries.entry });
   if (query.isPending) return <main className="mx-auto max-w-xl p-8"><Loading label="Loading dashboard…" /></main>;
-  if (query.isError) return <main className="mx-auto flex max-w-xl flex-col items-start gap-4 p-8">
+  if (query.isError && query.data === undefined) return <main className="mx-auto flex max-w-xl flex-col items-start gap-4 p-8">
     <h1 className="text-xl font-semibold">Dashboard unavailable</h1>
     <ErrorBox error={`The dashboard can't load right now: ${query.error.message}`} />
     <Button variant="outline" disabled={query.isFetching} onClick={() => query.refetch()}>{query.isFetching ? "Retrying…" : "Retry"}</Button>
   </main>;
   const gateway = query.data;
-  return gateway && !gateway.viewer ? (
+  const denied = deniedAt(access, BASE);
+  const missing = gateway?.viewer && BASE && !gateway.viewer.access[BASE.slice("/a/".length)];
+  if (gateway?.viewer && (denied || missing)) return <main className="mx-auto flex max-w-xl flex-col items-start gap-4 p-8">
+    <h1 className="text-xl font-semibold">Access unavailable</h1>
+    <p role="alert">{denied?.message ?? "This account may no longer access this agent."} Private records are hidden.</p>
+    <Button variant="outline" onClick={recheckAccess}>Check access again</Button>
+    <a href="/" className="underline">Return to Home</a>
+  </main>;
+  const hiddenAgents = gateway?.viewer && gateway.agents.some(agent => deniedAt(access, `/a/${agent.name}`));
+  const visibleGateway = gateway?.viewer ? { ...gateway,
+    agents: gateway.agents.filter(agent => !deniedAt(access, `/a/${agent.name}`)),
+    viewer: { ...gateway.viewer, access: Object.fromEntries(Object.entries(gateway.viewer.access)
+      .filter(([name]) => !deniedAt(access, `/a/${name}`))) },
+  } : gateway;
+  const content = gateway && !gateway.viewer ? (
     <PublicHome daos={ownersOf(gateway.agents)} invoices={gateway.invoices} />
   ) : (
-    <AuthenticatedApp gateway={gateway} activity={activity} />
+    <AuthenticatedApp gateway={visibleGateway} activity={activity} />
   );
+  return <>
+    {query.error && <div role="alert" className="flex flex-wrap items-center gap-3 border-b p-4 text-sm">
+      <p>Workspace permissions could not be refreshed. Records for denied agents remain hidden.</p>
+      <Button variant="outline" disabled={query.isFetching} onClick={() => query.refetch()}>Retry permissions</Button>
+    </div>}
+    {hiddenAgents && !query.error && <div role="status" className="flex flex-wrap items-center gap-3 border-b p-4 text-sm">
+      <p>Access to an agent changed. Its private records are hidden while permissions refresh.</p>
+      <Button variant="outline" onClick={recheckAccess}>Check access again</Button>
+    </div>}
+    {content}
+  </>;
 }
 
 const subscribeHash = (notify: () => void) => {

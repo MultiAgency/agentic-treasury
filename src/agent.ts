@@ -3,14 +3,14 @@ import { api, waitForStatus } from "./api.js";
 import { agentId, executes } from "./env.js";
 import { assertCanDispatch, assertMoneyLock, type MoneyLock, withMoneyLock } from "./lock.js";
 import { mandateDigest, type ReviewedPolicy } from "./mandate.js";
-import { AuthorizationHeld, claimSubmission, isHeld, provenRefusal, readOps, record } from "./ops.js";
+import { AuthorizationHeld, claimSubmission, isHeld, provenRefusal, readOps, record, submittedSwapUsd } from "./ops.js";
 import { authorize, type Case, type Purpose } from "./authorize.js";
 import type { Plan, PlannedAction } from "./plans.js";
 import { loadStrategy } from "./strategy.js";
 import { invoiceOperations, markInvoiceUnknown } from "./invoice-store.js";
 import { liveGrant } from "./grants.js";
 import { rawBalance } from "./holdings.js";
-import { usdValue } from "./value.js";
+import { tokenUsd } from "./valuation.js";
 import { refusalDetails } from "./provider-display.js";
 
 /** Every money action runs under the agent's grant, never the owner's key. */
@@ -88,10 +88,12 @@ export async function dispatch(lock: MoneyLock, kind: string, action: Action, se
   const policyDigest = policy ? mandateDigest(policy) : null;
   const asset = action.method === "swap" ? action.request.origin_asset : action.request.asset;
   const token = tokens.find((t) => t.asset_id === asset);
-  const usdIn = token?.price ? usdValue(action.request.amount, token.decimals, token.price) : null;
+  const now = (sending?.now() ?? new Date()).getTime();
+  const usdIn = tokenUsd(action.request.amount, token, now);
   // No await between this check, the write-ahead record, authorization and submission. A previous
   // send in this run may have become unresolved, or ownership may have been lost during the reads above.
   assertCanDispatch(lock);
+  const priorOps = readOps();
   const idempotencyKey = preparedKey ?? `${kind}:${createIdempotencyKey()}`;
   record({
     at: new Date().toISOString(),
@@ -120,15 +122,18 @@ export async function dispatch(lock: MoneyLock, kind: string, action: Action, se
     : payoutGrant && action.method === "transfer" ? "payout"
     : sending?.autopilot ? "autopilot"
     : "treasury";
-  const common = { now: (sending?.now() ?? new Date()).getTime(), agentId: agentId(), view, grant };
-  const held = readOps().filter(isHeld);
+  const common = { now, agentId: agentId(), view, grant };
+  const held = priorOps.filter(isHeld);
   const reserved = held.filter((op) => op.request.asset === asset).reduce((sum, op) => sum + BigInt(String(op.request.amount)), 0n);
   const available = ((shielded ? rawBalance(shielded, asset) : 0n) - reserved).toString();
-  const judged: Case = purpose === "treasury" || purpose === "autopilot"
-    ? { purpose, facts: { ...common, plan: sending?.planned ?? null, strategy: loadStrategy(), tokens } }
-    : purpose === "payout"
-      ? { purpose, facts: { ...common, available, heldPayouts: held.map(({ request: r }) => ({ recipient: String(r.recipient), asset: String(r.asset), amount: String(r.amount) })) } }
-      : { purpose, facts: { ...common, available } };
+  const judged: Case = purpose === "autopilot"
+    ? { purpose, facts: { ...common, plan: sending?.planned ?? null, strategy: loadStrategy(), tokens,
+      submittedSwapUsd: sending?.planned ? submittedSwapUsd(priorOps, sending.planned.plan.id) : null } }
+    : purpose === "treasury"
+      ? { purpose, facts: { ...common, plan: sending?.planned ?? null, strategy: loadStrategy(), tokens } }
+      : purpose === "payout"
+        ? { purpose, facts: { ...common, available, heldPayouts: held.map(({ request: r }) => ({ recipient: String(r.recipient), asset: String(r.asset), amount: String(r.amount) })) } }
+        : { purpose, facts: { ...common, available } };
   const refusal = authorize(action, judged);
   if (refusal) {
     record({ idempotencyKey, refused: refusal.code });

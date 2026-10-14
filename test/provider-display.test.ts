@@ -28,7 +28,7 @@ test("dashboard keeps balances when a managed asset lacks a price", async () => 
   const usdc = result.book.find(h => h.asset === ASSETS.USDC)!;
   assert.equal(usdc.confidential, 1000000000n);
   assert.equal(usdc.usd, null);
-  await assert.rejects(allHoldings(), /No price/, "execution holdings still refuse a missing price");
+  await assert.rejects(allHoldings(), /No fresh price/, "execution holdings still refuse a missing price");
 });
 
 test("dashboard excludes expired prices and preserves their timestamps", async () => {

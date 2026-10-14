@@ -35,8 +35,8 @@ export const refusalText = (code: string) => REFUSALS[code] ?? code.replaceAll("
  * phrases; anything else is shown as it came.
  */
 const MESSAGES: [RegExp, string][] = [
-  [/shared USD budget has too little left/i, "the USD budget has too little left for this swap; nothing moved"],
-  [/Live execution gate closed: observe mode/i, "execution was switched off (observe mode); nothing moved"],
+  [/shared USD budget has too little left/i, "this swap was refused because the USD budget has too little left; earlier operations may have completed"],
+  [/Live execution gate closed: observe mode/i, "execution was switched off (observe mode); this operation was not submitted; earlier operations may have completed"],
 ];
 
 export const plainMessage = (text: string) => {

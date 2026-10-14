@@ -21,7 +21,7 @@ existing domain calls. Submission remains centralized in dispatch.
 
 | Concern | Files |
 |---|---|
-| Sending | `agent.ts` (dispatch), `authorize.ts` (checks the provider can't make; pure), `lock.ts`, `executor-lease.ts` |
+| Sending | `agent.ts` (dispatch), `authorize.ts` (checks the provider can't make; pure), `lock.ts`, `executor-lease.ts`, `executor-lifecycle.ts` |
 | Records | `ops.ts` (the operation journal), `recover.ts`, `reconcile.ts`, `synced.ts`, `evidence.ts`, `inbox.ts` |
 | The owner's rules | `policy.ts`, `mandate.ts` (the digest), `grants.ts`, `owner-intents.ts`, `owner-requests.ts`, `owner.ts`, `dao-owner.ts`, `nep413.ts`, `chain.ts` |
 | Provider and values | `api.ts`, `holdings.ts`, `value.ts`, `ledger.ts` |
@@ -78,6 +78,10 @@ in-flight send remains a single-host residual risk, not a distributed fencing gu
 Owner intents persist `prepared → submitted → settled` in a private per-instance file. Updates take
 an inter-process lock and reload the file before modification, so concurrent preparation and settlement
 preserve each other's records. `submitted` means submission was attempted, not proven accepted.
+Own and peer readers refuse malformed lifecycle states or an unsigned preparation containing a
+retained signature or outcome; those records need verified recovery, not another submission.
+The local reader refuses settled records without a recognized terminal outcome. Peer records with
+incomplete settlement evidence continue blocking another delegate preparation.
 A browser wallet's signature is relayed only if it is the owner's key, as the API names it, over exactly
 the prepared intent: the NEP-413 message, or a NEP-366 delegate action from the owner's account calling
 exactly the prepared methods, arguments, gas and deposits (`src/owner-signature.ts`). The wallet's own
@@ -92,6 +96,11 @@ window remains open. Settled results remain available after restart. Records del
 cannot be reconstructed locally. This is single-host coordination, not distributed fencing.
 
 The agent's executor runs status-only reconciliation every 10 seconds (an `EXECUTOR=off` instance doesn't), independently of strategy execution.
+Startup and successful onboarding use one activation path: acquire the single-host executor lease
+before publishing a new agent identity, then start the background loops once. Failed ownership
+acquisition leaves the original creation action available for recovery without signing again.
+Approve-only activation also binds one identity; shutdown prevents a late lease acquisition from
+publishing an identity or starting background loops.
 `pnpm reconcile --poll` performs one pass. Unknown IDs, failed reads, `UNCERTAIN`, and `NEEDS_REVIEW`
 remain unresolved. Nothing is resent: provider deduplication and lookup semantics remain unverified.
 
@@ -118,7 +127,12 @@ another purpose (the autopilot's must carry its strategy's digest); a swap into 
 doesn't list (the provider checks only the asset spent); a payout that isn't a confidential USDC
 transfer, repeats one already held, or that the wallet can't cover (the provider would hold it for a
 vote and fail it after); an invoice under a policy that doesn't hold it for the owner;
-and a plan's send once its plan, strategy or policy changed, or its swap costs more than the strategy allows. Status reconciliation uses no grant and can discover settlement after revocation.
+and a plan's send once its plan, strategy or policy changed, its valuation is unavailable, or its swap
+costs more than the strategy allows. Autopilot also refuses a swap that would exceed the plan's
+cumulative ceiling at observed submission-time values. Prior submitted swaps come from the existing
+journal under the money lock; shields do not count and missing values do not become zero. These
+checks add no persisted counter or new state format. Status reconciliation uses no grant and can
+discover settlement after revocation.
 
 A held, never-submitted invoice retains its key, can be revalidated by submitting
 the original form, and never blocks other money actions; an attempted submission whose outcome is
@@ -256,8 +270,10 @@ module owns drafts, refresh ordering and DOM updates; TypeScript checks its JSDo
 `pnpm typecheck`. It is served as JavaScript without another build step. The browser regression
 loads the complete page renderer and module with mocked API and wallet responses; the HTTP test
 checks that the listener serves both resources. Neither test extracts functions from source comments.
-Sign-out clears private rows, invalidates outstanding status reads, stops polling, and restores
-keyboard focus to sign-in (`test/browser/invoice-focus.cjs`, offline). The synthetic payee journey
+Sign-out and an explicit session-access denial clear private rows, invalidate outstanding status reads,
+stop polling, and restore keyboard focus to sign-in (`test/browser/invoice-focus.cjs` and
+`test/browser/invoice-expiry.cjs`, offline). The account-scoped draft keeps its submission identity for
+reauthentication. The synthetic payee journey
 checks request, agreement, invoice and outcome presentation at mobile and desktop widths
 (`test/browser/invoice-journey.cjs`); owner decisions there are fixture transitions, not real signatures.
 
@@ -293,7 +309,8 @@ browser regression cover this behavior; no deployed observation is claimed.
 ### Reads with local effects
 
 Some existing read handlers also maintain local recovery state: `setup` may adopt a staged grant,
-`held` may record a terminal provider observation, and invoice status refreshes may update the invoice
+`held` records a provider observation when a payout leaves approval, including unresolved processing
+or queued statuses that block new sends; invoice status refreshes may update the invoice
 record and reservation. The executor also reconciles independently of the dashboard. These effects
 are intentionally retained; consolidating presentation queries does not remove their recovery role.
 A future separation must preserve restart and approve-only behavior, not merely rename endpoints.

@@ -3,9 +3,11 @@ import { kindOf } from "../../shared/format";
 import { useQueries } from "@tanstack/react-query";
 import { clientFor } from "../../shared/client";
 import { queriesFor } from "../../shared/queries";
+import { deniedAt, useAccessState } from "../../shared/access";
 
 /** Independent reads retain useful results when another check fails or is slow. */
 export function useFleet(agents: GatewayAgent[]) {
+  const access = useAccessState();
   const definitions = agents.map(({ name }) => queriesFor(clientFor(`/a/${name}`), ["fleet", name]));
   const setup = useQueries({ queries: definitions.map(q => ({ ...q.setup, refetchInterval: 30_000, retry: false })) });
   const overview = useQueries({ queries: definitions.map(q => ({ ...q.overview, refetchInterval: 30_000, retry: false })) });
@@ -18,9 +20,11 @@ export function useFleet(agents: GatewayAgent[]) {
   return agents.map(({ name }, i) => {
     const reads = [setup[i]!, overview[i]!, held[i]!, unresolved[i]!, autopilot[i]!, inbox[i]!, ...(needsAgreements[i] ? [agreements[i]!] : [])];
     const labels = ["agent setup", "policy and balances", "held payouts", "unresolved operations", "autopilot settings", "inbox", "agreement requests"];
-    const data = { setup: setup[i]!.data, overview: overview[i]!.data, held: held[i]!.data,
+    const denied = deniedAt(access, `/a/${name}`);
+    const observations = { setup: setup[i]!.data, overview: overview[i]!.data, held: held[i]!.data,
       unresolved: unresolved[i]!.data, autopilot: autopilot[i]!.data, inbox: inbox[i]!.data, agreements: agreements[i]!.data };
-    return { name, data, reads: { overview: overview[i]!, autopilot: autopilot[i]! }, error: reads.find(r => r.error)?.error,
+    const data = denied ? {} as Partial<typeof observations> : observations;
+    return { name, data, denied, reads: { overview: overview[i]!, autopilot: autopilot[i]! }, error: reads.find(r => r.error)?.error,
       incomplete: reads.flatMap((r, index) => r.isPending || r.error ? [labels[index]!] : []),
       isPending: reads.some(r => r.isPending),
       dataUpdatedAt: Math.min(...reads.map(r => r.dataUpdatedAt)),

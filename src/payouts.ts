@@ -1,4 +1,4 @@
-import { api, isMoving, readStatus } from "./api.js";
+import { api, readStatus } from "./api.js";
 import { agentId } from "./env.js";
 import { isHeld, readOps, settle } from "./ops.js";
 import { paymentEvidence } from "./provider-display.js";
@@ -8,9 +8,8 @@ const APPROVAL_TTL_MS = 24 * 60 * 60_000;
 
 /**
  * Money actions waiting for the owner's approval, each with the approval that releases it. Any
- * that moved on since are recorded instead, except one released but still on its way: recording
- * `PROCESSING` would leave it unresolved and block every money action until it settles, while it
- * can't be lost. The API's approvals list can come back empty while one is pending (seen on
+ * that moved on since are recorded instead. A released payout still processing is unresolved
+ * and blocks new money actions until its outcome is known. The API's approvals list can come back empty while one is pending (seen on
  * mainnet), so each held execution's own status is the source.
  *
  * Historical payouts absent from the local store come from the API's history, as kind "remote",
@@ -25,7 +24,7 @@ export async function held({ complete = false }: { complete?: boolean } = {}) {
     const approvalId = (status.details as { approval_id?: string } | null)?.approval_id;
     if (status.status === "PENDING_APPROVAL" && approvalId)
       waiting.push({ at: op.at, kind: op.kind, request: op.request, correlationId: status.correlation_id, approvalId });
-    else if (status.status !== "PENDING_APPROVAL" && !isMoving(status.status)) settle(status.correlation_id, status.status);
+    else if (status.status !== "PENDING_APPROVAL") settle(status.correlation_id, status.status);
   }
   const mine = new Set(local.map((op) => op.correlationId));
   try {

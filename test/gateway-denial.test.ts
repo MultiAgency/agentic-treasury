@@ -155,6 +155,12 @@ test("the controls: a member's reads and an operator's calls do get through", as
   assert.deepEqual(reached, ["overview", "pay"]);
 });
 
+test("denials distinguish lost sessions, agent access and procedure permission", async () => {
+  assert.equal((await (await call("overview")).json()).access, "session");
+  assert.equal((await (await call("overview", "member.near", "wallet")).json()).access, "agent");
+  assert.equal((await (await call("pay", "member.near")).json()).access, "procedure");
+});
+
 test("run-log exports enforce per-agent membership and cannot inherit public caching", async () => {
   reached.length = 0;
   const denied = await call("autopilot/log");

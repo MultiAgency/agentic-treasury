@@ -51,10 +51,43 @@ type Prepared = { stage?: "prepared" | "submitted" | "settled"; result?: { statu
  * The file holds grant tokens: it is as private as the settings file.
  */
 const PENDING_FILE = join(".owner-intents", `${basename(ENV_FILE)}.json`);
-const readPending = () => new Map<string, Prepared>(
-  existsSync(PENDING_FILE) ? Object.entries(JSON.parse(readFileSync(PENDING_FILE, "utf8")) as Record<string, Prepared>) : [],
-);
+const contradictoryPreparation = (record: { stage?: string; signedData?: unknown; ownerSucceeded?: boolean; result?: unknown }) =>
+  (record.stage === undefined || record.stage === "prepared") &&
+  (record.signedData !== undefined || record.ownerSucceeded === true || record.result !== undefined);
+const isSettledOwnerResult = (result: Prepared["result"]) => result !== undefined &&
+  (isTerminal(result.status) || (result.status === "EXPIRED" && result.failureCode === "signing_window_closed"));
+const lifecycle = z.object({
+  type: z.string().min(1),
+  expiresAt: z.string().refine(value => Number.isFinite(Date.parse(value))),
+  stage: z.enum(["prepared", "submitted", "settled"]).optional(),
+  ownerSucceeded: z.boolean().optional(),
+  result: z.object({ status: z.string().min(1), failureCode: z.string().nullable().optional() }).optional(),
+  signedData: z.record(z.string(), z.unknown()).optional(),
+}).passthrough().superRefine((record, context) => {
+  // Legacy unsigned preparations omitted stage. A retained signature or outcome makes that
+  // interpretation ambiguous; never reconstruct a first submission from contradictory evidence.
+  if (contradictoryPreparation(record))
+    context.addIssue({ code: "custom", message: "An unsigned preparation contains submission or outcome evidence" });
+  if (record.stage === "settled" && !isSettledOwnerResult(record.result))
+    context.addIssue({ code: "custom", message: "A settled owner action has no proven outcome" });
+});
+const storedIntents = z.record(z.string().min(1), lifecycle);
+function readPending() {
+  if (!existsSync(PENDING_FILE)) return new Map<string, Prepared>();
+  try {
+    const records = JSON.parse(readFileSync(PENDING_FILE, "utf8"));
+    storedIntents.parse(records);
+    // Validate without projecting away signing material or legacy optional fields.
+    return new Map<string, Prepared>(Object.entries(records));
+  } catch {
+    throw new Error(`Owner-intent history unavailable (${basename(PENDING_FILE)}); preserve and verify the records before continuing.`);
+  }
+}
 let pending = new Map<string, Prepared>();
+
+// CLI recovery saves settings directly. A running server installs its lease-and-loop activation path.
+let configureCreatedAgent = async (id: string) => { saveEnv({ AGENT_ID: id }); };
+export function setAgentCreationHandler(handler: (id: string) => Promise<void>) { configureCreatedAgent = handler; }
 
 // Validate the fields this cross-instance check relies on; legacy records may omit stage.
 const pendingDelegate = z.object({
@@ -63,8 +96,9 @@ const pendingDelegate = z.object({
   stage: z.enum(["prepared", "submitted", "settled"]).optional(),
   ownerSucceeded: z.boolean().optional(),
   result: z.object({ status: z.string().min(1), failureCode: z.string().nullable().optional() }).optional(),
+  signedData: z.record(z.string(), z.unknown()).optional(),
   dao: z.object({ owner: z.object({ account_id: z.string().min(1) }), delegate: z.string().min(1).optional() }).optional(),
-});
+}).refine(record => !contradictoryPreparation(record), "An unsigned preparation contains submission or outcome evidence");
 const peerIntents = z.record(z.string(), pendingDelegate);
 
 /**
@@ -86,8 +120,7 @@ export function delegateWaiting(owner: string, now = Date.now()): z.infer<typeof
       // Approval completion is separate from settlement of the payout it released.
       if (p.ownerSucceeded === true) return false;
       if (stage === "submitted") return true; // expiry or a newer nonce read is not an outcome
-      return !p.result || !(isTerminal(p.result.status) ||
-        (p.result.status === "EXPIRED" && p.result.failureCode === "signing_window_closed"));
+      return !isSettledOwnerResult(p.result);
     });
     if (waiting) return waiting;
   }
@@ -329,7 +362,7 @@ async function reconcileOne(correlationId: string, prepared: Prepared) {
   if (owner?.status === "SUCCESS" && !prepared.ownerSucceeded) {
     if (prepared.type === "agent_create") {
       if (!owner.agent_id) throw new Error("Successful creation has no agent id; recovery remains blocked");
-      saveEnv({ AGENT_ID: owner.agent_id });
+      await configureCreatedAgent(owner.agent_id);
     }
     if (prepared.grantToken) promoteGrantToken(prepared.grantToken);
     prepared.ownerSucceeded = true;

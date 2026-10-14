@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
@@ -40,6 +40,14 @@ for (const raw of ['{"partial":', 'null', '[]', '{"intent":null}', '{"intent":{}
 test("legacy prepared records without stage still block", () => {
   file("peer.json", { intent: delegate(OWNER, { stage: undefined }) });
   assert.equal(delegateWaiting(OWNER)?.type, "agent_freeze");
+});
+
+for (const stage of [undefined, "prepared"]) test(`expired peer with retained signature cannot become unsigned: ${stage ?? "missing stage"}`, () => {
+  file("peer.json", { intent: delegate(OWNER, { stage, expiresAt: new Date(0).toISOString(),
+    signedData: { standard: "nep366", signed_delegate: "retained-signature" } }) });
+  const before = readFileSync(join(".owner-intents", "peer.json"), "utf8");
+  assert.throws(() => delegateWaiting(OWNER), /owner.intent.*unavailable/i);
+  assert.equal(readFileSync(join(".owner-intents", "peer.json"), "utf8"), before);
 });
 
 test("DAO preparation refuses damaged peer evidence before constructing a delegate", async t => {
@@ -86,7 +94,7 @@ for (const change of [
 });
 
 test("a DAO-signed approval names the payment it released, also once settled", () => {
-  file(".env.json", { "vote-1": { ...delegate(OWNER, { type: "approval_vote", stage: "settled" }),
+  file(".env.json", { "vote-1": { ...delegate(OWNER, { type: "approval_vote", stage: "settled", result: { status: "SUCCESS" } }),
     paymentApproval: { approvalId: "a", correlationId: "op_payment", verdict: "approve", requestHash: "r" } } });
   const [request] = daoRequests();
   assert.equal(request?.state, "done");

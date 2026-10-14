@@ -27,8 +27,8 @@ const specs = suite => [...(suite.specs ?? []), ...(suite.suites ?? []).flatMap(
 /** Mutate fresh descendants of the already-tested snapshot, never the caller's application files. */
 export function runChallenges({ snapshot: seed, artifacts, env, root }) {
   const baseline = JSON.parse(readFileSync(join(artifacts, 'results.json')));
-  if (baseline.stats.unexpected || baseline.stats.skipped || baseline.stats.flaky || baseline.stats.expected !== 3)
-    throw new Error('Challenges require all three baseline E2E cases to pass without skips or retries');
+  if (baseline.stats.unexpected || baseline.stats.skipped || baseline.stats.flaky || baseline.stats.expected !== 5)
+    throw new Error('Challenges require all five baseline E2E cases to pass without skips or retries');
   const original = new Map(definitions.map(d => [d.file, sha(readFileSync(join(seed, d.file)))]));
   const summary = { baseline: 'passed', results: [] };
   for (const definition of definitions) {

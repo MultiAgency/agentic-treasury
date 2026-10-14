@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { allHoldings } from "../src/holdings.js";
 import { api } from "../src/api.js";
 import { ASSETS } from "../src/policy.js";
+import { timedPrices } from "./fixtures/authority.js";
 
 // Offline: the API's token and balance reads are replaced with fixed answers.
 const USDT = "nep141:usdt.tether-token.near";
@@ -13,12 +14,12 @@ const balance = (asset_id: string, balance_raw: string) => ({ asset_id, balance_
 test("everything the agent holds is accounted for: the treasury's assets, and anything else apart", async () => {
   process.env.AGENT_ID = "a".repeat(64);
   Object.assign(api, {
-    getTokens: async () => [
+    getTokens: async () => timedPrices([
       token(ASSETS.wNEAR, "wNEAR", 24, 2),
       token(ASSETS.USDC, "USDC", 6, 1),
       token(ASSETS.ETH, "ETH", 18, 2000),
       token(USDT, "USDT", 6, 1),
-    ],
+    ]),
     getBalances: async (_: string, { source }: { source: "public" | "confidential" }) => ({
       balances:
         source === "public"

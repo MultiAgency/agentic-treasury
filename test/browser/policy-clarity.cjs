@@ -58,12 +58,21 @@ const root = require('node:path').resolve(process.argv[2] || 'web/dist');
     const record = page.getByText('private-historical-digest', { exact: true });
     await record.waitFor(); denyHistory = true;
     await page.context().setOffline(true); await page.context().setOffline(false);
-    await page.getByText('Access denied', { exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Access unavailable', exact: true }).waitFor();
+    await page.getByRole('alert').filter({ hasText: 'Access denied' }).waitFor();
     await record.waitFor({ state: 'hidden' });
+    assert.equal(await page.getByText('fixture-digest', { exact: true }).count(), 0);
+    assert.equal(await state.count(), 0);
+    assert.equal(await page.getByRole('heading', { name: 'Allowed actions', exact: true }).count(), 0);
+    assert.equal(await page.getByRole('heading', { name: 'Owner controls', exact: true }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Edit', exact: true }).count(), 0);
+    await page.getByRole('button', { name: 'Check access again', exact: true }).waitFor();
    }
    if (scenario === 'grant-link') await page.getByRole('link', { name: 'Review and authorize the Portfolio strategy', exact: true }).waitFor();
-   await page.getByRole('button', { name: 'Edit', exact: true }).click();
-   await page.getByRole('button', { name: 'Cancel', exact: true }).waitFor();
+   if (scenario !== 'history-denied') {
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('button', { name: 'Cancel', exact: true }).waitFor();
+   }
    if (scenario === 'round-trip') {
     await page.getByLabel('USD budget a day', { exact: true }).fill('24');
     await page.getByRole('button', { name: 'Review changes', exact: true }).click();

@@ -4,15 +4,17 @@ import type { Kind } from "../features/evidence/beats";
 import { BASE, kindOf, type Overview, short } from "./lib";
 
 import { useAgent } from "../app/agent-context";
+import { deniedAt, useAccessState } from "./access";
 
 /**
  * The other agents behind the same hosted dashboard (their names, kinds, wallets and state), and this
  * page's own agent as the gateway lists it, with its owner. None locally.
  */
 export function useSiblings() {
+  const authorization = useAccessState();
   // Agents and wallets rarely change: read once a minute at most, however many components ask.
   const gateway = useQuery({ ...gatewayQueries.metadata });
-  const agents = gateway.data?.agents ?? [];
+  const agents = (gateway.data?.agents ?? []).filter(agent => !deniedAt(authorization, `/a/${agent.name}`));
   const names = agents.filter((a) => `/a/${a.name}` !== BASE).map((a) => a.name);
   const results = useQueries({
     queries: names.map(name => gatewayQueries.sibling(name)),

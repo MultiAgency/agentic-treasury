@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { Decoded } from "../../../../src/gateway/proposals.js";
 import { ago, minutesSeconds, useCountdown } from "../../shared/lib";
 import { Badge, Card, Details, Section, Spinner, type Tone } from "../../shared/ui";
+import { visibleProposals, useAccessState } from "../../shared/access";
 
 const TYPE_WORDS: Record<string, string> = {
   agent_create: "Create the agent",
@@ -121,11 +122,15 @@ function Proposal({ p, dao }: { p: Decoded; dao: string }) {
 }
 
 export function Proposals({ dao }: { dao: string }) {
+  const access = useAccessState();
   const proposals = useQuery({
     ...gatewayQueries.proposals(dao),
   });
-  const open = proposals.data?.filter((p) => p.status === "InProgress") ?? [];
-  const recent = proposals.data?.filter((p) => p.status !== "InProgress").slice(0, 5) ?? [];
+  // One DAO can retain accessible agents. Filter decoded private payloads even when a read begun
+  // before an agent's denial returns successfully after it.
+  const visible = visibleProposals(proposals.data ?? [], access);
+  const open = visible.filter(p => p.status === "InProgress");
+  const recent = visible.filter(p => p.status !== "InProgress").slice(0, 5);
   return (
     <Section
       title="What am I voting on?"

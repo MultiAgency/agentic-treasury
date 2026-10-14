@@ -5,7 +5,8 @@ import { mandateDigest } from "./mandate.js";
 import type { Plan, PlannedAction } from "./plans.js";
 import { ASSETS, outputAssetRefusal } from "./policy.js";
 import { grantApproves, type Strategy, strategyDigest } from "./strategy-digest.js";
-import { costBps, usdValue } from "./value.js";
+import { costBps } from "./value.js";
+import { tokenUsd } from "./valuation.js";
 
 /**
  * The one authorization rule every money action passes before it is sent. The provider enforces the
@@ -44,7 +45,8 @@ type Funds = { available: string };
 
 export type Facts = {
   treasury: TreasuryFacts;
-  autopilot: TreasuryFacts;
+  /** Gross recorded value of earlier submitted swaps in this plan; null when unknown. */
+  autopilot: TreasuryFacts & { submittedSwapUsd: number | null };
   payout: Common & Funds & { heldPayouts: Transfer[] };
   invoice: Common & Funds;
   approval: Common;
@@ -131,6 +133,8 @@ export function authorize(action: Action, c: Case): Refusal | null {
 
   if (c.purpose === "treasury" || c.purpose === "autopilot") {
     const { plan: sending, strategy, tokens } = c.facts;
+    if (c.purpose === "autopilot" && action.method === "swap" && sending?.leg.type !== "swap")
+      return refuse("valuation_unavailable", "An automatic swap needs a plan-bound valuation");
     if (sending) {
       const { plan, leg } = sending;
       if (!Number.isFinite(Date.parse(plan.expiresAt)) || now >= Date.parse(plan.expiresAt)) return refuse("plan_expired", "The plan expired");
@@ -141,11 +145,21 @@ export function authorize(action: Action, c: Case): Refusal | null {
       if (leg.type === "swap") {
         const input = tokens.find((t) => t.asset_id === leg.from);
         const output = tokens.find((t) => t.asset_id === leg.to);
-        const usdIn = input?.price ? usdValue(leg.amount, input.decimals, input.price) : NaN;
-        const floorUsd = output?.price ? usdValue(leg.minAmountOut, output.decimals, output.price) : NaN;
+        // The swap's full value is checked before its prerequisite shield and again before the swap.
+        const usdIn = tokenUsd(leg.amount, input, now);
+        const floorUsd = tokenUsd(leg.minAmountOut, output, now);
+        if (usdIn === null || floorUsd === null || usdIn <= 0 || floorUsd <= 0)
+          return refuse("valuation_unavailable", "The swap needs fresh prices and finite positive input and output-floor values");
         const cost = costBps(usdIn, floorUsd);
         if (!Number.isFinite(cost) || cost > strategy.maxCostBps)
           return refuse("swap_cost_exceeded", "The swap's output floor exceeds the strategy's cost limit");
+        if (c.purpose === "autopilot") {
+          const prior = c.facts.submittedSwapUsd;
+          if (prior === null || !Number.isFinite(prior) || prior < 0 || !Number.isFinite(prior + usdIn))
+            return refuse("valuation_unavailable", "The value of this plan's submitted swaps is unavailable");
+          if (prior + usdIn > strategy.autopilot.maxUsd)
+            return refuse("autopilot_limit_exceeded", "The plan's submitted swaps plus this swap exceed the auto-execute limit");
+        }
       }
     }
   }

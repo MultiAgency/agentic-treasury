@@ -4,10 +4,11 @@ import { startAutopilot } from "./autopilot.js";
 import { startNotifications } from "./notify.js";
 import { startReconciliation } from "./recover.js";
 import { router } from "./router.js";
-import { executes } from "./env.js";
+import { executes, saveEnv } from "./env.js";
 import { acquireExecutorLease } from "./executor-lease.js";
+import { createExecutorLifecycle } from "./executor-lifecycle.js";
 import { crossSite, serveStatic } from "./http.js";
-import { resumeOwnerIntents } from "./owner-intents.js";
+import { resumeOwnerIntents, setAgentCreationHandler } from "./owner-intents.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 
@@ -15,7 +16,20 @@ const handler = new RPCHandler(router);
 if (process.env.INVOICES_PORT && !process.env.AGENT_ID) throw new Error("Configure the payout agent before enabling invoices");
 // An approve-only instance (EXECUTOR=off) is not the agent's executor: no lease, and no invoice page, which sends.
 if (!executes() && process.env.INVOICES_PORT) throw new Error("EXECUTOR=off can't serve invoices: invoices send payouts");
-const releaseExecutor = process.env.AGENT_ID && executes() ? await acquireExecutorLease(process.env.AGENT_ID) : undefined;
+const executor = createExecutorLifecycle({
+  executes,
+  acquire: acquireExecutorLease,
+  configure: id => saveEnv({ AGENT_ID: id }),
+  start: () => {
+    try { startReconciliation(); startNotifications(); startAutopilot(); }
+    catch (error) {
+      console.error("Executor startup failed; stopping before accepting more work.", error);
+      process.exit(1);
+    }
+  },
+});
+setAgentCreationHandler(id => executor.activate(id, true));
+await executor.activate(process.env.AGENT_ID);
 const invoices = process.env.INVOICES_PORT ? (await import("./invoice-http.js")).startInvoiceServer() : undefined;
 
 // This process holds the agent's grant: answer only same-origin requests on loopback.
@@ -31,8 +45,6 @@ const dashboard = createServer(async (req, res) => {
 }).listen(PORT, "127.0.0.1", () => {
   console.log(`Treasury dashboard on http://localhost:${PORT}`);
   resumeOwnerIntents();
-  // Ticks only once the owner turns the autopilot on and an agent exists, and only on its executor.
-  if (process.env.AGENT_ID && executes()) { startReconciliation(); startAutopilot(); startNotifications(); }
 });
 
 async function serveDashboard(req: IncomingMessage, res: ServerResponse) {
@@ -42,6 +54,7 @@ async function serveDashboard(req: IncomingMessage, res: ServerResponse) {
     return;
   }
   if (["/rpc/instance", "/rpc/autopilot/log", "/rpc/owner/actions", "/rpc/paymentHistory", "/rpc/strategy/get"].includes(req.url?.split("?")[0] ?? "")) res.setHeader("cache-control", "private, no-store");
+  await executor.activate(process.env.AGENT_ID);
   const { matched } = await handler.handle(req, res, { prefix: "/rpc" });
   if (matched) return;
 
@@ -55,6 +68,6 @@ async function serveDashboard(req: IncomingMessage, res: ServerResponse) {
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, async () => {
   dashboard.close(); invoices?.close();
-  await releaseExecutor?.();
+  await executor.close();
   process.exit(0);
 });

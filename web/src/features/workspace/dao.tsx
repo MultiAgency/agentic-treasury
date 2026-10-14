@@ -12,7 +12,8 @@ import { areaName } from "../../app/workspace";
 import { ago, clientFor, kindOf } from "../../shared/lib";
 import { AGENT_NAME, namer } from "../../shared/names";
 import { type Gateway, type GatewayAgent, ownersOf } from "../../app/session";
-import { Badge, Card, Loading, QueryError, Section, type Tone } from "../../shared/ui";
+import { Badge, Button, Card, Loading, QueryError, Section, type Tone } from "../../shared/ui";
+import { deniedAt, recheckAccess, useAccessState } from "../../shared/access";
 
 /**
  * The hosted dashboard's home: the agents this viewer may see and, for each DAO among their owners,
@@ -30,7 +31,7 @@ const namesOf = (states: (AgentState | undefined)[]) =>
   namer(new Map(states.flatMap((d) => (d?.setup?.wallet && d.overview ? [[d.setup.wallet, AGENT_NAME[kindOf(d.overview) as Kind]] as const] : []))));
 
 function NeedsAttention({ results }: { results: ReturnType<typeof useFleet> }) {
-  const incomplete = results.filter(r => r.incomplete.length > 0);
+  const incomplete = results.filter(r => r.denied || r.incomplete.length > 0);
   const nameOf = namesOf(results.map((r) => r.data));
   const items = results.flatMap(result => itemsOf(result.name, result.data, nameOf));
   const rank: Record<Tone, number> = { destructive: 0, warning: 1, info: 2, success: 3, neutral: 4 };
@@ -42,9 +43,9 @@ function NeedsAttention({ results }: { results: ReturnType<typeof useFleet> }) {
             {!items.length && !incomplete.length && <li className="text-sm text-muted-foreground">No items need attention in the records checked.</li>}
             {incomplete.map((result) => (
               <li key={`incomplete-${result.name}`} className="flex flex-col gap-2 py-3 text-sm first:pt-0 last:pb-0">
-                <p className="text-warning-muted-foreground">{result.name}: checks are incomplete ({result.incomplete.join(", ")}). Known items remain below; cached items may be out of date.</p>
+                <p className="text-warning-muted-foreground">{result.denied ? `${result.name}: access is unavailable. Private records are hidden.` : `${result.name}: checks are incomplete (${result.incomplete.join(", ")}). Known items remain below; cached items may be out of date.`}</p>
                 {result.isPending && <Loading label={`Checking ${result.name}…`} />}
-                {result.error && <QueryError error={result.error} retry={() => void result.refetch()} />}
+                {result.denied ? <Button variant="outline" className="self-start" onClick={recheckAccess}>Check access again</Button> : result.error && <QueryError error={result.error} retry={() => void result.refetch()} />}
               </li>
             ))}
             {items.map((item, i) => (
@@ -116,12 +117,13 @@ function AreaStatus({ agents, results }: { agents: GatewayAgent[]; results: Retu
 }
 
 function AgentHistory({ agent }: { agent: GatewayAgent }) {
+  const access = useAccessState();
   const client = clientFor(`/a/${agent.name}`);
   const reads = queriesFor(client, ["fleet", agent.name]);
   const activity = useQuery({ ...reads.activity, retry: false, refetchInterval: 30_000 });
   const owners = useQuery({ ...reads.ownerActions, retry: false, refetchInterval: 30_000 });
   const overview = useQuery({ ...reads.overview, refetchInterval: false, retry: false, staleTime: 30_000 });
-  const denied = [activity.error, owners.error, overview.error].some(accessDenied);
+  const denied = Boolean(deniedAt(access, `/a/${agent.name}`)) || [activity.error, owners.error, overview.error].some(accessDenied);
   const rows = denied ? [] : activity.data?.filter(op => !isProbe(op)) ?? [];
   return <Section title={areaName(agent)} description={`${agent.owner} · ${agent.name}`}>
     <a href={`/a/${agent.name}/activity`} className="self-start text-sm underline">Review full history and unresolved operations</a>

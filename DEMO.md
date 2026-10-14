@@ -39,7 +39,7 @@ signed in and opened both agents under the per-agent owner check; and earlier da
 | State survives a restart and a redeploy | Signed-in smoke snapshot before and after | 2026-10-12 20:50–21:37Z |
 | Autopilot runs on schedule on that build | First tick's evidence: scheduled, build digests match | 2026-10-12 21:37Z; re-checked on dao `0d5964ea`: the first scheduled tick, 2026-10-14 00:46:01Z, records that deployment |
 | Invoice → DAO approval → payment, paid | Submitted at 21:46Z, inferred, by the deployed `invoices` service; approval prepared on an unidentified host, not this laptop's stores; proposal 50 filed and voted in two transactions; executed by the provider: SUCCESS | 2026-10-12 21:48Z |
-| Same flow, not paid | Submitted at 22:16Z, inferred, by the deployed `invoices` service; approval prepared and signed by the user's local approve-only server running the one-click code, uncommitted at the time (proposal 51); executed by the provider: FAILED, reason redacted (an empty wallet afterwards suggests insufficient funds, unproven) | 2026-10-12 22:17Z |
+| Same flow, provider reported FAILED; nonpayment not independently verified | Submitted at 22:16Z, inferred, by the deployed `invoices` service; approval prepared and signed by the user's local approve-only server running the one-click code, uncommitted at the time (proposal 51); executed by the provider: FAILED, reason redacted (an empty wallet afterwards suggests insufficient funds, unproven) | 2026-10-12 22:17Z |
 | Signed-in views (member, operator, payee) | Signed-in `pnpm smoke` as the operator passed on dao `0d5964ea`: both agents open under the per-agent owner check, and the DAO's proposals read. The member and payee views, and the pages themselves, not re-checked | 2026-10-14 |
 | Typecheck, offline tests, web build | Local; tests use mocks, not the provider or chain | per release |
 | Every policy revision reproduces its hash, and the owner's grant and approval signatures verify | [Policy signatures and operation proofs](docs/mainnet-log.md#policy-signatures-and-operation-proofs-2026-10-13t0410z) | 2026-10-13T04:10Z |
@@ -133,7 +133,7 @@ evidence. What has been shown so far, and where this build differs from each bri
 | Outcome | Do | See | Leaves |
 |---|---|---|---|
 | Balances in, quoted plan out, swaps inside the caps | Strategy → Preview, then Runs → Run now | Each leg quoted and within the cost cap; the budget figure drops by the swaps' value | Each swap in Activity, with the policy revision it ran under |
-| A breach is refused | A run whose value exceeds the budget left | Activity shows it refused with `spend_budget_exceeded`; nothing moved | A refusal with its code |
+| A breach is refused | A run whose value exceeds the budget left | Activity shows the over-budget operation refused with `spend_budget_exceeded`; earlier shields or swaps may have completed | A refusal with its code, alongside earlier operation outcomes |
 | Idle funds go confidential | When the agent holds a public balance, let the autopilot run | "Held privately" returns to 100% | The shield in Activity |
 
 Record what a run leaves in [docs/mainnet-log.md](docs/mainnet-log.md), reference it in the
@@ -160,8 +160,8 @@ signed: don't retune the strategy or limits for a demo.
    under.
 5. **The refusal.** When the daily budget is nearly used (`demo-check` and Portfolio show what's left), ask the
    Steward for one more swap larger than what remains, and execute it. The provider refuses it, Activity shows
-   "refused · over the USD budget", and nothing moves: the provider refuses a request over the budget the DAO
-   signed, whoever asks.
+   "refused · over the USD budget". That swap is refused; an earlier shield or swap may already have completed.
+   The provider refuses an operation over the budget the DAO signed, whoever asks. A run is not atomic.
 
 Both swaps spend the daily USD budget, so rehearse after it resets (`demo-check` prints when) and leave room for
 the live run. Run on mainnet on 2026-10-13, per the operator's record: the steward's swap at 17:55Z, before the

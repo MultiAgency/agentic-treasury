@@ -1,5 +1,6 @@
 import { ConfirmButton } from "../owner/confirm-button";
 import { queries } from "../../shared/queries";
+import { SCHEDULE_STOPPED, SCHEDULE_STOP_SCOPE } from "../../shared/schedule-copy";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
@@ -55,7 +56,7 @@ export function StrategyWorkflow() {
   const stop = () => operation.attempt(async () => {
     setSavedMessage(undefined);
     await client.autopilot.stop();
-    return "Schedule off. Operations already submitted may still finish.";
+    return SCHEDULE_STOPPED;
   });
   return <Card>
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -63,6 +64,7 @@ export function StrategyWorkflow() {
       {view.scheduleLabel && <Badge>{view.scheduleLabel}</Badge>}
       {view.showStop && <Button variant="outline" disabled={busy} onClick={stop}>Turn off</Button>}
     </div>
+    {view.showStop && <p className="text-sm text-muted-foreground">{SCHEDULE_STOP_SCOPE}</p>}
     {schedule.isPending && <Loading label="Checking autopilot settings…" />}
     {schedule.error && <QueryError error={schedule.error} retry={() => schedule.refetch()} />}
     {status.isPending && <Loading label="Checking strategy authorization…" />}

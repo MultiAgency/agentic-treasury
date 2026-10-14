@@ -11,9 +11,12 @@ import { paymentOwnerState } from "./payment-owner-state";
 import { paymentProgress } from "./payment-progress";
 import { paymentStages } from "./payment-stages";
 import { usePaymentStatus } from "./use-payment-status";
+import { accessDenied } from "../../shared/read-failure";
+import { visibleProposals, useAccessState } from "../../shared/access";
 import type { PaymentRecord as Known } from "./payment-records";
 
 export function usePayment(id: string, knownPayment: Known) {
+  const access = useAccessState();
   const { data, setup } = useAgent();
   const viewer = useViewer();
   const { self } = useSiblings();
@@ -37,7 +40,8 @@ export function usePayment(id: string, knownPayment: Known) {
     enabled: Boolean(approval),
     refetchInterval: settled ? false : 4_000,
   });
-  const proposal = approval ? proposals.data?.find((p) => p.hash === approval.hash) : undefined;
+  const proposal = approval && !accessDenied(proposals.error)
+    ? visibleProposals(proposals.data ?? [], access).find(p => p.hash === approval.hash) : undefined;
   // The signing window comes from the owner action itself: the API keeps it open 5 to 10 minutes.
   const windowLeft = useCountdown(vote.data?.stage === "voting" ? vote.data.expiresAt : undefined);
 

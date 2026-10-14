@@ -1,4 +1,5 @@
 import { TaskEvidence } from "../evidence/task-evidence";
+import { SCHEDULE_STOP_SCOPE } from "../../shared/schedule-copy";
 import { PencilSimple } from "@phosphor-icons/react";
 import { useState } from "react";
 import { Link, useLocation } from "@tanstack/react-router";
@@ -85,7 +86,7 @@ export function Policy() {
       <Section title="Owner controls" description="Stopping the schedule, revoking a grant and freezing the agent have different scopes. None confirms cancellation of operations already submitted.">
         {kindOf(data) === "treasury" && <div className="flex flex-col gap-2 text-sm">
           <h3 className="font-medium">Stop the schedule</h3>
-          <p>Stops scheduled runs on the executor. It does not revoke a grant or freeze the agent.</p>
+          <p>{SCHEDULE_STOP_SCOPE} It does not revoke a grant or freeze the agent.</p>
           <Link to="/automations" className="self-start underline">Review schedule controls</Link>
         </div>}
         <div className="flex flex-wrap items-start justify-between gap-4 text-sm">

@@ -1,4 +1,5 @@
 import { queries } from "../../shared/queries";
+import { SCHEDULE_STOPPED, SCHEDULE_STOP_SCOPE } from "../../shared/schedule-copy";
 import { usePaymentStatus } from "../payables/use-payment-status";
 import { PaymentOutcome } from "../payables/payment-outcome";
 import { paymentProgress } from "../payables/payment-progress";
@@ -18,7 +19,7 @@ export function StopSchedule() {
   const operator = useIsOperator();
   const stop = useAttempt([["autopilot"], ["strategy"]]);
   return <Section title="Schedule">
-    <p>Stopping the schedule does not cancel operations already submitted.</p>
+    <p>{SCHEDULE_STOP_SCOPE}</p>
     {!operator ? <p>Only an operator can stop the schedule.</p>
       : instance.isPending ? <Loading label="Checking executor identity…" />
       : instance.error ? <p>Executor identity is unavailable. Check again before stopping the schedule.</p>
@@ -26,7 +27,7 @@ export function StopSchedule() {
       : !instance.data?.agentId ? <p>No agent is configured on this instance.</p> : null}
     {instance.error && <QueryError error={instance.error} retry={() => instance.refetch()} />}
     <Button variant="outline" disabled={!operator || !instance.data?.agentId || instance.data.executor !== true || stop.busy}
-      onClick={() => stop.attempt(async () => { await client.autopilot.stop(); return "Schedule off. Operations already submitted may still finish."; })}>Turn off</Button>
+      onClick={() => stop.attempt(async () => { await client.autopilot.stop(); return SCHEDULE_STOPPED; })}>Turn off</Button>
     {stop.message && <p role="status">{stop.message}</p>}<ErrorBox error={stop.error} />
   </Section>;
 }

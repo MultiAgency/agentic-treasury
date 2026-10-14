@@ -28,7 +28,7 @@ beforeEach(() => {
   mock.method(api, "getHistory", authority.getHistory);
   mock.method(api, "listGrants", authority.listGrants);
   mock.method(api, "getPolicy", async () => policyView(treasuryPolicy, revision));
-  mock.method(api, "getTokens", async () => timedPrices(Object.entries(ASSETS).map(([symbol, asset_id]) => ({ symbol, asset_id, decimals: 0, price: 1 }))));
+  mock.method(api, "getTokens", async () => timedPrices(Object.entries(ASSETS).map(([symbol, asset_id]) => ({ symbol, asset_id, decimals: 0, price: 1 })), time));
   mock.method(api, "getBalances", async (_id: string, { source }: { source: "public" | "confidential" }) =>
     balanceView(source, Object.entries(book).map(([asset_id, balances]) => ({ asset_id, balance_raw: String(balances[source]) }))));
   mock.method(api, "getStatus", async (correlation_id: string) => ({ correlation_id, status: "SUCCESS" }));

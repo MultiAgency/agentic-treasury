@@ -268,12 +268,12 @@ const overview = { agentId: 'fixture', digest: 'fixture', grants: [], rebalance:
     await stop.click();
     await page.getByRole('alert').filter({ hasText: message }).waitFor();
     assert.equal(state().on, true, 'a rejected stop leaves the schedule on');
-    assert.equal(await page.getByText('Schedule off. Operations already submitted may still finish.', { exact: true }).count(), 0);
+    assert.equal(await page.getByText('Future scheduled runs are off. A run already started can still submit further operations; submitted operations may finish.', { exact: true }).count(), 0);
     assert.equal(await stop.isEnabled(), true, 'the owner can retry');
     assert.equal(attempts, 1, 'the UI does not silently retry the mutation');
     await page.unroute(endpoint);
     await stop.click();
-    await page.getByText('Schedule off. Operations already submitted may still finish.', { exact: true }).waitFor();
+    await page.getByText('Future scheduled runs are off. A run already started can still submit further operations; submitted operations may finish.', { exact: true }).waitFor();
     assert.equal(state().on, false);
     assert.equal(await page.getByText(message, { exact: true }).count(), 0, 'successful retry clears the failure');
   });
@@ -307,7 +307,7 @@ const overview = { agentId: 'fixture', digest: 'fixture', grants: [], rebalance:
   });
   await check('Payables retains stop for an existing schedule', { payables: true, on: true }, async ({ page, state }) => {
     await page.getByRole('button', { name: 'Turn off', exact: true }).click();
-    await page.getByText('Schedule off. Operations already submitted may still finish.', { exact: true }).waitFor();
+    await page.getByText('Future scheduled runs are off. A run already started can still submit further operations; submitted operations may finish.', { exact: true }).waitFor();
     assert.equal(state().on, false);
   });
   await browser.close(); if (!executed || failures) process.exitCode = 1;

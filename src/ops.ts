@@ -5,6 +5,7 @@ import { AgentApiError } from "@near-intents-agent-api/sdk";
 import { agentId } from "./env.js";
 import { appendSynced, mkdirSynced } from "./synced.js";
 import { claimInvoiceSubmission, invoiceOperations, recordInvoiceOperation, type PaymentState } from "./invoice-store.js";
+import { totalUsd } from "./valuation.js";
 
 /**
  * The append-only log of one agent's money actions, `.ops/<agent id>.jsonl`. A request line is
@@ -27,7 +28,7 @@ type Context = {
   policyDigest?: string | null;
   /** The plan this action executes, when it executes one. */
   planId?: string;
-  /** The input's value at the API's token price when sent; null when it has none. */
+  /** The input's value at a fresh API token price when authorized; null when unavailable. */
   usdIn?: number | null;
 };
 
@@ -76,6 +77,16 @@ export const isHeld = (op: Op) => op.status === "PENDING_APPROVAL";
  */
 export const blocksDispatch = (op: Op) => !isResolved(op) && !isHeld(op) && !(op.invoiceId && op.submissionState === "PREPARED");
 
+/** Gross value of submitted swaps in one plan, from folded journal evidence. Failed or refunded
+ * submissions do not replenish its ceiling. Unknown legacy submissions count conservatively;
+ * missing valuations remain unknown, and unresolved operations still block dispatch independently. */
+export function submittedSwapUsd(ops: readonly Op[], planId: string): number | null {
+  return totalUsd(ops.filter(op => op.planId === planId && op.refused === undefined &&
+    (op.method === "swap" || (op.method === undefined && "origin_asset" in op.request)) &&
+    !(op.journalVersion === 2 && op.submissionState === "PREPARED"))
+    .map(op => ({ usd: op.usdIn ?? null })));
+}
+
 export function record(line: Line) {
   if ("request" in line && line.journalVersion === 2 && readOps().some((op) => op.idempotencyKey === line.idempotencyKey))
     throw new Error("Operation identity already recorded");
@@ -109,10 +120,11 @@ const identity = { idempotencyKey: nonempty, at: z.string().optional() };
 // by matching a different record shape.
 const noOutcome = { correlation_id: z.never().optional(), status: z.never().optional(), refused: z.never().optional(), submissionState: z.never().optional() };
 const preparationLine = z.object({ ...identity, ...noOutcome, at: z.string(), kind: nonempty, request: z.record(z.string(), z.unknown()),
+    authorization: z.never().optional(),
     method: z.enum(["swap", "transfer", "shield", "unshield"]).optional(), journalVersion: z.literal(2).optional(),
     policyRevision: z.number().nullable().optional(), policyDigest: z.string().nullable().optional(),
     usdIn: z.number().nullable().optional(), planId: z.string().optional() });
-const outcome = { ...identity, ...noOutcome, request: z.never().optional(), journalVersion: z.never().optional() };
+const outcome = { ...identity, ...noOutcome, request: z.never().optional(), journalVersion: z.never().optional(), authorization: z.never().optional() };
 const journalLine = z.union([
   preparationLine,
   // Legacy snapshots could combine the request and its observed provider identity.
@@ -121,6 +133,8 @@ const journalLine = z.union([
   z.object({ ...outcome, refused: nonempty }),
   // Older logs may have a correlation ID without a status: still unresolved, never inferred terminal.
   z.object({ ...outcome, correlation_id: nonempty, status: nonempty.optional() }),
+  // Historical authorization snapshots are metadata, never submission or settlement evidence.
+  z.object({ ...outcome, at: z.string(), authorization: z.object({ version: z.literal(1) }).passthrough() }).strict(),
 ]);
 
 /** Every operation in the log, oldest first, folded with the outcomes recorded for it. */
@@ -144,6 +158,10 @@ export function readOps(): Op[] {
     const op = ops.get(line.idempotencyKey);
     if (!op) invalid("record without preparation");
     const existing = op!;
+    if (line.authorization !== undefined) {
+      if (existing.journalVersion !== undefined) invalid("legacy authorization metadata for a versioned operation");
+      continue;
+    }
     if (line.submissionState !== undefined) {
       if (existing.journalVersion !== 2 || existing.submissionState !== "PREPARED" || existing.correlationId || isResolved(existing))
         invalid("invalid submission claim");

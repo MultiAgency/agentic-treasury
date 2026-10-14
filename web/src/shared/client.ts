@@ -2,6 +2,7 @@ import { createORPCClient, ORPCError } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { RouterClient } from "@orpc/server";
 import type { Router } from "../../../src/router.js";
+import { reportAccessDenial } from "./access";
 
 /**
  * Where this agent's pages live: "" when a local agent server serves them, "/a/<agent>" behind the
@@ -18,10 +19,15 @@ export const clientFor = (base: "" | `/${string}`): RouterClient<Router> => crea
     if (response.status === 401 || response.status === 403) {
       const body = await response.clone().json().catch(() => null);
       // Preserve encoded RPC errors, including their messages and structured details.
-      if (typeof body?.json?.code !== "string")
+      if (typeof body?.json?.code !== "string") {
+        // Older gateways have no scope field. Their procedure denial must not revoke agent reads.
+        const scope = body?.access === "procedure" || body?.error === "Operators only" ? "procedure"
+          : body?.access === "session" || response.status === 401 ? "session" : "agent";
+        reportAccessDenial({ base, scope, message: typeof body?.error === "string" ? body.error : "Access is no longer available." });
         throw new ORPCError(response.status === 401 ? "UNAUTHORIZED" : "FORBIDDEN", {
           message: typeof body?.error === "string" ? body.error : undefined,
         });
+      }
     }
     return response;
   },
@@ -33,6 +39,13 @@ export const client = clientFor(BASE);
 export async function gw<T>(path: `/gw/${string}`, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
   const body = (await response.json().catch(() => ({}))) as T & { error?: string };
-  if (!response.ok) throw new Error(body.error ?? `${path}: ${response.status}`);
+  if (!response.ok) {
+    const message = body.error ?? `${path}: ${response.status}`;
+    if (response.status === 401 || response.status === 403) {
+      reportAccessDenial({ base: "", scope: response.status === 401 ? "session" : "procedure", message });
+      throw new ORPCError(response.status === 401 ? "UNAUTHORIZED" : "FORBIDDEN", { message });
+    }
+    throw new Error(message);
+  }
   return body;
 }

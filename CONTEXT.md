@@ -154,7 +154,10 @@ submitted it is **prepared**: nothing is in flight, so it is not an unresolved o
 
 **Autopilot**:
 The treasury agent acting on its own schedule, off by default: each **tick** reads the status of open
-operations, sweeps, and executes a rebalance only up to the strategy's auto-execute limit. A tick whose
+operations, sweeps, and executes a rebalance whose preview fits the strategy's auto-execute limit.
+Each planned swap also requires fresh valuation and must keep the plan's gross submitted swap value
+within that limit; shields are excluded from the sum. These are local checks using observed prices,
+as described in `docs/enforcement.md`. A tick whose
 start can't be recorded does not run; a missing end means it was interrupted or its outcome is unknown.
 _Avoid_: bot, cron job
 
