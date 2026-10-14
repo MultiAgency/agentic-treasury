@@ -201,7 +201,7 @@ people who want to sign in and look for themselves.
 
 1. Open https://proto.multiagency.ai without signing in. Each card lists its brief's capabilities and guarantees;
    each guarantee names who stops a misbehaving agent, and each row says whether it was observed on mainnet,
-   tested offline, or not yet. Open **Capabilities and guarantees** to inspect the running brief; roadmap briefs stay in the planning docs. Nothing else: no
+   tested offline, or not yet. Open **Requirements and stages** to inspect the running brief; roadmap briefs stay in the planning docs. Nothing else: no
    balances, payments, roster or proposals.
 2. For what anyone can see on chain, open the DAO on a block explorer: each approval reads "Approve the pending
    confidential request", with no payee or amount. The council's roster is public there, as it is for any Sputnik

@@ -14,6 +14,25 @@ const recording = { schemaVersion: 1, aguiVersion: '1.0.2', agentId: 'fixture', 
     { type: 'CUSTOM', name: 'treasury.observation', metadata: metadata('send', null), value: { stage: 'send', index: 0, correlationId: 'op-1', status: 'SENT', failureCode: null, historySource: 'journal', history: [], untimedHistory: [] } },
     { type: 'RUN_FINISHED', threadId: 'tick:fixture:tick-1', runId: 'tick-1', timestamp: Date.parse(end), metadata: metadata('end', end), result: { outcome: 'awaiting outcome', refusal: null, rejected: [] } },
   ], laterObservations: [{ correlationId: 'op-1', source: 'journal', record: { line: 1, recordedAt: new Date(Date.parse(end) + 30_000).toISOString(), idempotencyKey: 'key-1', type: 'status', status: 'SUCCESS' } }] };
+require('tsx/cjs');
+const { tickLog } = require('../../src/agui.ts');
+const { parseJournalHistory } = require('../../src/journal-history.ts');
+// Production adapter: acceptance followed by a failed status read leaves no tick receipt.
+function acceptedRecording(conflict) {
+  const acceptedAt = new Date(Date.parse(at) + 5000).toISOString();
+  const settledAt = new Date(Date.parse(end) + 1000).toISOString();
+  const rows = [
+    { at, idempotencyKey: 'accepted-key', kind: 'autopilot', method: 'shield', request: {} },
+    { at: acceptedAt, idempotencyKey: 'accepted-key', correlation_id: 'accepted-op', status: 'SENT' },
+    { at: settledAt, idempotencyKey: 'accepted-key', correlation_id: 'accepted-op', status: 'SUCCESS' },
+  ];
+  if (conflict) rows.push({ ...rows[2], idempotencyKey: 'conflicting-key' });
+  return tickLog({ ...context, progressVersion: 1, end: { endedAt: end, before: { error: 'Unavailable' }, after: { error: 'Unavailable' },
+    plan: null, steps: [], shields: [], rejected: [], refusal: null, outcome: 'Outcome unknown after submission' } },
+    parseJournalHistory('fixture', rows.map(row => JSON.stringify(row)).join('\n')),
+    { exportedAt: new Date().toISOString(), display: { asOf: end, assets: [] }, progress: [{ version: 1, agentId: 'fixture', tickId: 'tick-1', sequence: 1, at: acceptedAt,
+      event: { type: 'CUSTOM', name: 'treasury.observation', value: { stage: 'submission', method: 'shield', correlationId: 'accepted-op' } } }] });
+}
 const strategy = { targetBps: { usdc: 10000 }, minLegUsd: 2, maxCostBps: 250, autopilot: { everyMin: 60, maxUsd: 10 } };
 const ready = { strategy, digest: 'fixture', grantSuffix: 'fixture', executor: true, on: true, grantMatches: false, unresolved: 0, grant: null, observedAt: at,
   readiness: { state: 'authorization-required', canEnable: false, reasons: ["The owner must issue a matching grant before this strategy can act on its schedule."] } };
@@ -30,6 +49,7 @@ const overview = { agentId: 'fixture', digest: 'fixture', grants: [], rebalance:
       const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: 'reduce' });
       // Install before mounting: the expiry timer must be created on this clock too.
       await page.clock.install();
+      let acceptedOnly = false, conflict = false;
       let progressing = false, submitted = false, completed = false, failure = false, mismatch = false, reads = 0, payables = false, agreed = true, policyBlocked = false;
       ready.grantMatches = false; ready.readiness.canEnable = false;
       const writes = [], errors = [];
@@ -44,7 +64,7 @@ const overview = { agentId: 'fixture', digest: 'fixture', grants: [], rebalance:
           if (method === 'autopilot/log') {
             reads++;
             if (failure) return route.fulfill({ status: 503, json: { json: { defined: false, code: 'INTERNAL_SERVER_ERROR', message: 'Unavailable' } } });
-            const value = completed ? structuredClone(recording) : { ...recording, completion: 'no-recorded-end', events: recording.events.slice(0,1), laterObservations: [] };
+            let value = completed ? structuredClone(recording) : { ...recording, completion: 'no-recorded-end', events: recording.events.slice(0,1), laterObservations: [] };
             if (progressing) {
               const stage = (type, stepName, n) => {
                 const time = new Date(Date.parse(at) + n * 1000).toISOString();
@@ -60,6 +80,7 @@ const overview = { agentId: 'fixture', digest: 'fixture', grants: [], rebalance:
               value.context = { ...value.context, progressVersion: 1 };
               value.events = [value.events[0], ...stages, ...value.events.slice(1)];
             }
+            if (acceptedOnly) value = acceptedRecording(conflict);
             const tickId = route.request().postDataJSON().json.tickId;
             if (tickId === 'tick-2') {
               value.tickId = 'tick-2'; value.context = { ...context, id: 'tick-2' };
@@ -122,6 +143,18 @@ const overview = { agentId: 'fixture', digest: 'fixture', grants: [], rebalance:
       mismatch = false;
       await live.getByRole('button', { name: 'Retry run updates', exact: true }).click();
       await live.getByText('Following later operation outcomes.', { exact: true }).waitFor();
+      acceptedOnly = true;
+      await live.getByRole('button', { name: 'Refresh outcomes', exact: true }).click();
+      const updates = page.getByRole('region', { name: 'Run updates', exact: true });
+      await updates.getByRole('link', { name: 'Inspect operation in Activity', exact: true }).waitFor();
+      assert.match(await updates.innerText(), /Operation[\s\S]*success/);
+      assert.equal(await updates.getByRole('link', { name: 'Inspect swap 1 in Activity', exact: true }).count(), 0);
+      conflict = true;
+      await live.getByRole('button', { name: 'Refresh outcomes', exact: true }).click();
+      await page.waitForFunction(() => !document.querySelector('[aria-label="Run updates"]').textContent.includes('Later operation outcomes'));
+      assert.equal(await updates.getByRole('link', { name: 'Inspect operation in Activity', exact: true }).count(), 0, 'conflicting identities cannot attach later settlement');
+      assert.match(await updates.innerText(), /Some evidence is incomplete/);
+      acceptedOnly = false;
       await page.getByLabel('Run to view').selectOption('tick-2');
       await live.getByText(/Following (this run|later operation outcomes)|Last recorded:/).first().waitFor();
       assert.equal(await page.getByRole('button', { name: 'Watch live', exact: true }).count(), 0);

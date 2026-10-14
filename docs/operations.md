@@ -23,6 +23,10 @@ fixtures and offline tests do not establish hosted behavior or actual screen-rea
 | `dao` (`Dockerfile.dashboard`) | Dashboard simplification; reviewed policy/payment confirmations; strategy save, authorization and enable controls; payment/owner-action recovery views; private AG-UI recording inspector/export. Treasury executes here; payout remains approve-only. | Existing `/data/state`, including both agents' settings and this host's owner intents |
 | `invoices` (`Dockerfile`) | Invoice agreements precede amount fields; stable focus during refresh; continuation of unchanged, never-submitted invoices; shared payout/backend changes. Payout executes here. | Existing `/data`, including invoice SQLite, agreements and payout settings |
 
+The dashboard image must copy `evidence/` before building the web bundle: its UI imports the
+canonical inventory. `test/dashboard-build.test.ts` builds only the Dockerfile’s declared source
+inputs offline; it does not validate a Linux image or hosted runtime.
+
 Both services must use the same reviewed source candidate and frozen lockfile. Rebuilding `dao`
 alone does not update the public invoice page. Preserve `AGREEMENTS_URL` and matching
 `AGREEMENTS_SECRET` configuration so the approve-only dashboard continues reading the executor's

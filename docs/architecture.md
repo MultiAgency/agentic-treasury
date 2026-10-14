@@ -173,6 +173,10 @@ module owns drafts, refresh ordering and DOM updates; TypeScript checks its JSDo
 `pnpm typecheck`. It is served as JavaScript without another build step. The browser regression
 loads the complete page renderer and module with mocked API and wallet responses; the HTTP test
 checks that the listener serves both resources. Neither test extracts functions from source comments.
+Sign-out clears private rows, invalidates outstanding status reads, stops polling, and restores
+keyboard focus to sign-in (`test/browser/invoice-focus.cjs`, offline). The synthetic payee journey
+checks request, agreement, invoice and outcome presentation at mobile and desktop widths
+(`test/browser/invoice-journey.cjs`); owner decisions there are fixture transitions, not real signatures.
 
 The Treasury strategy UI derives labels and control permissions in `web/src/strategy-presentation.ts`.
 This is presentation only; server controls and dispatch still recheck authorization. Query refreshes

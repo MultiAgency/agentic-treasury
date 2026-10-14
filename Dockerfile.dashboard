@@ -10,6 +10,7 @@ RUN pnpm install --frozen-lockfile
 COPY tsconfig.json ./
 COPY src ./src
 COPY web ./web
+COPY evidence ./evidence
 RUN pnpm build:web
 COPY deploy ./deploy
 

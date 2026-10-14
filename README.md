@@ -75,7 +75,7 @@ Two pages on Railway. Signing in with a NEAR wallet signs a message, never a tra
   on this agent, observations on another agent, offline-only tests and requirements not yet demonstrated.
   Known limitations stay visible on public and compact signed-in cards. These are recorded observations,
   not live status, a completion percentage or proof of every guarantee. The summary and limitations come
-  from the canonical inventory; detailed requirements remain under **Capabilities and guarantees**.
+  from the canonical inventory; detailed requirements remain under **Requirements and stages**.
   It reads nothing from the server. Members of `agentic.sputnik-dao.near` sign in to see the treasury and
   the proposals.
   It is the treasury agent's executor and runs the payout agent approve-only.

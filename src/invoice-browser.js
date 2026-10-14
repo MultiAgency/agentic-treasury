@@ -60,6 +60,7 @@ export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
     $("step-signin").hidden = !!account; $("step-invoice").hidden = !account; $("list").hidden = !account;
     $("account").textContent = account || "";
     eligibility(agreed);
+    if (!account) $("signin").focus();
     if (account) {
       const saved = JSON.parse(localStorage.getItem("invoice-draft:" + account) || "null");
       submission = saved?.submission || crypto.randomUUID();

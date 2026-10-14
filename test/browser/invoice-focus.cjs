@@ -119,6 +119,9 @@ const { html, script } = JSON.parse(execFileSync(process.execPath, ['--input-typ
     const oldSessionRead = await begin('oldSessionRead');
     await page.locator('#signout').click();
     await page.locator('#signin').waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'signin', 'sign-out restores a visible keyboard target');
+    assert.equal(await page.locator('#agreements-card').isVisible(), false);
+    assert.equal(await page.locator('#agreements li').count(), 0);
     assert.equal(await page.locator('#invoices li').count(), 0);
     await oldSessionRead.fulfill({ json: response('unknown') });
     await page.evaluate(() => oldSessionRead);
