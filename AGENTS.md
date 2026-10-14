@@ -49,6 +49,13 @@ Files: `src/agent.ts` (dispatch), `authorize.ts`, `lock.ts`, `ops.ts`, `plans.ts
 - An unattended run or freeze may be in progress: ask the user before editing money-path files.
 
 ## Calibrated claims
+
+`evidence/inventory.ts` is the canonical requirement/evidence inventory. The app imports it;
+`pnpm evidence:write` generates the area tables and DEMO verification section. Do not hand-edit
+generated sections. Record dated observations in `docs/mainnet-log.md`, reference them in the
+inventory, then regenerate. README and walkthroughs link to the canonical presentations.
+`pnpm evidence:check` and `pnpm test` reject generated-document drift.
+
 Every sentence in README, DEMO.md and docs states exactly what was shown, and how:
 - Mainnet facts cite evidence: date (UTC), proposal number, deployment id. Op ids, tx hashes, amounts,
   payees and the DAO's caps and budget stay in the private release record, never in tracked docs.
@@ -73,3 +80,5 @@ Every sentence in README, DEMO.md and docs states exactly what was shown, and ho
 - README/DEMO/docs claims match the change (see Calibrated claims).
 - State-format changes ship with a migration that requires a stopped executor and preserves
   `.ops/`, `.invoices/`, `.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`, `.agreements/`, `.notify/`.
+  Additive optional records that need no conversion of existing state (such as run progress) need
+  compatibility tests and preservation instructions, not a directory-creation migration.

@@ -1,7 +1,7 @@
 import { SignIn as SignInIcon, SignOut } from "@phosphor-icons/react";
 import { useState } from "react";
 import { errorMessage, gw } from "./lib";
-import { Button, Card, Spinner } from "./ui";
+import { Button, Card, ErrorBox, Spinner } from "./ui";
 import { type GatewayViewer, useViewer } from "./viewer";
 import { signChallenge, signOutMember } from "./wallet";
 
@@ -65,9 +65,10 @@ export function SignIn({ daos }: { daos: string[] }) {
           a message, not a transaction: nothing is sent on chain.
         </p>
       </div>
-      {error && <p className="text-sm text-destructive-muted-foreground">{error}</p>}
+      <ErrorBox error={error} />
+      <span role="status" className="sr-only">{busy ? "Complete sign-in in your NEAR wallet." : ""}</span>
       <Button className="w-fit" onClick={signIn} disabled={busy}>
-        {busy ? <Spinner /> : <SignInIcon size={16} />} Sign in with NEAR
+        {busy ? <Spinner /> : <SignInIcon size={16} />} {busy ? "Signing in…" : "Sign in with NEAR"}
       </Button>
     </Card>
   );

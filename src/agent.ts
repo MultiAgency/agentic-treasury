@@ -2,7 +2,7 @@ import { createIdempotencyKey, type StatusResponse } from "@near-intents-agent-a
 import { api, waitForStatus } from "./api.js";
 import { agentId, executes } from "./env.js";
 import { assertCanDispatch, assertMoneyLock, type MoneyLock, withMoneyLock } from "./lock.js";
-import { mandateDigest } from "./mandate.js";
+import { mandateDigest, type ReviewedPolicy } from "./mandate.js";
 import { AuthorizationHeld, claimSubmission, isHeld, provenRefusal, readOps, record } from "./ops.js";
 import { authorize, type Case, type Purpose } from "./authorize.js";
 import type { Plan, PlannedAction } from "./plans.js";
@@ -11,6 +11,7 @@ import { invoiceOperations, markInvoiceUnknown } from "./invoice-store.js";
 import { liveGrant } from "./grants.js";
 import { rawBalance } from "./holdings.js";
 import { usdValue } from "./value.js";
+import { refusalDetails } from "./provider-display.js";
 
 /** Every money action runs under the agent's grant, never the owner's key. */
 export function agent() {
@@ -60,7 +61,7 @@ export async function send(action: Action, idempotencyKey: string, lock: MoneyLo
  * A strategy send: a saved plan's leg being sent (`null` for a sweep, which has no plan), whether the
  * autopilot sends it, and the clock it is judged by.
  */
-export type Sending = { planned: { plan: Plan; leg: PlannedAction } | null; autopilot: boolean; now: () => Date };
+export type Sending = { planned: { plan: Plan; leg: PlannedAction } | null; autopilot: boolean; now: () => Date; onSubmitted?: (method: Action["method"], correlationId: string) => void };
 
 /**
  * Sends one money action under the money lock and follows it to a stable status. The request is
@@ -70,8 +71,9 @@ export type Sending = { planned: { plan: Plan; leg: PlannedAction } | null; auto
  * attempt. Anything else unanswered stays unresolved, and blocks new money actions until
  * status-only reconciliation proves its outcome.
  */
-export async function dispatch(lock: MoneyLock, kind: string, action: Action, sending?: Sending, preparedKey?: string): Promise<StatusResponse> {
+export async function dispatch(lock: MoneyLock, kind: string, action: Action, sending?: Sending, preparedKey?: string, expectedPolicy?: ReviewedPolicy): Promise<StatusResponse> {
   action = structuredClone(action);
+  expectedPolicy = expectedPolicy && { ...expectedPolicy };
   // An approve-only instance never sends: refused before anything is recorded, so nothing is left open.
   if (!executes()) throw new Error("This instance only approves: payouts are sent by the agent's executor on its own host");
   if (preparedKey && !invoiceOperations().some((op) => op.idempotencyKey === preparedKey && op.submissionState === "PREPARED"))
@@ -83,6 +85,7 @@ export async function dispatch(lock: MoneyLock, kind: string, action: Action, se
     action.method === "transfer" ? api.getBalances(agentId(), { source: "confidential" }) : undefined,
   ]);
   const { policy, revision } = view;
+  const policyDigest = policy ? mandateDigest(policy) : null;
   const asset = action.method === "swap" ? action.request.origin_asset : action.request.asset;
   const token = tokens.find((t) => t.asset_id === asset);
   const usdIn = token?.price ? usdValue(action.request.amount, token.decimals, token.price) : null;
@@ -98,10 +101,16 @@ export async function dispatch(lock: MoneyLock, kind: string, action: Action, se
     method: action.method,
     request: action.request,
     policyRevision: revision,
-    policyDigest: policy ? mandateDigest(policy) : null,
+    policyDigest,
     usdIn,
     ...(sending?.planned && { planId: sending.planned.plan.id }),
   });
+  // Bind a dashboard confirmation to this dispatch's fresh policy read. This is a local
+  // precondition, not an atomic commitment by the remote provider to this policy snapshot.
+  if (expectedPolicy && (expectedPolicy.revision !== revision || expectedPolicy.digest !== policyDigest)) {
+    record({ idempotencyKey, refused: "reviewed_policy_changed" });
+    throw new LocalRefusal("reviewed_policy_changed", "The policy changed since review. Refresh and review the payment again.");
+  }
   // The provider enforces most of the policy itself; `authorize` refuses what it can't tell apart or
   // doesn't check (what a swap buys, a grant's purpose, a public or duplicate payout, a changed plan).
   const grant = liveGrant(grants, process.env.AGENT_GRANT_TOKEN);
@@ -141,6 +150,9 @@ export async function dispatch(lock: MoneyLock, kind: string, action: Action, se
     throw error;
   }
   record({ idempotencyKey, correlation_id: sent.correlation_id, status: "SENT" });
+  // Observational callback only, after durable acceptance evidence. Never let UI logging alter recovery.
+  try { sending?.onSubmitted?.(action.method, sent.correlation_id); }
+  catch { console.warn("Submission progress unavailable; following the recorded operation."); }
   // Once accepted, even a non-retryable status-read error cannot prove the action was refused.
   const settled = await waitForStatus(sent.correlation_id).catch((cause: unknown) => {
     if (preparedKey) markInvoiceUnknown(preparedKey);
@@ -184,9 +196,12 @@ export class LocalRefusal extends Error {
 }
 
 /** One transfer to a NEAR Intents account. The policy decides whether it may go: a refusal moves nothing. */
-export async function pay(request: { asset: string; amount: string; recipient: string; confidential: boolean }) {
+export async function pay(request: { asset: string; amount: string; recipient: string; confidential: boolean }, expectedPolicy?: ReviewedPolicy) {
+  // Capture before waiting for the money lock; callers cannot alter reviewed terms while queued.
+  request = structuredClone(request);
+  expectedPolicy = expectedPolicy && { ...expectedPolicy };
   try {
-    const settled = await withMoneyLock((lock) => dispatch(lock, "payout", { method: "transfer", request }));
+    const settled = await withMoneyLock((lock) => dispatch(lock, "payout", { method: "transfer", request }, undefined, undefined, expectedPolicy));
     return {
       outcome: "settled" as const,
       status: settled.status,
@@ -196,6 +211,7 @@ export async function pay(request: { asset: string; amount: string; recipient: s
   } catch (error) {
     const code = error instanceof LocalRefusal ? error.code : provenRefusal(error);
     if (!code) throw error;
-    return { outcome: "refused" as const, code };
+    const details = refusalDetails(error);
+    return { outcome: "refused" as const, code, ...(Object.keys(details).length ? { details } : {}) };
   }
 }

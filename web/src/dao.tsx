@@ -7,7 +7,7 @@ import { PrototypeCard } from "./showcase";
 import { ago, clientFor, gw, kindOf, minutesSeconds, useCountdown } from "./lib";
 import { AGENT_NAME, namer } from "./names";
 import { type Gateway, type GatewayAgent, ownersOf, ViewerBadge } from "./session";
-import { Badge, Card, Details, Section, Spinner, type Tone } from "./ui";
+import { Badge, Card, Details, Loading, QueryError, Section, Spinner, type Tone } from "./ui";
 
 /**
  * The hosted dashboard's home: the agents this viewer may see and, for each DAO among their owners,
@@ -161,24 +161,32 @@ function Proposals({ dao }: { dao: string }) {
   );
 }
 
-/** One agent's state, as members may read it: shared by its card and the action queue. */
-const agentQuery = (name: string) => ({
-  queryKey: ["fleet", name],
-  queryFn: async () => {
-    const client = clientFor(`/a/${name}`);
-    const [setup, overview, held, unresolved, autopilot, inbox] = await Promise.all([
-      client.setup(),
-      client.overview(),
-      client.held(),
-      client.unresolved(),
-      client.autopilot.get(),
-      client.inbox.list(),
-    ]);
-    return { setup, overview, held, unresolved, autopilot, inbox };
-  },
-  refetchInterval: 30_000,
-});
-type AgentState = Awaited<ReturnType<ReturnType<typeof agentQuery>["queryFn"]>>;
+/** Independent reads retain useful results when another check fails or is slow. */
+function useFleet(agents: string[]) {
+  const query = <T,>(name: string, read: string, queryFn: () => Promise<T>) => ({
+    queryKey: ["fleet", name, read], queryFn, refetchInterval: 30_000, retry: false,
+  });
+  const setup = useQueries({ queries: agents.map(name => query(name, "setup", () => clientFor(`/a/${name}`).setup())) });
+  const overview = useQueries({ queries: agents.map(name => query(name, "overview", () => clientFor(`/a/${name}`).overview())) });
+  const held = useQueries({ queries: agents.map(name => query(name, "held", () => clientFor(`/a/${name}`).held())) });
+  const unresolved = useQueries({ queries: agents.map(name => query(name, "unresolved", () => clientFor(`/a/${name}`).unresolved())) });
+  const autopilot = useQueries({ queries: agents.map(name => query(name, "autopilot", () => clientFor(`/a/${name}`).autopilot.get())) });
+  const inbox = useQueries({ queries: agents.map(name => query(name, "inbox", () => clientFor(`/a/${name}`).inbox.list())) });
+  return agents.map((name, i) => {
+    const reads = [setup[i]!, overview[i]!, held[i]!, unresolved[i]!, autopilot[i]!, inbox[i]!];
+    const labels = ["agent setup", "policy and balances", "held payouts", "unresolved operations", "autopilot settings", "inbox"];
+    const data = { setup: setup[i]!.data, overview: overview[i]!.data, held: held[i]!.data,
+      unresolved: unresolved[i]!.data, autopilot: autopilot[i]!.data, inbox: inbox[i]!.data };
+    return { name, data, error: reads.find(r => r.error)?.error,
+      incomplete: reads.flatMap((r, index) => r.isPending || r.error ? [labels[index]!] : []),
+      isPending: reads.some(r => r.isPending),
+      dataUpdatedAt: Math.min(...reads.map(r => r.dataUpdatedAt)),
+      complete: reads.every(r => r.data !== undefined),
+      refetch: () => Promise.all(reads.map(r => r.refetch())),
+    };
+  });
+}
+type AgentState = ReturnType<typeof useFleet>[number]["data"];
 
 type Item = Attention & { agent: string };
 
@@ -187,30 +195,25 @@ const itemsOf = (name: string, d: AgentState, nameOf: (account: string) => strin
 
 /** Each agent's wallet by its role, so a payment to the payout agent reads as such, not as 64 hex digits. */
 const namesOf = (states: (AgentState | undefined)[]) =>
-  namer(new Map(states.flatMap((d) => (d?.setup.wallet ? [[d.setup.wallet, AGENT_NAME[kindOf(d.overview) as Kind]] as const] : []))));
+  namer(new Map(states.flatMap((d) => (d?.setup?.wallet && d.overview ? [[d.setup.wallet, AGENT_NAME[kindOf(d.overview) as Kind]] as const] : []))));
 
 function NeedsAttention({ agents }: { agents: string[] }) {
-  const results = useQueries({ queries: agents.map(agentQuery) });
-  const loading = results.some((r) => r.isPending);
-  const failed = agents.filter((_, i) => results[i]?.error);
+  const results = useFleet(agents);
+  const incomplete = results.filter(r => r.incomplete.length > 0);
   const nameOf = namesOf(results.map((r) => r.data));
   const items = agents.flatMap((name, i) => (results[i]?.data ? itemsOf(name, results[i].data, nameOf) : []));
+  if (items.length === 0 && incomplete.length === 0) return null;
   const rank: Record<Tone, number> = { destructive: 0, warning: 1, info: 2, success: 3, neutral: 4 };
   items.sort((a, b) => rank[a.tone] - rank[b.tone]);
   return (
     <Section title="Needs attention" description="What's waiting on a person across the DAO's agents: payouts to approve, the autopilot's questions, and anything stopping an agent from sending.">
       <Card>
-        {loading ? (
-          <Spinner />
-        ) : items.length === 0 && failed.length === 0 ? (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <CheckCircle size={18} /> Nothing is waiting. The agents are working inside their limits.
-          </p>
-        ) : (
-          <ul className="flex flex-col divide-y">
-            {failed.map((name) => (
-              <li key={`failed-${name}`} className="py-3 text-sm text-destructive-muted-foreground first:pt-0 last:pb-0">
-                Couldn't read the {name} agent: it may be down.
+        <ul className="flex flex-col divide-y">
+            {incomplete.map((result) => (
+              <li key={`incomplete-${result.name}`} className="flex flex-col gap-2 py-3 text-sm first:pt-0 last:pb-0">
+                <p className="text-warning-muted-foreground">{result.name}: checks are incomplete ({result.incomplete.join(", ")}). Known items remain below; cached items may be out of date.</p>
+                {result.isPending && <Loading label={`Checking ${result.name}…`} />}
+                {result.error && <QueryError error={result.error} retry={() => void result.refetch()} />}
               </li>
             ))}
             {items.map((item, i) => (
@@ -225,18 +228,17 @@ function NeedsAttention({ agents }: { agents: string[] }) {
               </li>
             ))}
           </ul>
-        )}
       </Card>
     </Section>
   );
 }
 
 /** An agent's state in one line: whether it may act, and what waits on a person. */
-function AgentStatus({ d }: { d: AgentState }) {
+function AgentStatus({ d }: { d: { [K in keyof AgentState]: NonNullable<AgentState[K]> } }) {
   return (
     <div className="flex flex-wrap gap-2">
       <Badge tone={d.overview.notInForce ? "destructive" : "success"}>
-        {d.overview.policy.policy?.frozen ? "Frozen" : d.overview.notInForce ? "Not in force" : "Active"}
+        {d.overview.policy.policy?.frozen ? "Frozen" : d.overview.notInForce ? "Not in force" : "Policy in force"}
       </Badge>
       {d.held.length > 0 && <Badge tone="warning">{d.held.length} held for approval</Badge>}
       {d.unresolved.length > 0 && <Badge tone="destructive">{d.unresolved.length} unresolved</Badge>}
@@ -247,18 +249,33 @@ function AgentStatus({ d }: { d: AgentState }) {
   );
 }
 
-/** The two areas first, each opening its agent's dashboard once that agent has answered. */
+/** Each accessible agent has a stable place, including while its reads are unavailable. */
 function Prototypes({ agents, invoices }: { agents: GatewayAgent[]; invoices: string | null }) {
-  const results = useQueries({ queries: agents.map((a) => agentQuery(a.name)) });
-  const indexOf = (kind: Kind) => agents.findIndex((_, i) => results[i]?.data && kindOf(results[i].data.overview) === kind);
+  const results = useFleet(agents.map(a => a.name));
+  if (!agents.length) return <p className="text-sm text-muted-foreground">No agents are available to this account.</p>;
   return (
     <div className="grid gap-6 lg:grid-cols-2">
-      {(["facilitator", "treasury"] as const).map((kind) => {
-        const i = indexOf(kind);
-        const d = results[i]?.data;
+      {agents.map((agent, index) => {
+        const result = results[index]!;
+        const d = result.data;
+        const state = result.error ? (
+          <div className="flex flex-col gap-2">
+            <p className="text-sm text-warning-muted-foreground">
+              {result.complete ? `Status could not be refreshed. Last read ${new Date(result.dataUpdatedAt).toLocaleString()}.` : `${agent.name} is unavailable: its status could not be read.`}
+            </p>
+            <QueryError error={result.error} retry={() => void result.refetch()} />
+          </div>
+        ) : <Loading label={`Loading ${agent.name}…`} />;
+        if (!d.overview) return (
+          <Card key={agent.name}>
+            <h2 className="font-heading text-2xl font-semibold">{agent.name}</h2>
+            {state}
+            <a href={`/a/${agent.name}/`} className="self-start py-2 text-sm font-medium underline">Open {agent.name} →</a>
+          </Card>
+        );
         return (
-          <PrototypeCard key={kind} kind={kind} open={d ? `/a/${agents[i]!.name}/` : undefined} invoices={invoices}
-            status={d && <AgentStatus d={d} />} />
+          <PrototypeCard compact key={agent.name} kind={kindOf(d.overview)} open={`/a/${agent.name}/`} invoices={invoices}
+            status={result.error || !result.complete ? state : <AgentStatus d={d as { [K in keyof AgentState]: NonNullable<AgentState[K]> }} />} />
         );
       })}
     </div>
@@ -284,8 +301,8 @@ export function DaoHome({ gateway }: { gateway: Gateway }) {
           <ViewerBadge />
         </div>
       </header>
-      <Prototypes agents={agents} invoices={gateway.invoices} />
       <NeedsAttention agents={agents.map((a) => a.name)} />
+      <Prototypes agents={agents} invoices={gateway.invoices} />
       {daos.map((dao) => (
         <Proposals key={dao} dao={dao} />
       ))}

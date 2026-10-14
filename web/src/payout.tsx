@@ -1,9 +1,14 @@
-import { Link } from "@tanstack/react-router";
-import { useState } from "react";
-import { client, type Overview, useAttempt } from "./lib";
+import { Link, type LinkProps } from "@tanstack/react-router";
+import { useEffect, useId, useRef, useState } from "react";
+import { client, fromUnits, toUnits, type Overview, useAttempt } from "./lib";
 import { type Destination, type Setup, useOwnerAction, useSigner } from "./owner";
-import { Badge, input, StatusBadge } from "./ui";
+import { Badge, Button, Details, input, StatusBadge } from "./ui";
+import { Field } from "./form";
+import { useIsOperator } from "./viewer";
 import { refusalText } from "./words";
+import type { ReviewedPolicy } from "../../src/mandate";
+import { reviewedPolicyOf, sameReviewedPolicy } from "./policy-review";
+import { providerDetailText } from "./provider-message";
 
 /** What the agent's transfers share: where it may send, and how a payout is sent and reported. */
 
@@ -24,17 +29,24 @@ function cooldownLeft(data: Overview) {
 /** Owner-signed edits to the destination list, shared by returns and payees. */
 export function useDestinations(data: Overview, setup: Setup) {
   const action = useOwnerAction(setup);
-  const isOwner = useSigner(setup).canSign;
+  const { canSign: isOwner, needsWallet, connectedNotOwner } = useSigner(setup);
+  const ownerAccount = setup.owner?.type === "near" ? ` (${setup.owner.account_id})` : "";
+  const signerHelp = needsWallet
+    ? `Connect the owner’s wallet${ownerAccount} to change agreed payees.`
+    : connectedNotOwner
+      ? `Switch to the owner’s wallet${ownerAccount} to change agreed payees.`
+      : "Only the owner can change the agreed payees.";
   const current = destinationsOf(data);
   const cooldown = cooldownLeft(data);
+  const expectedPolicy = reviewedPolicyOf(data);
   return {
     current,
     action,
-    blocked: !isOwner ? "Only the owner can change the agreed payees." : cooldown ? `The policy can change again in ${cooldown}.` : null,
+    blocked: !isOwner ? signerHelp : !expectedPolicy ? "Refresh the policy before changing payees." : cooldown ? `The policy can change again in ${cooldown}.` : null,
     add: (destination: Destination) =>
-      action.run({ type: "policy_update", changes: { destinations: [...current, destination] } }),
+      expectedPolicy ? action.run({ type: "policy_update", changes: { destinations: [...current, destination] }, expectedPolicy }) : Promise.resolve(false),
     remove: (address: string) =>
-      action.run({ type: "policy_update", changes: { destinations: current.filter((d) => d.address !== address) } }),
+      expectedPolicy ? action.run({ type: "policy_update", changes: { destinations: current.filter((d) => d.address !== address) }, expectedPolicy }) : Promise.resolve(false),
   };
 }
 
@@ -53,19 +65,105 @@ export function usePayout() {
   };
 }
 
-export function PayoutResult({ result }: { result?: Awaited<ReturnType<typeof client.pay>> }) {
-  if (!result) return null;
-  return result.outcome === "refused" ? (
-    <Badge tone="warning">
-      <span title={result.code}>Refused · {refusalText(result.code)}</span>
-    </Badge>
-  ) : result.status === "PENDING_APPROVAL" ? (
-    <Link to="/">
-      <Badge tone="info">Held for the owner's approval · approve on Overview</Badge>
-    </Link>
-  ) : (
-    <StatusBadge status={result.status} failureCode={result.failureCode} />
-  );
+/** Navigation only: a refusal never creates a replacement payment or changes authorization. */
+const REFUSAL_ACTIONS: Record<string, { to: LinkProps["to"]; hash?: string; label: string }> = {
+  grant_missing: { to: "/policy", hash: "grants", label: "Review the grant" },
+  grant_purpose_denied: { to: "/policy", hash: "grants", label: "Review the grant" },
+  insufficient_balance: { to: "/funding", label: "Review funding" },
+  duplicate_held_payout: { to: "/", label: "Review the existing held payout" },
+  payee_not_agreed: { to: "/policy", label: "Review policy payees" },
+  policy_destination_denied: { to: "/policy", label: "Review policy payees" },
+  policy_not_in_force: { to: "/policy", label: "Review the policy" },
+  spend_budget_exceeded: { to: "/policy", label: "Review the policy budget" },
+  per_transaction_exceeded: { to: "/policy", label: "Review the payment cap" },
+};
+
+export function PayoutResult({ result, agentBase }: {
+  result?: Awaited<ReturnType<typeof client.pay>>;
+  /** A top-up belongs to the treasury agent, even when initiated from Payables. */
+  agentBase?: string;
+}) {
+  const action = result?.outcome === "refused" ? REFUSAL_ACTIONS[result.code] ?? { to: "/activity" as const, label: "Review the refusal in Activity" } : undefined;
+  const link = ({ to, hash, label }: { to: LinkProps["to"]; hash?: string; label: string }) => agentBase === undefined
+    ? <Link to={to} hash={hash} className="break-words underline">{label}</Link>
+    : <a href={`${agentBase}${to}${hash ? `#${hash}` : ""}`} className="break-words underline">{label}</a>;
+  return <div role="status" aria-atomic="true" className="min-w-0 max-w-full text-sm">
+    {result && (result.outcome === "refused" ? (
+      <div className="flex flex-col items-start gap-2">
+        <p className="break-words text-warning-muted-foreground">Refused · {refusalText(result.code)}</p>
+        {result.details && <p className="break-words text-muted-foreground">{providerDetailText(result.details)}</p>}
+        {action && link(action)}
+        <Details summary="Refusal code"><code className="break-all">{result.code}</code></Details>
+      </div>
+    ) : result.status === "PENDING_APPROVAL" ? (
+      <div className="flex flex-col items-start gap-2">
+        <Badge tone="info">Held payout</Badge>
+        {link({ to: "/", label: "Awaiting the owner's approval. Review Payments on Overview." })}
+      </div>
+    ) : <div className="flex flex-col items-start gap-2">
+      <StatusBadge status={result.status} failureCode={result.failureCode} />
+      {result.status !== "SUCCESS" && link({ to: "/activity", label: "Review the existing operation before any replacement" })}
+    </div>)}
+  </div>;
+}
+
+export type PaymentReviewData = {
+  request: Omit<Parameters<typeof client.pay>[0], "expectedPolicy">;
+  expectedPolicy: ReviewedPolicy | undefined;
+  symbol: string;
+  decimals: number;
+  ownerApproval: boolean | undefined;
+};
+
+/** Review an immutable snapshot. Opening, cancelling and Escape never submit a payment. */
+export function PaymentReview({ payment, currentPolicy, permitted, onClose, onConfirm }: {
+  payment: PaymentReviewData;
+  currentPolicy: ReviewedPolicy | undefined;
+  /** Cross-agent funding uses the target agent's operator permission. */
+  permitted?: boolean;
+  onClose: () => void;
+  onConfirm: (request: Parameters<typeof client.pay>[0]) => void;
+}) {
+  const id = useId();
+  const dialog = useRef<HTMLDialogElement>(null);
+  const submitted = useRef(false);
+  const operator = useIsOperator();
+  const allowed = permitted ?? operator;
+  const stale = !sameReviewedPolicy(payment.expectedPolicy, currentPolicy);
+  useEffect(() => {
+    const trigger = document.activeElement as HTMLElement | null;
+    const modal = dialog.current!;
+    modal.showModal();
+    modal.querySelector<HTMLButtonElement>("button")?.focus();
+    return () => { modal.close(); if (trigger?.isConnected) trigger.focus(); };
+  }, []);
+  const { request } = payment;
+  return <dialog ref={dialog} aria-labelledby={`${id}-title`} aria-describedby={`${id}-description`}
+    onCancel={(e) => { e.preventDefault(); onClose(); }}
+    className="m-auto max-h-[90dvh] overflow-y-auto overscroll-contain w-[calc(100%-2rem)] max-w-md rounded-3xl border bg-card p-6 text-foreground shadow-xl backdrop:bg-black/40">
+    <div className="flex min-w-0 flex-col gap-5">
+      <h2 id={`${id}-title`} className="text-xl font-semibold">Review payment</h2>
+      <p id={`${id}-description`} className="text-sm text-muted-foreground">Confirming submits this payment on mainnet under the agent's grant. The server and provider re-check authorization.</p>
+      <dl className="flex flex-col gap-3 text-sm">
+        <div><dt className="text-muted-foreground">Recipient</dt><dd className="break-all font-mono">{request.recipient}</dd></div>
+        <div><dt className="text-muted-foreground">Amount</dt><dd className="break-all font-mono">{fromUnits(request.amount, payment.decimals)} {payment.symbol}</dd></div>
+        <div><dt className="text-muted-foreground">Asset</dt><dd className="break-all font-mono">{request.asset}</dd></div>
+        <div><dt className="text-muted-foreground">Destination</dt><dd>{request.confidential ? "Confidential balance" : "Public balance"}</dd></div>
+        <div><dt className="text-muted-foreground">Owner approval</dt><dd>{payment.ownerApproval === undefined ? "Unavailable. Refresh the current policy before sending." : payment.ownerApproval ? "Required by the reviewed policy." : "Not required by the reviewed policy; funds may move immediately."}</dd></div>
+      </dl>
+      <p className="text-sm text-muted-foreground">The server refuses a changed policy at its final check. A later provider-side change can still affect approval; check the recorded outcome.</p>
+      <p role="alert" className={stale ? "text-sm text-destructive-muted-foreground" : "sr-only"}>{stale ? "The policy changed, is unavailable, or is not in force. Cancel and review this payment again using the current policy." : ""}</p>
+      <div className="flex flex-wrap justify-end gap-3">
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button disabled={!allowed || stale || payment.ownerApproval === undefined} onClick={() => {
+          if (!allowed || stale || !payment.expectedPolicy || payment.ownerApproval === undefined || submitted.current) return;
+          submitted.current = true;
+          onClose();
+          onConfirm({ ...request, expectedPolicy: payment.expectedPolicy });
+        }}>Send payment</Button>
+      </div>
+    </div>
+  </dialog>;
 }
 
 export function AssetAmount({
@@ -74,23 +172,32 @@ export function AssetAmount({
   setAsset,
   value,
   setValue,
+  submitted = false,
 }: {
   book: Overview["book"];
   asset: string;
   setAsset: (asset: string) => void;
   value: string;
   setValue: (value: string) => void;
+  submitted?: boolean;
 }) {
+  const holding = book.find((h) => h.asset === asset);
+  const invalid = (submitted || Boolean(value)) && (!holding || !toUnits(value, holding.decimals));
   return (
     <>
-      <input className={`${input} w-36`} inputMode="decimal" placeholder="Amount" value={value} onChange={(e) => setValue(e.target.value)} />
-      <select className={`${input} pr-8`} value={asset} onChange={(e) => setAsset(e.target.value)}>
+      <Field label="Amount" name="amount" autoComplete="off" className="w-36" inputMode="decimal" placeholder="Amount" value={value} onChange={(e) => setValue(e.target.value)}
+        error={invalid ? `Enter an amount greater than zero, with up to ${holding?.decimals ?? 0} decimal places.` : undefined} />
+      {book.length === 1 && holding ? <div className="flex flex-col gap-1 text-sm">
+        <span className="text-muted-foreground">Asset</span><span className="flex h-11 items-center">{holding.symbol}</span>
+      </div> : <label className="flex min-w-0 max-w-full flex-col gap-1 text-sm"><span className="text-muted-foreground">Asset</span>
+      <select name="asset" className={`${input} max-w-full pr-8`} value={asset} onChange={(e) => setAsset(e.target.value)}>
         {book.map((h) => (
           <option key={h.asset} value={h.asset}>
             {h.symbol}
           </option>
         ))}
       </select>
+      </label>}
     </>
   );
 }

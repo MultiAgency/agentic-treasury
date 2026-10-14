@@ -9,71 +9,141 @@ funds stay in the confidential balance. Mainnet: `agentic.sputnik-dao.near`'s tr
 Every requirement is one of its brief's use cases or outcomes in the Agent Connect experiment catalog, in
 the catalog's words where they fit, split where the catalog mixes two kinds:
 
-- A **capability** is what the agent does (rebalances, pays an invoice).
-- A **guarantee** is what it can't do (pay an unagreed payee, exceed the budget), and says who stops a
+- A **capability target** describes intended behavior (rebalances, pays an invoice).
+- A **safety target** describes an intended constraint (pay an unagreed payee, exceed the budget), and identifies the control or limitation for a
   misbehaving agent: **the signed policy** (the provider refuses under the policy the owner signed, or the
   chain does, as with a DAO's vote), **our server** (only this repo's code holds it, so a user has to
   trust it), **not possible** (nobody can enforce it here), or **nothing yet**.
 
-Every row says how it's known: **held on mainnet** (a guarantee) or **working on mainnet** (a capability),
+Every row says how it's known: **observed on mainnet**,
 a dated observation with real funds, on this area's own agent or on another (the other area's, or an
-isolated test agent), and the row says which; **tested offline**; or **not yet**. The provider and its
+isolated test agent), and the row says which; **tested offline**; **per pinned provider source, with deployed behavior unverified**; or **not yet**. The provider and its
 custody are still trusted; [enforcement](enforcement.md) sets out how far, and what isn't established.
 
-Each card shows two counts for its running brief, guarantees first: how many guarantees the signed
-policy enforces, and how many requirements are on mainnet (on this agent, on another). Roadmap briefs
-aren't counted. The signed-out page and the dashboard show the same rows (`web/src/beats.ts`): a row
-changes here first, then there.
+The app shows only this area's running brief. Public and compact signed-in cards always show its
+evidence coverage by observation scope and its known limitations, without a completion score.
+Mainnet observations do not establish every guarantee. Public cards also show its capability and safety targets,
+controls and evidence stages; members follow **Inspect evidence and limitations** on Overview
+for the same requirements with their evidence. Roadmap briefs remain below for planning and are
+not displayed in the app. Both presentations use the [canonical inventory](../evidence/inventory.ts).
+The tables below are generated; edit the inventory and run `pnpm evidence:write`.
+`pnpm test` rejects drift.
+These layout changes are prepared locally; see DEMO.md for the last verified deployment.
+
+<!-- BEGIN GENERATED: requirements -->
+<!-- Generated from evidence/inventory.ts. Run pnpm evidence:write; do not edit here. -->
 
 ## 02 Agentic Treasury Management
 
-| Type | Requirement | Who stops it | How it's known | Evidence |
+These are catalog targets, not established guarantees. Evidence stages describe the supporting observations or tests; known limitations still apply.
+
+| Type | Requirement | Control or limitation | Evidence stage | Evidence |
 |---|---|---|---|---|
-| Capability | Rebalances to target allocations on a schedule | — | Working on mainnet | The autopilot executed a rebalance alone, its plan bound to the strategy digest, 2026-10-12 16:17Z (`test/autopilot.test.ts`, `test/rebalance.test.ts`) |
-| Guarantee | Can't exceed per-asset limits | The signed policy | Held on mainnet | The policy caps every asset per transaction, hour, day and month. On the treasury agent, a transfer over its hourly cap was refused with `policy_denied` (policy revision 8, 2026-10-11); a swap over the monthly cap was refused on an isolated test agent, 2026-10-13 |
-| Capability | Quotes every route before executing | — | Working on mainnet | Two quoted legs executed on the treasury agent, 2026-10-12 20:36Z (`test/rebalance.test.ts`, `test/plans.test.ts`) |
-| Capability | Shows budget headroom ticking down with each dispatch | — | Working on mainnet | On the treasury agent, a Run now swap took the daily budget left down by its value, shown as before and after under Automations' Latest run, 2026-10-14 00:50Z. The Overview and each run show the window with least left (`test/budget-window.test.ts`) |
-| Guarantee | A rebalance over the budget is refused before anything moves | The signed policy | Held on mainnet | Refused with `spend_budget_exceeded`, nothing moved, on the treasury agent, 2026-10-12 13:57Z and 14:06Z |
-| Guarantee | Can't spend more than the USD budget, even with simultaneous requests | The signed policy | Held on mainnet, on another agent | Five simultaneous swaps on an isolated test agent: one settled, the rest refused, no overshoot, 2026-10-13 (one trial) |
-| Capability | Sweeps idle stables into the confidential balance | — | Working on mainnet | A small USDC deposit to a public deposit address landed in the treasury agent's public balance; the dashboard's Sweep (the same sweep the autopilot runs each tick) shielded it, and nothing was left public, 2026-10-14 00:33Z to 00:39Z (`test/autopilot.test.ts`) |
-| Guarantee | The resting position can't be traced on chain | Our server | Held on mainnet | No public NEAR Intents balance on chain and all three assets confidential, read-only check, 2026-10-13T23:03Z. Kept so by our deposits' and swaps' requests: the policy allows public swaps and unshield (`docs/enforcement.md`). Funds still can't leave: the destination list is empty |
+| Capability target | Rebalances to target allocations on a schedule | — | Observed on mainnet | The autopilot executed a rebalance alone, its plan bound to the strategy digest, 2026-10-12 16:17Z (test/autopilot.test.ts, test/rebalance.test.ts) |
+| Safety target | Can't exceed per-asset limits | The signed policy | Observed on mainnet | The policy caps every asset per transaction, hour, day and month. On the treasury agent, a transfer over its hourly cap was refused with policy_denied (policy revision 8, 2026-10-11); a swap over the monthly cap was refused on an isolated test agent, 2026-10-13 |
+| Capability target | Quotes every route before executing | — | Observed on mainnet | Two quoted legs executed on the treasury agent, 2026-10-12 20:36Z (test/rebalance.test.ts, test/plans.test.ts) |
+| Capability target | Shows budget headroom ticking down with each dispatch | — | Observed on mainnet | On the treasury agent, a Run now swap took the daily budget left down by its value, shown as before and after under Automations' Latest run, 2026-10-14 00:50Z. The Overview and each run show the window with least left (test/budget-window.test.ts) |
+| Safety target | A rebalance over the budget is refused before anything moves | The signed policy | Observed on mainnet | Refused with spend_budget_exceeded, nothing moved, on the treasury agent, 2026-10-12 13:57Z and 14:06Z |
+| Safety target | Can't spend more than the USD budget, even with simultaneous requests | The signed policy | Observed on mainnet, on another agent | Five simultaneous swaps on an isolated test agent: one settled, the rest refused, no overshoot, 2026-10-13 (one trial) |
+| Capability target | Sweeps idle stables into the confidential balance | — | Observed on mainnet | A small USDC deposit to a public deposit address landed in the treasury agent's public balance; the dashboard's Sweep (the same sweep the autopilot runs each tick) shielded it, and nothing was left public, 2026-10-14 00:33Z to 00:39Z (test/autopilot.test.ts) |
+| Safety target | The resting position can't be traced on chain | Our server | Observed on mainnet | No public NEAR Intents balance on chain and all three assets confidential, read-only check, 2026-10-13T23:03Z. Kept so by our deposits' and swaps' requests: the policy allows public swaps and unshield (docs/enforcement.md). Funds still can't leave: the destination list is empty |
+
+### Known limitations
+
+- Whether simultaneous requests can exceed asset limits or the USD budget remains unverified.
+- This server checks which assets can be bought; the provider does not.
+- This server requests confidential swaps, but the policy also permits public swaps and unshielding. A confidential balance does not establish protection against every form of tracing.
+- The agent has not yet run unattended for days.
 
 ## 09 Adaptive DCA (roadmap)
 
-| Type | Requirement | Who stops it | How it's known | Evidence |
+These are catalog targets, not established guarantees. Evidence stages describe the supporting observations or tests; known limitations still apply.
+
+| Type | Requirement | Control or limitation | Evidence stage | Evidence |
 |---|---|---|---|---|
-| Capability | Daily buys of listed tokens, sized between a floor and a cap by a signal | — | Not yet | Not built: the strategy is a target allocation |
-| Capability | Pauses on a cold streak or regime change | — | Not yet | Not built |
-| Guarantee | A token outside the list can't be bought | Our server | Tested offline | The provider checks only the asset a swap spends; our server refuses buying an unlisted one (`test/authorize.test.ts`). A swap into an unlisted asset succeeded through the API directly, 2026-10-10 |
-| Guarantee | A buy can't exceed the per-cycle cap | The signed policy | Not yet | The policy's per-transaction and hourly caps would stop it; DCA isn't built |
+| Capability target | Daily buys of listed tokens, sized between a floor and a cap by a signal | — | Not yet | Not built: the strategy is a target allocation |
+| Capability target | Pauses on a cold streak or regime change | — | Not yet | Not built |
+| Safety target | A token outside the list can't be bought | Our server | Tested offline | The provider checks only the asset a swap spends; our server refuses buying an unlisted one (test/authorize.test.ts). A swap into an unlisted asset succeeded through the API directly, 2026-10-10 |
+| Safety target | A buy can't exceed the per-cycle cap | The signed policy | Not yet | The policy's per-transaction and hourly caps would stop it; DCA isn't built |
 
 ## 18 House Money (roadmap)
 
-| Type | Requirement | Who stops it | How it's known | Evidence |
+These are catalog targets, not established guarantees. Evidence stages describe the supporting observations or tests; known limitations still apply.
+
+| Type | Requirement | Control or limitation | Evidence stage | Evidence |
 |---|---|---|---|---|
-| Capability | The principal moves to a safe account once gains cover it, exactly once | — | Not yet | Not built: the treasury agent's policy lets no funds leave |
-| Guarantee | Drawdowns can't touch the banked principal | Nothing yet | Not yet | Not built |
-| Guarantee | Nothing comes back from the safe account | Nothing yet | Not yet | Not built |
+| Capability target | The principal moves to a safe account once gains cover it, exactly once | — | Not yet | Not built: the treasury agent's policy lets no funds leave |
+| Safety target | Drawdowns can't touch the banked principal | Nothing yet | Not yet | Not built |
+| Safety target | Nothing comes back from the safe account | Nothing yet | Not yet | Not built |
 
 ## 08 Bitcoin treasury (roadmap)
 
-| Type | Requirement | Who stops it | How it's known | Evidence |
+These are catalog targets, not established guarantees. Evidence stages describe the supporting observations or tests; known limitations still apply.
+
+| Type | Requirement | Control or limitation | Evidence stage | Evidence |
 |---|---|---|---|---|
-| Capability | Inbound BTC lands in a public checking balance from any sender | — | Not yet | Not built: no BTC asset, and deposits land confidential |
-| Capability | One-time deposit addresses with refund destinations, reconciled from provider records | — | Not yet | Partly built: one-time deposit addresses and reconciliation from the provider's history exist; no refund destinations |
-| Capability | A scheduled sweep to the confidential treasury, within a cap and a delay | — | Not yet | Partly built: every tick shields public balances; no separate treasury and no delay |
-| Guarantee | An oversized sweep is refused at the per-transaction cap | The signed policy | Not yet | The policy caps each transaction; not shown for a sweep |
-| Capability | The owner can cancel a sweep during the veto window | — | Not yet | Not built: needs the provider's timelock tested on mainnet first |
+| Capability target | Inbound BTC lands in a public checking balance from any sender | — | Not yet | Not built: no BTC asset, and deposits land confidential |
+| Capability target | One-time deposit addresses with refund destinations, reconciled from provider records | — | Not yet | Partly built: one-time deposit addresses and reconciliation from the provider's history exist; no refund destinations |
+| Capability target | A scheduled sweep to the confidential treasury, within a cap and a delay | — | Not yet | Partly built: every tick shields public balances; no separate treasury and no delay |
+| Safety target | An oversized sweep is refused at the per-transaction cap | The signed policy | Not yet | The policy caps each transaction; not shown for a sweep |
+| Capability target | The owner can cancel a sweep during the veto window | — | Not yet | Not built: needs the provider's timelock tested on mainnet first |
+
+<!-- END GENERATED: requirements -->
 
 ## Gaps
 
 - Not listed above: the catalog's "unshielding exactly what a payout needs". Payouts are confidential
   transfers between confidential balances, so the treasury keeps no public reserve; a payee who can't
   receive confidentially would need a public payout, not built ([enforcement](enforcement.md)).
-- What a swap buys is checked by this server, not by the provider; strict cumulative per-asset
-  limits and USD-budget atomicity are unproven ([enforcement](enforcement.md)).
-- The autopilot hasn't run unattended for days. Outside the dashboard, its warnings reach the owner
-  only through the optional Telegram notices (README **Notifications**).
+- The running brief’s [known limitations](#known-limitations) cover enforcement and unattended
+  operation. See [enforcement](enforcement.md) for the supporting assessment; outside the dashboard,
+  warnings reach the owner through optional Telegram notices (README **Notifications**).
+
+## Run-log adapter and export (offline-tested)
+
+`src/agui.ts` projects a tick and its agent-scoped journal history into a private recording, validated
+against the pinned `@ag-ui/core` 1.0.2 event schemas. Historical recordings use envelope version 1;
+new ticks with intermediate progress use version 2. Both are readable.
+It imports evidence types only and makes no provider calls, writes, or money decisions.
+`src/journal-history.ts` reads a bounded snapshot of the existing JSONL journal without changing it;
+malformed lines and unavailable history appear as gaps. Only explicit fields enter the recording,
+with asset display data labelled by its supplied observation date.
+
+The adapter preserves the outcome recorded at tick end. Later journal observations appear separately;
+provider `FAILED` is still a provider observation, not independent proof of nonpayment. Journal
+timestamps describe local recordings, not provider execution times. Stage durations are not invented,
+and a historical tick without an end produces only its recorded start. New ticks add recorded
+stage transitions and provider-accepted submissions before their end, via a supplementary progress
+file. The before/after books and quoted plan still become available at tick end.
+See [integrated run updates](live-run.md) for the offline-tested behavior and limits.
+
+`test/agui.test.ts` and `test/journal-history.test.ts` cover synthetic success, refusal, partial and
+unresolved execution, interrupted ticks, late reconciliation, missing timing, conflicting operation
+associations, schema validation and read-only file access. No real recording has been validated by
+this change. The dashboard continues using its existing timeline reads for current status. Its
+optional **Inspect recording** view steps through historical observations with a selector and
+Previous/Next controls, without timed playback or a live stream. It shows missing timing and source
+gaps, and keeps later journal observations separate from the run's original outcome. It cannot
+replay or authorize an operation. `test/recording-view.test.ts` checks version, identity, size and
+completion semantics. `test/browser/simplicity.cjs` checks synthetic recordings at 320px, 390px and
+1280px with all requests intercepted, including identity refusal and separate later settlement.
+These are offline checks, not verification of a deployed inspector or a real recording.
+
+Members can download a recording from the executor using `autopilot.log({ tickId? })`: the selected
+tick, or the latest recorded tick when no ID is supplied. The server scopes the read to its configured
+agent, and the gateway checks per-agent membership before forwarding it. Export responses carry
+`Cache-Control: private, no-store`. The endpoint rejects missing ticks, invalid or duplicate selected
+records, and evidence files over 8 MB or the line limit; it never substitutes the latest tick for a
+missing selected ID. Approve-only hosts refuse export. Current token metadata is optional display
+enrichment, dated at export, and failure leaves explicit gaps rather than changing historical amounts.
+`test/run-log-export.test.ts` and `test/gateway-denial.test.ts` exercise these behaviors offline.
+
+To save a private recording, choose **View treasury runs** on Treasury's Overview, then
+**Inspect recording** and **Download recording**. Automations links to the same full run view. **Run to view** lists
+retained runs, including quiet runs. The download requests that run's exact ID and saves a JSON file locally;
+keep real files in `~/agencies/proto-releases`, never the repository or public assets. A tick without
+a recorded end downloads as incomplete, containing its known start and any recorded intermediate events. Downloading does not run or
+reconcile a tick. The browser download flow has been built, but has not been checked on a deployed host.
 
 ## Next (planned, not built)
 
@@ -82,3 +152,29 @@ changes here first, then there.
   veto on every autopilot swap. Needs its own money-path design first: today a queued execution
   counts as unresolved and blocks new sends, and provider timelocks are held because their
   release-time checks aren't established ([architecture](architecture.md#how-the-money-path-stays-safe-on-one-host)).
+
+
+## Strategy setup in the dashboard (offline-tested)
+
+Automations shows the saved Treasury strategy, with swap limits on demand. An operator on the
+executor edits allocations, schedule and ceiling, reviews them, and saves with the schedule off.
+Saving needs no existing grant. A stale save preserves the draft and requires comparing the current
+strategy before reviewing again. The owner then reviews the exact saved strategy and issues its
+digest-bound grant through the existing wallet or DAO flow. Prepared/submitted owner actions remain
+accessible in Activity; a grant outcome is neither schedule enablement nor payment settlement.
+A matching live grant can be reused or renewed before expiry through **Review grant renewal**,
+with the schedule off and the same saved strategy digest. Renewal uses the existing owner-signature
+flow; it requires no strategy edit or prior grant revocation and does not enable the schedule.
+An operator explicitly enables the saved strategy afterward.
+
+Server controls serialize dashboard saves and schedule changes on this host, persist off before
+strategy replacement, reject stale digests, and check policy, held grant and unresolved operations
+before enabling. Stop writes only the schedule flag and remains available during failed provider
+reads. The old settings endpoint cannot combine settings changes and enablement. Approve-only
+instances cannot configure strategies; Payables has no Treasury setup and retains stop for an
+existing schedule. No state format migration is required.
+
+`test/strategy-controls.test.ts` and `test/browser/schedule.cjs` cover server refusal/failure paths
+and synthetic wallet/DAO workflows. This is offline-tested behavior, not deployed or mainnet-observed.
+Dispatch still authorizes every operation; the settings lock is not distributed fencing and does not
+coordinate manual file edits or make provider observations atomic with subsequent sends.

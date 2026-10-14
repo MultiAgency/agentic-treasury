@@ -9,16 +9,17 @@ import {
   UsersThree,
 } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, type LinkProps, Outlet, useMatchRoute } from "@tanstack/react-router";
-import { createContext, type ReactNode, useContext, useEffect, useId } from "react";
-import { BASE, client, kindOf, type Overview } from "./lib";
+import { Link, type LinkProps, Outlet, useLocation, useMatchRoute } from "@tanstack/react-router";
+import { createContext, type ReactNode, useContext, useEffect, useId, useRef, useState } from "react";
+import { client, kindOf, type Overview } from "./lib";
 import { type Kind, PROTOTYPES } from "./beats";
 import { ViewerBadge } from "./session";
 import { useViewer } from "./viewer";
 import { Onboarding } from "./onboarding";
 import { ownerName, type Setup, WalletButton } from "./owner";
 import type { Treasury } from "./treasury";
-import { Badge, Button, Details, Spinner } from "./ui";
+import { Badge, Button, Details, QueryError, Spinner } from "./ui";
+import { RecoveryActivity } from "./activity";
 
 /** What every screen works from once onboarding is done. */
 type Agent = { setup: Setup; data: Overview; treasury: Treasury | null };
@@ -55,10 +56,10 @@ const NAV: Record<Kind, { to: LinkProps["to"]; label: string; icon: Icon }[]> = 
 /**
  * Pages an agent shows that aren't in its menu, opened from its Overview instead. A payout agent's
  * Automations holds only Sweep and the autopilot, reached from the attention items that need them.
- * The timelines follow one held payment (from Held payouts) or the latest autopilot run. The treasury's
+ * The timelines show the payout agent's payments (also under Payments on its Overview) or the latest autopilot run. The treasury's
  * Steward is an experiment, reached only by its address.
  */
-const OFF_NAV: Record<Kind, LinkProps["to"][]> = { facilitator: ["/automations", "/follow/payment"], treasury: ["/follow/run", "/steward"] };
+const OFF_NAV: Record<Kind, LinkProps["to"][]> = { facilitator: ["/automations", "/follow/payment"], treasury: ["/follow/run", "/follow/payment", "/steward"] };
 
 /** The mark, drawn as the favicon is (web/rsbuild.config.ts): a safe in the logo blue, a tick cut from its dial. */
 function Logo() {
@@ -83,7 +84,7 @@ function Brand({ data }: { data?: Overview }) {
   return (
     <div className="flex items-center gap-3">
       <Logo />
-      <span className="hidden font-heading text-lg leading-tight font-semibold sm:inline">{data ? PROTOTYPES[kindOf(data)].name : "Agentic Treasury"}</span>
+      <span className="font-heading text-lg leading-tight font-semibold">{data ? PROTOTYPES[kindOf(data)].name : "Agentic Treasury"}</span>
     </div>
   );
 }
@@ -91,7 +92,7 @@ function Brand({ data }: { data?: Overview }) {
 function Nav({ className, data }: { className: string; data?: Overview }) {
   return (
     <nav className={className}>
-      {(data ? NAV[kindOf(data)] : NAV.treasury.slice(0, 1)).map(({ to, label, icon: Icon }) => (
+      {(data ? NAV[kindOf(data)] : NAV.treasury.filter(item => item.to === "/" || item.to === "/activity")).map(({ to, label, icon: Icon }) => (
         <Link
           key={to}
           to={to}
@@ -124,7 +125,7 @@ function Identity({ setup, data }: { setup: Setup; data: Overview }) {
         </span>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Badge tone={data.notInForce ? "destructive" : "success"}>{frozen ? "Frozen" : data.notInForce ? "Not in force" : "Active"}</Badge>
+        <Badge tone={data.notInForce ? "destructive" : "success"}>{frozen ? "Frozen" : data.notInForce ? "Not in force" : "Policy in force"}</Badge>
       </div>
       <Details summary="Identifiers">
         {ids.map(([label, value]) => (
@@ -160,12 +161,26 @@ function Page({ data }: { data: Overview }) {
 
 /**
  * The command center's frame: navigation, the agent's identity and the shared queries. Until the
- * agent exists and this server holds a grant for it, onboarding is the only screen.
+ * agent exists, onboarding is the only screen. Missing grants must not hide existing records.
  */
 export function Shell() {
   const viewer = useViewer();
-  const setup = useQuery({ queryKey: ["setup"], queryFn: () => client.setup() });
-  const ready = Boolean(setup.data?.agentId && setup.data.grant);
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const previousPath = useRef(pathname);
+  useEffect(() => {
+    if (previousPath.current !== pathname) {
+      previousPath.current = pathname;
+      document.getElementById("agent-main")?.focus();
+    }
+  }, [pathname]);
+  const setup = useQuery({ queryKey: ["setup"], queryFn: () => client.setup(), retry: false });
+  // Keep records mounted while an explicit retry has no setup result yet.
+  const [setupRecovery, setSetupRecovery] = useState(false);
+  useEffect(() => {
+    if (setup.isError) setSetupRecovery(true);
+    else if (setup.isSuccess) setSetupRecovery(false);
+  }, [setup.isError, setup.isSuccess]);
+  const ready = Boolean(setup.data?.agentId) && !setup.error && !setupRecovery;
   const overview = useQuery({
     queryKey: ["overview"],
     queryFn: () => client.overview(),
@@ -179,23 +194,25 @@ export function Shell() {
     if (name) document.title = name;
   }, [name]);
 
-  if (error)
+  if (setup.error || setupRecovery)
     return (
-      <div className="m-8 flex flex-col items-start gap-4 rounded-2xl bg-destructive-muted p-6 text-sm text-destructive-muted-foreground">
-        <p>
-          Couldn't reach this agent: {error.message}.
-          {/* Served by a local agent server, the likely cause is that it isn't running. */}
-          {!BASE && (
-            <>
-              {" "}
-              Is <code>pnpm server</code> running?
-            </>
-          )}
-        </p>
-        <Button variant="outline" size="sm" onClick={() => location.reload()}>
-          <ArrowClockwise size={16} /> Retry
-        </Button>
-      </div>
+      <main id="agent-main" tabIndex={-1} className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-10 sm:px-8">
+        <Brand />
+        <Nav className="flex flex-wrap gap-2" />
+        <h1 className="text-2xl font-semibold">Agent recovery</h1>
+        <div className="flex flex-col items-start gap-3 rounded-2xl bg-destructive-muted p-6 text-sm text-destructive-muted-foreground">
+          <p role="alert">Setup unavailable</p>
+          <p>Retained records can still be reviewed when access is authorized. Setup, balances, policy and grant status are not confirmed here.</p>
+          {setup.error && <p>{setup.error.message}</p>}
+          <Button variant="outline" size="sm" disabled={setup.isFetching} onClick={() => setup.refetch()}>
+            {setup.isFetching ? <Spinner /> : <ArrowClockwise size={16} />}
+            {setup.isFetching ? "Retrying setup…" : "Retry setup"}
+          </Button>
+        </div>
+        {pathname.replace(/\/$/, "").endsWith("/activity") ? <RecoveryActivity /> : (
+          <Link to="/activity" className="underline">Review existing records in Activity</Link>
+        )}
+      </main>
     );
   if (!setup.data)
     return (
@@ -222,6 +239,7 @@ export function Shell() {
 
   return (
     <div className="lg:grid lg:min-h-screen lg:grid-cols-[16rem_1fr]">
+      <a href="#agent-main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-lg focus:bg-background focus:p-3">Skip to main content</a>
       <aside className="hidden flex-col gap-8 border-r px-4 py-8 lg:sticky lg:top-0 lg:flex lg:h-screen">
         <div className="px-4">
           <Brand data={overview.data} />
@@ -243,24 +261,32 @@ export function Shell() {
       </aside>
 
       <header className="sticky top-0 z-10 flex flex-col gap-3 border-b bg-background/90 px-4 pt-4 backdrop-blur lg:hidden">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <Brand data={overview.data} />
           <div className="flex items-center gap-2">
             {refresh}
             <WalletButton />
           </div>
         </div>
+        <Details summary="Account and agents">
+          {viewer && <a href="/" className="text-sm underline">← All agents</a>}
+          {overview.data && <Identity setup={setup.data} data={overview.data} />}
+          <ViewerBadge />
+        </Details>
         <Nav className="-mx-4 flex gap-1 overflow-x-auto px-4 pb-3" data={overview.data} />
       </header>
 
-      <main className="mx-auto flex w-full max-w-5xl flex-col gap-14 px-4 py-10 sm:px-8 lg:py-12">
-        {overview.data && treasury.isSuccess ? (
+      <main id="agent-main" tabIndex={-1} className="scroll-mt-48 mx-auto flex w-full max-w-5xl flex-col gap-8 px-4 py-8 sm:px-8 lg:py-10">
+        <h1 className="text-2xl font-semibold">{name ?? "Agentic Treasury"} · {pathname.endsWith("/follow/payment") ? "Payment" : pathname.endsWith("/follow/run") ? "Treasury runs" : NAV[overview.data ? kindOf(overview.data) : "treasury"].find((item) => item.to !== "/" && pathname.endsWith(item.to!))?.label ?? "Overview"}</h1>
+        {!setup.data.grant && <p role="status" className="text-sm">This instance has no grant. Existing records remain available. <Link to="/policy" hash="grants" className="underline">Review grants and permissions</Link>.</p>}
+        {error && <><p className="text-sm">{overview.data && treasury.data !== undefined ? "Refresh failed. Showing previously loaded records; check again before acting." : "Some agent details could not be loaded. Activity remains available for read-only recovery."}</p><QueryError error={error} retry={() => { void setup.refetch(); void overview.refetch(); void treasury.refetch(); }} /></>}
+        {overview.data && treasury.data !== undefined ? (
           <AgentContext.Provider value={{ setup: setup.data, data: overview.data, treasury: treasury.data }}>
             <Page data={overview.data} />
           </AgentContext.Provider>
-        ) : (
+        ) : pathname.replace(/\/$/, "").endsWith("/activity") ? <RecoveryActivity /> : (
           <Notice>
-            <Spinner /> Loading the book…
+            {error ? <Link to="/activity" className="underline">Review existing records in Activity</Link> : <><Spinner /> Loading the book…</>}
           </Notice>
         )}
       </main>

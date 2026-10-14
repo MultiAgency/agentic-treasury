@@ -205,7 +205,7 @@ const legFor = (book: Holding[], action: Extract<PlannedAction, { type: "swap" }
 };
 
 /** Executes a saved plan exactly as previewed, under the money lock, or says why it can't. */
-export async function* executePlan(id: string, now = () => new Date(), { autopilot = false } = {}): AsyncGenerator<PlanEvent> {
+export async function* executePlan(id: string, now = () => new Date(), { autopilot = false, onSubmitted }: { autopilot?: boolean; onSubmitted?: Sending["onSubmitted"] } = {}): AsyncGenerator<PlanEvent> {
   const plan = loadPlan(id);
   const lock = await acquireMoneyLock();
   try {
@@ -228,7 +228,7 @@ export async function* executePlan(id: string, now = () => new Date(), { autopil
       return;
     }
 
-    const sending = (leg: PlannedAction): Sending => ({ planned: { plan, leg }, autopilot, now });
+    const sending = (leg: PlannedAction): Sending => ({ planned: { plan, leg }, autopilot, now, onSubmitted });
     for (const [index, action] of plan.actions.entries()) {
       const current = await observe();
       const problems = feasibility(plan.actions.slice(index), current.snapshot.balances);

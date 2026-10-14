@@ -8,7 +8,8 @@
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "types": ["node"],
-    "noEmit": true
+    "noEmit": true,
+    "allowJs": true
   },
-  "include": ["src", "test"]
+  "include": ["src/**/*.ts", "src/invoice-browser.js", "test/**/*.ts"]
 }

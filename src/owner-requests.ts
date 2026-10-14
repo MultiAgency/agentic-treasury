@@ -2,6 +2,7 @@ import type { OwnerWallet, Policy } from "@near-intents-agent-api/sdk";
 import { agentId } from "./env.js";
 import { api } from "./api.js";
 import { type AgentRole, payoutPolicy, treasuryPolicy } from "./policy.js";
+import { mandateDigest, type ReviewedPolicy } from "./mandate.js";
 
 /**
  * The owner actions this treasury uses, built once for both signers: the CLI's owner key and
@@ -34,10 +35,12 @@ export type PolicyChanges = Partial<Pick<Policy, "assets" | "owner_approval" | "
  * The agent's current policy with `changes` applied. Transfers are on exactly while the
  * destination list has an entry, so funds cannot leave without a destination the owner signed.
  */
-export async function policyRequest({ swap, destinations, ...fields }: PolicyChanges) {
+export async function policyRequest({ swap, destinations, ...fields }: PolicyChanges, expectedPolicy: ReviewedPolicy) {
   const id = agentId();
   const { policy, revision } = await api.getPolicy(id);
   if (!policy || revision === null) throw new Error("The agent's policy is not applied yet");
+  if (!expectedPolicy || expectedPolicy.revision !== revision || expectedPolicy.digest !== mandateDigest(policy))
+    throw new Error("The policy changed since review. Refresh the policy and review all changes before signing.");
   const transfers = destinations ?? policy.destinations.list.flatMap((d) => (d.action === "transfer" ? [d] : []));
   const swaps = swap ?? policy.actions.includes("swap");
   const next: Policy = {

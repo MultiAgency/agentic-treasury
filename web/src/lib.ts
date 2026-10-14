@@ -1,11 +1,16 @@
+export { exactPayment, fromUnits } from "./payment-copy";
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { RouterClient } from "@orpc/server";
-import { queryOptions, useQueryClient } from "@tanstack/react-query";
+import { queryOptions, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { ASSETS } from "../../src/policy.js";
 import type { Router } from "../../src/router.js";
 import type { Kind } from "./beats";
+import { refreshQueries } from "./query-refresh";
+import { errorMessage } from "./provider-message";
+import { totalUsd } from "../../src/valuation.js";
+export { errorMessage } from "./provider-message";
 
 /**
  * Where this agent's pages live: "" when a local agent server serves them, "/a/<agent>" behind the
@@ -27,6 +32,9 @@ export async function gw<T>(path: `/gw/${string}`, init?: RequestInit): Promise<
 }
 
 /** The reads several pages share, each with one key and one refresh rate. */
+/** How long the API keeps a held payment approvable (the server's APPROVAL_TTL_MS). */
+export const APPROVAL_WINDOW_MS = 24 * 60 * 60_000;
+
 export const queries = {
   held: queryOptions({ queryKey: ["held"], queryFn: () => client.held(), refetchInterval: 15_000 }),
   inbox: queryOptions({ queryKey: ["inbox"], queryFn: () => client.inbox.list(), refetchInterval: 30_000 }),
@@ -46,7 +54,7 @@ export const kindOf = (data: Overview): Kind => (swaps(data) ? "treasury" : "fac
 export const units = (raw: bigint | string, decimals: number) => Number(raw) / 10 ** decimals;
 
 /** The book's value at the API's prices. */
-export const bookValue = (data: Pick<Overview, "book">) => data.book.reduce((sum, h) => sum + h.usd, 0);
+export const bookValue = (data: Pick<Overview, "book">) => totalUsd(data.book);
 
 /** Payouts are confidential USDC (src/authorize.ts), which an empty wallet's book doesn't list. */
 const USDC = { asset: ASSETS.USDC, decimals: 6, symbol: "USDC" };
@@ -70,30 +78,11 @@ export function describeRequest(request: Record<string, unknown>, book: Holding[
 /** An account or id short enough for a badge: its head and tail, when it is longer than `max`. */
 export const short = (id: string, max = 20) => (id.length > max ? `${id.slice(0, 8)}…${id.slice(-6)}` : id);
 
-/**
- * An error in words. A throttle, quota or schedule refusal carries the provider's `availableAt` (src/router.ts
- * `toClientError`), so it also says when to try again.
- */
-export const errorMessage = (e: unknown) => {
-  if (!(e instanceof Error)) return String(e);
-  const at = (e as { data?: { availableAt?: unknown } }).data?.availableAt;
-  if (typeof at !== "string" || Number.isNaN(Date.parse(at))) return e.message;
-  const when = new Date(at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-  return `${e.message.replace(/\.?\s*$/, ".")} Try again at ${when}.`;
-};
-
 export const amount = (raw: bigint | string, h: Pick<Holding, "decimals" | "symbol">) => {
   const n = units(raw, h.decimals);
   const digits = n === 0 ? 0 : n < 1 ? 5 : n < 100 ? 3 : 2;
   return `${n.toLocaleString("en-US", { maximumFractionDigits: digits })} ${h.symbol}`;
 };
-
-/** "1500000" at 6 decimals → "1.5", exactly: the inverse of `toUnits`. */
-export function fromUnits(raw: string, decimals: number) {
-  const digits = raw.padStart(decimals + 1, "0");
-  const fraction = digits.slice(digits.length - decimals).replace(/0+$/, "");
-  return `${digits.slice(0, digits.length - decimals)}${fraction ? `.${fraction}` : ""}`;
-}
 
 /** "1.5" at 6 decimals → "1500000"; null unless it is a positive decimal that fits. */
 export function toUnits(value: string, decimals: number) {
@@ -134,9 +123,9 @@ export const minutesSeconds = (seconds: number) => `${Math.floor(seconds / 60)}:
 
 /**
  * One action at a time with its outcome: `attempt` runs it, shows its message or its error, and
- * refreshes every read once it ends, whichever way, since an action can change any of them.
+ * refreshes affected reads on success or failure. Money actions default to refreshing every read.
  */
-export function useAttempt() {
+export function useAttempt(refreshKeys?: readonly QueryKey[]) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
@@ -153,7 +142,7 @@ export function useAttempt() {
       setError(errorMessage(e));
     } finally {
       setBusy(false);
-      await queryClient.invalidateQueries();
+      await refreshQueries(queryClient, refreshKeys);
     }
   }
   return { message, error, busy, attempt };
@@ -168,9 +157,9 @@ export const ASSET_COLOR: Record<string, string> = {
 
 /**
  * Follows one strategy stream into React state. Every run refreshes the book and the
- * activity log when it ends, whether it executed, stopped or failed.
+ * activity log when it ends, whether it executed, stopped or failed. Plan previews may select narrower refreshes.
  */
-export function useRun<I, E>(start: (input: I) => Promise<AsyncIterable<E>>) {
+export function useRun<I, E>(start: (input: I) => Promise<AsyncIterable<E>>, refreshKeys?: readonly QueryKey[]) {
   const queryClient = useQueryClient();
   const [events, setEvents] = useState<E[]>([]);
   const [state, setState] = useState<"idle" | "running" | "done" | "error">("idle");
@@ -189,7 +178,7 @@ export function useRun<I, E>(start: (input: I) => Promise<AsyncIterable<E>>) {
       setError(errorMessage(e));
       setState("error");
     } finally {
-      await queryClient.invalidateQueries();
+      await refreshQueries(queryClient, refreshKeys);
     }
   }
 

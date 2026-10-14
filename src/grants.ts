@@ -3,7 +3,7 @@ import { createGrantCredential, grantCommitment } from "@near-intents-agent-api/
 import { api } from "./api.js";
 import { agentId, saveEnv } from "./env.js";
 import { loadStrategy } from "./strategy.js";
-import { strategyLabelSuffix } from "./strategy-digest.js";
+import { strategyDigest, strategyLabelSuffix } from "./strategy-digest.js";
 
 /**
  * What a grant's label says it is for: the agent's own strategies, its payouts, or invoices (the
@@ -44,9 +44,16 @@ async function agentGrantLabel(): Promise<GrantLabel> {
  * A treasury grant's label carries the strategy in force (`strategyLabelSuffix`), so signing it is
  * the owner's approval of that strategy, which the autopilot requires before acting alone.
  */
-export async function grantRequest({ label, suffix }: { label?: GrantLabel; suffix?: string } = {}) {
+export async function grantRequest({ label, suffix, expectedStrategyDigest, requireStrategyReview = false }: { label?: GrantLabel; suffix?: string; expectedStrategyDigest?: string; requireStrategyReview?: boolean } = {}) {
   const chosen = label ?? (await agentGrantLabel());
-  const full = grantLabel(chosen, suffix ?? (chosen === "treasury" ? strategyLabelSuffix(loadStrategy()) : undefined));
+  const strategy = chosen === "treasury" ? loadStrategy() : null;
+  if (strategy && (requireStrategyReview || expectedStrategyDigest !== undefined)) {
+    if (requireStrategyReview && process.env.AUTOPILOT === "on") throw new Error("Turn the schedule off before authorizing a Treasury strategy.");
+    if (expectedStrategyDigest !== strategyDigest(strategy)) throw new Error("Review the current saved strategy before authorizing its grant; the strategy changed or was not reviewed.");
+    if (suffix !== undefined && suffix !== strategyLabelSuffix(strategy)) throw new Error("The grant suffix does not match the reviewed strategy.");
+  }
+  const full = grantLabel(chosen, strategy && (requireStrategyReview || expectedStrategyDigest !== undefined)
+    ? strategyLabelSuffix(strategy) : suffix ?? (strategy ? strategyLabelSuffix(strategy) : undefined));
   const { token, commitment } = createGrantCredential();
   return {
     token,

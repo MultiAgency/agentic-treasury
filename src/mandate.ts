@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import type { Policy } from "@near-intents-agent-api/sdk";
 
+/** The exact policy observation an operator or owner reviewed before confirming an action. */
+export type ReviewedPolicy = { revision: number; digest: string };
+
 /**
  * The owner's mandate as one reproducible digest: an audit identifier, not a commitment the owner's
  * signature is shown to cover. The API's `agent_policy_hash` can't serve: it isn't the sha256 of the

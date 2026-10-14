@@ -54,6 +54,8 @@ type Seen = Observation | { error: string };
 
 export type TickStart = {
   kind: "start";
+  /** Additive progress sidecar; absent on historical runs. */
+  progressVersion?: 1;
   id: string;
   at: string;
   /** `schedule`: the autopilot's timer; `operator`: "Run now". */
@@ -67,6 +69,7 @@ export type TickStart = {
   grant: { id: string; label: string; expiresAt: string } | null;
 };
 export type TickEnd = {
+  progressIncomplete?: boolean;
   kind: "end";
   id: string;
   endedAt: string;

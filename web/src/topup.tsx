@@ -2,13 +2,14 @@ import { useState } from "react";
 import { ASSETS } from "../../src/policy.js";
 import { type client, clientFor, toUnits, useAttempt } from "./lib";
 import { useSiblings } from "./names";
-import { PayoutResult } from "./payout";
+import { PaymentReview, type PaymentReviewData, PayoutResult } from "./payout";
+import { reviewedPolicyOf } from "./policy-review";
 import { useAgent } from "./shell";
-import { ConfirmButton, ErrorBox, input } from "./ui";
+import { Button, ErrorBox, input } from "./ui";
 
 /**
  * On the payout agent's dashboard behind the hosted gateway: the treasury agent pays this wallet through
- * its own `pay`, the one send path, under its own policy and caps, with no vote. Offered only when that
+ * its own `pay`, the one send path, under its own policy and caps. Offered only when that
  * policy lists this wallet, since the provider would refuse anything else; operators of the treasury agent only.
  */
 export function TopUp() {
@@ -17,6 +18,7 @@ export function TopUp() {
   const [value, setValue] = useState("");
   const [result, setResult] = useState<Awaited<ReturnType<typeof client.pay>>>();
   const send = useAttempt();
+  const [review, setReview] = useState<{ agentName: string; payment: PaymentReviewData }>();
 
   const treasury = siblings.find((s) => s.kind === "treasury");
   const wallet = setup.wallet;
@@ -40,27 +42,29 @@ export function TopUp() {
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
         <input className={`${input} w-28`} inputMode="decimal" placeholder="USDC" value={value} onChange={(e) => setValue(e.target.value)} aria-label="USDC to send" />
-        <ConfirmButton
-          label="Top up from the treasury"
+        <Button
           disabled={send.busy || !amount}
-          title={`Send ${value || "0"} USDC from the treasury agent to this wallet?`}
-          description={`The treasury agent pays it under its own policy and caps, with no vote${destination.confidential ? ", into this wallet's confidential balance" : ""}.`}
-          confirm="Send"
-          onConfirm={() =>
-            send.attempt(async () => {
-              setResult(undefined);
-              setResult(await clientFor(`/a/${treasury.name}`).pay({ recipient: wallet, asset: ASSETS.USDC, amount: amount!, confidential: destination.confidential }));
-            })
-          }
-        />
+          onClick={() => { if (amount) setReview({ agentName: treasury.name, payment: {
+            request: { recipient: wallet, asset: ASSETS.USDC, amount, confidential: destination.confidential },
+            symbol: "USDC", decimals: 6, ownerApproval: treasury.overview.policy.policy?.owner_approval,
+            expectedPolicy: reviewedPolicyOf(treasury.overview),
+          } }); }}
+        >Top up from the treasury</Button>
         {result && result.outcome !== "refused" && result.status === "PENDING_APPROVAL" ? (
           <a className="text-sm underline" href={`/a/${treasury.name}/`}>
             Held for the treasury owner's approval: approve on the treasury agent
           </a>
         ) : (
-          <PayoutResult result={result} />
+          <PayoutResult result={result} agentBase={`/a/${treasury.name}`} />
         )}
       </div>
+      {review && <PaymentReview payment={review.payment}
+        currentPolicy={review.agentName === treasury.name && !treasury.overview.notInForce ? reviewedPolicyOf(treasury.overview) : undefined}
+        permitted={access[review.agentName]?.role === "operator"}
+        onClose={() => setReview(undefined)} onConfirm={(request) => send.attempt(async () => {
+          setResult(undefined);
+          setResult(await clientFor(`/a/${review.agentName}`).pay(request));
+        })} />}
       <ErrorBox error={send.error} />
     </div>
   );

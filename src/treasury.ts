@@ -136,10 +136,10 @@ type SweepEvent =
   | { type: "shield"; asset: string; status: string; correlationId: string; failureCode: string | null | undefined };
 
 /** `autopilot`: the autopilot sweeps, so each shield is authorized as the autopilot's, under the strategy the owner's grant approves. */
-export async function* sweep({ execute, autopilot = false }: { execute: boolean; autopilot?: boolean }): AsyncGenerator<SweepEvent> {
+export async function* sweep({ execute, autopilot = false, onSubmitted }: { execute: boolean; autopilot?: boolean; onSubmitted?: Sending["onSubmitted"] }): AsyncGenerator<SweepEvent> {
   const lock = execute ? await acquireMoneyLock() : undefined;
   try {
-    yield* sweepRun(lock, autopilot ? { planned: null, autopilot: true, now: () => new Date() } : undefined);
+    yield* sweepRun(lock, autopilot ? { planned: null, autopilot: true, now: () => new Date(), onSubmitted } : undefined);
   } finally {
     await lock?.release();
   }

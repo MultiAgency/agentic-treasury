@@ -2,13 +2,15 @@ import { AgentApiError } from "@near-intents-agent-api/sdk";
 import { ORPCError, os as base } from "@orpc/server";
 import { z } from "zod";
 import { depositAddress, pay } from "./agent.js";
-import { allHoldings } from "./holdings.js";
-import { held, paymentStatus } from "./payouts.js";
+import { dashboardHoldings } from "./dashboard-holdings.js";
+import { refusalDetails } from "./provider-display.js";
+import { held, paymentHistory, paymentStatus } from "./payouts.js";
 import { api } from "./api.js";
 import { accountExists, daoPayees, describeTreasury, fundingTransaction, isDao } from "./chain.js";
 import { daoOwner, ownerFunded } from "./dao-owner.js";
-import { saveSettings, status as autopilotStatus, tick } from "./autopilot.js";
+import { status as autopilotStatus, tick } from "./autopilot.js";
 import { ticks } from "./evidence.js";
+import { exportRunLog } from "./run-log-export.js";
 import { agentId, executes, saveEnv } from "./env.js";
 import { dismiss, readInbox } from "./inbox.js";
 import { ledger, ledgerCsv, reconcileBooks } from "./ledger.js";
@@ -21,14 +23,18 @@ import { steward } from "./llm.js";
 import { executePlan } from "./plans.js";
 import { ASSETS } from "./policy.js";
 import { loadStrategy } from "./strategy.js";
-import { MIN_EVERY_MIN } from "./strategy-digest.js";
+import { MIN_EVERY_MIN, Strategy } from "./strategy-digest.js";
+import { enableSchedule, saveReviewedStrategy, setLegacySchedule, stopSchedule } from "./strategy-controls.js";
+import { readStrategyStatus } from "./strategy-status.js";
 import { rebalance, sweep, targets } from "./treasury.js";
-import { daoRequests, prepare, status, submit } from "./owner-intents.js";
+import { daoRequests, ownerActions, prepare, status, submit } from "./owner-intents.js";
 import { cancelPreparedInvoice, listInvoices } from "./invoice-store.js";
 import { type AgreementStore, localStore, remoteStore } from "./agreements.js";
 import { agreed } from "./invoices.js";
+import { intentsAccount, validIntentsAccount } from "./intents-account.js";
 
 const agreementId = z.string().regex(/^[0-9a-f]{32}$/);
+const reviewedPolicy = z.object({ revision: z.number().int().nonnegative(), digest: z.string().regex(/^sha256:[0-9a-f]{64}$/) });
 
 /** This host's agreements when it serves the invoice page; otherwise the invoice host's, if configured. */
 function agreementStore(): AgreementStore {
@@ -52,7 +58,7 @@ const activity = () =>
 function toClientError(error: unknown) {
   if (error instanceof ORPCError) return error;
   if (error instanceof AgentApiError)
-    return new ORPCError("BAD_REQUEST", { message: error.detail ?? error.title, data: { code: error.code, availableAt: error.availableAt ?? null } });
+    return new ORPCError("BAD_REQUEST", { message: error.detail ?? error.title, data: { code: error.code, availableAt: null, ...refusalDetails(error) } });
   return new ORPCError("BAD_REQUEST", { message: error instanceof Error ? error.message : String(error) });
 }
 
@@ -89,6 +95,8 @@ async function linkedDao() {
 
 const run = z.object({ execute: z.boolean() });
 const account = z.string().trim().min(2).max(64);
+// Only owner-entered Intents destinations: owner identities and provider evidence stay unchanged.
+const transferAccount = z.string().transform(intentsAccount).refine(validIntentsAccount, "Enter a NEAR Intents account or nearcom: address");
 const units = z.string().regex(/^[0-9]{1,40}$/, "an atomic integer amount");
 /** A USD amount in the policy's budget; null leaves that window uncapped. */
 const usdAmount = z.string().regex(/^\d+(\.\d+)?$/).nullable();
@@ -100,21 +108,23 @@ const ownerAction = z.discriminatedUnion("type", [
     type: z.literal("agent_create"),
     owner: z.object({ type: z.literal("near"), account_id: z.string(), public_key: z.string() }).optional(),
     role: z.enum(["treasury", "payout"]).optional(),
-    payees: z.array(account).max(256).optional(),
+    payees: z.array(transferAccount).max(256).optional(),
   }),
   z.object({
     type: z.literal("grant_issue"),
     label: z.enum(GRANT_LABELS).optional(),
     suffix: z.string().min(1).max(64).optional(),
+    expectedStrategyDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
   }),
   z.object({ type: z.literal("grant_revoke"), grantId: z.string().min(1) }),
   z.object({ type: z.literal("agent_freeze") }),
   z.object({ type: z.literal("agent_unfreeze") }),
   z.object({
     type: z.literal("policy_update"),
+    expectedPolicy: reviewedPolicy,
     changes: z.object({
       swap: z.boolean().optional(),
-      destinations: z.array(z.object({ address: account, confidential: z.boolean() })).max(64).optional(),
+      destinations: z.array(z.object({ address: transferAccount, confidential: z.boolean() })).max(64).optional(),
       assets: z.array(z.string()).optional(),
       owner_approval: z.boolean().optional(),
       max_actions_per_hour: z.number().int().positive().nullable().optional(),
@@ -134,6 +144,12 @@ const ownerAction = z.discriminatedUnion("type", [
 ]);
 
 export const router = {
+  /** Readiness observations do not authorize or start an operation. */
+  strategy: {
+    get: os.handler(() => readStrategyStatus()),
+    save: os.input(z.strictObject({ strategy: Strategy, expectedDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/) }))
+      .handler(({ input }) => saveReviewedStrategy(input.strategy, input.expectedDigest)),
+  },
   /**
    * How far onboarding has got: an agent, its owner, and a live grant whose token this server holds.
    * Adopts a staged grant token whose grant is in force, so it writes the settings file at times.
@@ -141,7 +157,7 @@ export const router = {
   setup: os.handler(async () => {
     const id = process.env.AGENT_ID;
     const dao = await linkedDao();
-    if (!id) return { agentId: null, wallet: null, owner: null, grant: null, dao };
+    if (!id) return { agentId: null, wallet: null, owner: null, grant: null, dao, executor: executes() };
     const [agent, grants] = await Promise.all([api.getAgent(id), api.listGrants(id)]);
     adoptStagedGrant(grants);
     // An approve-only copy holds no grant token: it shows the executor's grant, read from the API.
@@ -150,6 +166,7 @@ export const router = {
       : grants.filter((g) => isLive(g)).sort((a, b) => b.expires_at.localeCompare(a.expires_at))[0];
     return {
       agentId: id,
+      executor: executes(),
       // The NEAR account that holds the agent's balances: where a treasury pays it.
       wallet: agent.wallet?.near_account_id ?? null,
       owner: agent.owner,
@@ -159,7 +176,7 @@ export const router = {
   }),
   overview: os.handler(async () => {
     const id = agentId();
-    const [{ managed: book, unmanaged }, policy, grants] = await Promise.all([allHoldings(), api.getPolicy(id), api.listGrants(id)]);
+    const [{ managed: book, unmanaged }, policy, grants] = await Promise.all([dashboardHoldings(), api.getPolicy(id), api.listGrants(id)]);
     const digest = policy.policy ? mandateDigest(policy.policy) : null;
     const strategy = loadStrategy();
     return {
@@ -173,7 +190,7 @@ export const router = {
       /** Why the policy isn't in force, by the rule `authorize` refuses with; null when it is. */
       notInForce: notInForce(policy),
       agreed: policy.policy ? [...agreedPayees(policy.policy)] : [],
-      grants: grants.filter((g) => !g.revoked_at),
+      grants,
     };
   }),
   /** Every revision of the owner's mandate, newest first, each with the digest anyone can recompute. */
@@ -201,6 +218,7 @@ export const router = {
     status: os.input(z.object({ correlationId: z.string() })).handler(({ input }) => status(input.correlationId)),
     /** What this server waits for the DAO to sign, for members to check each proposal before voting. */
     pending: os.handler(() => daoRequests()),
+    actions: os.handler(() => ownerActions()),
     submit: os
       .input(z.object({ correlationId: z.string(), signedData: z.record(z.string(), z.unknown()) }))
       .handler(({ input }) => submit(input.correlationId, input.signedData)),
@@ -233,8 +251,8 @@ export const router = {
     }),
   },
   pay: os
-    .input(z.object({ recipient: account, asset: z.string(), amount: units, confidential: z.boolean() }))
-    .handler(({ input }) => pay(input)),
+    .input(z.object({ recipient: transferAccount, asset: z.string(), amount: units, confidential: z.boolean(), expectedPolicy: reviewedPolicy }))
+    .handler(({ input: { expectedPolicy, ...request } }) => pay(request, expectedPolicy)),
   activity: os.handler(() => activity()),
   /**
    * Agreements with terms (agreements.ts): requested by payees on the invoice page, or offered by the
@@ -244,7 +262,7 @@ export const router = {
     list: os.handler(() => agreementStore().list()),
     propose: os.input(z.object({ id: agreementId, until: z.iso.datetime() }))
       .handler(({ input }) => agreementStore().propose(input.id, new Date(input.until))),
-    offer: os.input(z.object({ payee: account, amount: z.string(), note: z.string().max(200), until: z.iso.datetime() }))
+    offer: os.input(z.object({ payee: transferAccount, amount: z.string(), note: z.string().max(200), until: z.iso.datetime() }))
       .handler(async ({ input }) => ({ id: await agreementStore().offer({ ...input, until: new Date(input.until) }) })),
     decline: os.input(z.object({ id: agreementId })).handler(({ input }) => agreementStore().decline(input.id)),
   },
@@ -269,17 +287,24 @@ export const router = {
   autopilot: {
     get: os.handler(() => autopilotStatus()),
     set: os
-      .input(z.object({ on: z.boolean(), everyMin: z.number().int().min(MIN_EVERY_MIN).max(24 * 60), maxUsd: z.number().int().min(0).max(1_000_000) }))
-      .handler(({ input }) => {
-        saveSettings(input);
-        return autopilotStatus();
-      }),
+      .input(z.object({ on: z.boolean(), everyMin: z.number().int().min(MIN_EVERY_MIN).max(24 * 60), maxUsd: z.number().int().min(0).max(1_000_000), expectedDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional() }))
+      .handler(async ({ input }) => { await setLegacySchedule(input); return autopilotStatus(); }),
+    enable: os.input(z.strictObject({ expectedDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/) }))
+      .handler(({ input }) => enableSchedule(input.expectedDigest)),
+    stop: os.handler(() => stopSchedule()),
     tick: os.handler(() => tick("operator")),
     /** Every tick's evidence line since `since`: what the scheduler saw and did (src/evidence.ts). */
     evidence: os.input(z.object({ since: z.iso.datetime().optional() })).handler(({ input }) => ticks(input.since)),
+    /** A private recording from this executor's existing records; never starts or reconciles a tick. */
+    log: os.input(z.strictObject({ tickId: z.string().min(1).max(200).optional() }))
+      .handler(({ input }) => {
+        if (!executes()) throw new ORPCError("PRECONDITION_FAILED", { message: "Export run logs from this agent's executor." });
+        return exportRunLog(process.cwd(), agentId(), input.tickId, () => api.getTokens({ signal: AbortSignal.timeout(5_000) }));
+      }),
   },
   /** One of this agent's payments as the provider sees it now (`paymentStatus` in src/payouts.ts). */
   // `waitMs`: long-poll at the provider, kept under proxies' and browsers' timeouts.
+  paymentHistory: os.handler(() => paymentHistory()),
   paymentStatus: os.input(z.object({ correlationId: z.string().min(1).max(200), waitMs: z.number().int().min(0).max(25_000).optional() }))
     .handler(({ input }) => paymentStatus(input.correlationId, input.waitMs)),
   inbox: {
@@ -297,7 +322,7 @@ export const router = {
   /** Each balance against its independent record: the chain for public, the API's executions for confidential. */
   reconcileBooks: os.handler(() => reconcileBooks()),
   /** Money actions waiting for the owner's approval. */
-  held: os.handler(() => held()),
+  held: os.handler(() => held({ complete: true })),
   /** Previews a rebalance and saves it as a plan; `executePlan` runs it. */
   rebalance: os.handler(() => rebalance()),
   sweep: os.input(run).handler(({ input }) => sweep(input)),

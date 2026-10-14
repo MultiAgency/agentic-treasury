@@ -71,7 +71,8 @@ function forward(req: IncomingMessage, res: ServerResponse, agent: AgentEntry, p
   delete headers.origin;
   delete headers.cookie;
   const upstream = request({ host: "127.0.0.1", port: agent.port, path: `/rpc/${path}`, method: req.method, headers }, (answer) => {
-    res.writeHead(answer.statusCode ?? 502, answer.headers);
+    res.writeHead(answer.statusCode ?? 502, { ...answer.headers,
+      ...(["autopilot/log", "owner/actions", "paymentHistory", "strategy/get"].includes(path) && { "cache-control": "private, no-store" }) });
     answer.pipe(res);
   });
   upstream.on("error", () => json(res, 502, { error: `The ${agent.name} agent server is not answering` }));

@@ -19,8 +19,8 @@
   --muted-foreground: oklch(0.5 0.016 251);
   --accent: oklch(0.955 0.03 251);
   --border: oklch(0.92 0.006 251);
-  --border-strong: oklch(0.78 0.012 251);
-  --ring: oklch(0.6 0.17 251);
+  --border-strong: oklch(0.64 0.012 251);
+  --ring: oklch(0.52 0.17 251);
   --brand: oklch(0.65 0.19 251);
   --brand-strong: oklch(0.5 0.17 252);
   --brand-muted: oklch(0.955 0.035 251);
@@ -52,7 +52,7 @@
   --muted-foreground: oklch(0.72 0.012 251);
   --accent: oklch(0.3 0.06 251);
   --border: oklch(1 0 0 / 10%);
-  --border-strong: oklch(1 0 0 / 22%);
+  --border-strong: oklch(0.62 0.012 251);
   --ring: oklch(0.72 0.15 251);
   --brand: oklch(0.7 0.17 251);
   --brand-strong: oklch(0.78 0.13 251);
@@ -110,7 +110,7 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
   }
 
   body {
@@ -125,5 +125,17 @@
 
   code {
     @apply font-mono;
+  }
+}
+
+@layer base {
+  :root { color-scheme: light; }
+  .dark { color-scheme: dark; }
+  :focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+  input, select, textarea { scroll-margin-block: 14rem 2rem; }
+  select { background-color: var(--card); color: var(--foreground); }
+  dialog { overscroll-behavior: contain; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
   }
 }

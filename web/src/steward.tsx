@@ -11,7 +11,7 @@ const resultTone = (result: string) =>
 export function Steward() {
   const { data } = useAgent();
   const symbol = (asset: string) => data.book.find((h) => h.asset === asset)?.symbol ?? asset;
-  const proposal = useRun(client.steward.propose);
+  const proposal = useRun(client.steward.propose, []);
   const execution = useRun(client.executePlan);
   const [instruction, setInstruction] = useState("");
   const busy = proposal.state === "running" || execution.state === "running";
@@ -122,7 +122,7 @@ export function Steward() {
             label={execution.state === "running" ? <><Spinner /> Executing</> : "Execute plan"}
             disabled={busy || !plan || executed}
             title="Execute this plan on mainnet?"
-            description="Runs the proposed steps exactly as shown, under the agent's grant, each swap held to its previewed floor. If the policy, a balance or the price moved past the floor, or the plan expired, nothing runs."
+            description="Runs the proposed steps exactly as shown, under the agent's grant, each swap held to its previewed floor. Actions run in sequence. Checks run before execution and before later actions; if execution stops, earlier completed actions remain."
             confirm="Execute plan"
             onConfirm={() => plan && execution.run({ planId: plan.id })}
           />

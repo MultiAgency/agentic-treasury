@@ -11,7 +11,7 @@ import { type GrantLabel, grantRequest, promoteGrantToken, stageGrantToken } fro
 import { ownerRequests, type PolicyChanges, policyRequest } from "./owner-requests.js";
 import type { AgentRole } from "./policy.js";
 import { daoPolicy, nextProposalId } from "./chain.js";
-import { mandateDigest } from "./mandate.js";
+import { mandateDigest, type ReviewedPolicy } from "./mandate.js";
 import { isTerminal, settle } from "./ops.js";
 import { checkPaymentApproval, type PaymentApproval } from "./payment-approval.js";
 import { acquireMoneyLock, assertMoneyLock } from "./lock.js";
@@ -26,12 +26,12 @@ import { ownerSignatureProblem } from "./owner-signature.js";
 
 export type OwnerAction =
   | { type: "agent_create"; owner?: OwnerWallet; role?: AgentRole; payees?: string[] }
-  | { type: "grant_issue"; label?: GrantLabel; suffix?: string }
+  | { type: "grant_issue"; label?: GrantLabel; suffix?: string; expectedStrategyDigest?: string }
   /** Stops one grant at once; operations it already committed still finish. */
   | { type: "grant_revoke"; grantId: string }
   | { type: "agent_freeze" }
   | { type: "agent_unfreeze" }
-  | { type: "policy_update"; changes: PolicyChanges }
+  | { type: "policy_update"; changes: PolicyChanges; expectedPolicy: ReviewedPolicy }
   /** Releases (or rejects) one held money action: `correlationId` is that execution's. */
   | { type: "approval_vote"; approvalId: string; verdict: "approve" | "reject"; correlationId: string };
 
@@ -160,13 +160,13 @@ async function build(
     case "grant_issue": {
       // The new grant's token is saved where it is prepared: only the agent's executor may hold it.
       if (!executes()) throw new Error("This copy only reads and approves: issue the grant from the agent's executor, which must hold its token");
-      const { token, request } = await grantRequest({ label: action.label, suffix: action.suffix });
+      const { token, request } = await grantRequest({ label: action.label, suffix: action.suffix, expectedStrategyDigest: action.expectedStrategyDigest, requireStrategyReview: true });
       return { request, grantToken: token };
     }
     case "grant_revoke":
       return { request: { type: "grant_revoke", agent_id: agentId(), grant_id: action.grantId } as const };
     case "policy_update":
-      return { request: await policyRequest(action.changes) };
+      return { request: await policyRequest(action.changes, action.expectedPolicy) };
     case "approval_vote": {
       const { approvalId, verdict, correlationId } = action;
       const request = { type: "approval_vote", agent_id: agentId(), approval_id: approvalId, verdict } as const;
@@ -380,6 +380,23 @@ export function status(correlationId: string) {
   if (outcome) return outcome;
   if (saved?.dao) return { stage: "voting" as const, expiresAt: saved.expiresAt };
   return { stage: "unknown" as const };
+}
+
+/** Private display projection of durable owner actions; never includes signing material. */
+export function ownerActions(now = Date.now()) {
+  return [...readPending()].reverse().map(([correlationId, saved]) => ({
+    correlationId,
+    type: saved.type,
+    expiresAt: saved.expiresAt,
+    signer: saved.dao ? "dao" as const : "wallet" as const,
+    stage: saved.stage === "settled" ? "settled" as const
+      : saved.stage === "submitted" ? "submitted" as const
+      : Date.parse(saved.expiresAt) < now ? "expired" as const : "prepared" as const,
+    ownerSucceeded: saved.ownerSucceeded === true,
+    status: saved.result?.status ?? null,
+    failureCode: saved.result?.failureCode ?? null,
+    payment: paymentOf(saved.paymentApproval),
+  }));
 }
 
 /**

@@ -7,10 +7,11 @@ import { afterEach, beforeEach, mock, test } from "node:test";
 import { grantCommitment } from "@near-intents-agent-api/sdk";
 import { api } from "../src/api.js";
 import { saveSettings, settings, tick } from "../src/autopilot.js";
+import { exportRunLog } from "../src/run-log-export.js";
 import { sourceDigest, ticks } from "../src/evidence.js";
 import { dismiss, readInbox } from "../src/inbox.js";
 import { prepareInvoice } from "../src/invoice-store.js";
-import { opsLog } from "../src/ops.js";
+import { blocksDispatch, readOps, opsLog } from "../src/ops.js";
 import { ASSETS, treasuryPolicy } from "../src/policy.js";
 import { loadStrategy } from "../src/strategy.js";
 import { strategyLabelSuffix } from "../src/strategy-digest.js";
@@ -72,6 +73,20 @@ afterEach(() => mock.restoreAll());
 
 const limit = (maxUsd: number) => saveSettings({ ...settings(), maxUsd });
 const open = () => readInbox().filter((e) => e.level !== "run" && !e.dismissed);
+
+test("skipping every quote for cost does not claim the book is on target", async () => {
+  mock.method(api, "forGrant", () => ({
+    swap: async (_id: string, request: { dry?: boolean }) => {
+      assert.equal(request.dry, true, "cost-rejected swaps must never send");
+      return { quote: { amount_out: "1", min_amount_out: "1" } };
+    },
+  }));
+  const report = await tick("schedule");
+  assert.doesNotMatch(report, /book on target/);
+  assert.match(report, /all proposed swaps exceed the cost limit/);
+  assert.deepEqual(sends, []);
+  assert.equal(ticks().ticks[0]?.end?.outcome, report);
+});
 
 test("a rebalance within the limit executes, and the tick says what it did", async () => {
   limit(100);
@@ -265,4 +280,52 @@ test("a damaged inbox line is skipped, so the scheduler's once-a-minute read nev
   // A crash mid-append leaves a partial last line.
   writeFileSync(join(".inbox", `${process.env.AGENT_ID}.jsonl`), `${JSON.stringify(entry)}\n{"id":"e2","at":"2026-`);
   assert.deepEqual(readInbox().map((e) => e.id), ["e1"]);
+});
+
+
+test("intermediate stages and accepted submissions are readable before the tick ends", async () => {
+  limit(100);
+  const snapshots: Awaited<ReturnType<typeof exportRunLog>>[] = [];
+  mock.method(api, "getStatus", async (correlation_id: string) => {
+    const active = ticks().ticks[0]!;
+    assert.equal(active.end, null);
+    // The provider has answered, but settlement is not known yet. Read through the real export path.
+    snapshots.push(await exportRunLog(".", process.env.AGENT_ID!, active.id, async () => []));
+    return { correlation_id, status: "SUCCESS" };
+  });
+  await tick("schedule");
+  assert.equal(sends.length, 2);
+  assert.ok(snapshots.length >= 2);
+  for (const snapshot of snapshots) {
+    assert.equal(snapshot.completion, "no-recorded-end");
+    assert.ok(snapshot.events.some(e => e.type === "STEP_FINISHED" && e.stepName === "planning"));
+    assert.ok(snapshot.events.some(e => e.type === "CUSTOM" && e.value.stage === "submission"));
+    assert.ok(!snapshot.events.some(e => e.type === "RUN_FINISHED"));
+  }
+});
+
+test("supplementary progress failure does not change sends or the authoritative outcome", async () => {
+  limit(100);
+  mkdirSync(".evidence", { recursive: true });
+  writeFileSync(".evidence/progress", "blocked");
+  await tick("schedule");
+  assert.equal(sends.length, 2);
+  assert.match(ticks().ticks[0]!.end!.outcome, /step 1: SUCCESS/);
+  const snapshot = await exportRunLog(".", process.env.AGENT_ID!, ticks().ticks[0]!.id, async () => []);
+  assert.ok(snapshot.gaps.some(g => g.code === "progress_unavailable"));
+});
+
+
+test("accepted submission progress does not resolve a lost status read or permit another send", async () => {
+  limit(100);
+  mock.method(api, "getStatus", async () => { throw new Error("status unavailable"); });
+  assert.match(await tick("schedule"), /Outcome unknown/);
+  assert.equal(sends.length, 1);
+  assert.equal(readOps().filter(blocksDispatch).length, 1);
+  const snapshot = await exportRunLog(".", process.env.AGENT_ID!, ticks().ticks[0]!.id, async () => []);
+  assert.ok(snapshot.events.some(e => e.type === "CUSTOM" && e.value.stage === "submission"));
+  assert.ok(!snapshot.events.some(e => e.type === "STEP_FINISHED" && e.stepName === "execution"));
+  assert.ok(snapshot.gaps.some(g => g.code === "progress_incomplete"));
+  await tick("schedule");
+  assert.equal(sends.length, 1, "observational progress must never authorize a replay");
 });

@@ -12,9 +12,13 @@ export type OwnerAction = Parameters<typeof client.owner.prepare>[0]["action"];
 export type PolicyChanges = Extract<OwnerAction, { type: "policy_update" }>["changes"];
 
 /** Whether an owner action ended the way it was meant to: a rejected payment is a reject vote's success. */
-function ended(action: OwnerAction, status?: string, failureCode?: string | null) {
-  const rejecting = action.type === "approval_vote" && action.verdict === "reject";
-  if (status === "SUCCESS" || (rejecting && status)) return;
+async function ended(action: OwnerAction, correlationId: string, status?: string, failureCode?: string | null) {
+  if (action.type === "approval_vote") {
+    const record = (await client.owner.actions()).find(a => a.correlationId === correlationId);
+    if (record?.ownerSucceeded) return;
+    throw new Error("Owner approval outcome could not be confirmed. Review the existing owner action before signing again.");
+  }
+  if (status === "SUCCESS") return;
   throw new Error(failureCode ?? `Ended ${status?.toLowerCase()}`);
 }
 
@@ -75,11 +79,11 @@ export function useOwnerAction(setup: Setup) {
     while (true) {
       await sleep(5_000);
       const state = await client.owner.status({ correlationId: prepared.correlationId });
-      if (state.stage === "submitted") return ended(action, state.status, state.failureCode);
+      if (state.stage === "submitted") return ended(action, prepared.correlationId, state.status, state.failureCode);
       if (state.stage === "expired") throw new Error("The vote did not pass before the API's signing window closed. Try again.");
       if (state.stage === "failed") throw new Error(state.error);
       if (state.stage === "submitting") setStep("settling");
-      if (state.stage === "unknown") throw new Error("The server lost track of this action. Try again.");
+      if (state.stage === "unknown") throw new Error("The server lost track of this action. Ask the operator to review its status before trying again.");
     }
   }
 
@@ -96,7 +100,7 @@ export function useOwnerAction(setup: Setup) {
     try {
       const result = await client.owner.submit({ correlationId: prepared.correlationId, signedData });
       if (["SUCCESS", "FAILED", "REFUNDED"].includes(result.status))
-        return ended(action, result.status, result.failureCode);
+        return ended(action, prepared.correlationId, result.status, result.failureCode);
     } catch (error) {
       const state = await client.owner.status({ correlationId: prepared.correlationId });
       if (state.stage !== "submitting" && state.stage !== "submitted") throw error;
@@ -104,7 +108,7 @@ export function useOwnerAction(setup: Setup) {
     // An accepted or ambiguous submission is followed by ID, never signed or sent again.
     while (true) {
       const state = await client.owner.status({ correlationId: prepared.correlationId });
-      if (state.stage === "submitted") return ended(action, state.status, state.failureCode);
+      if (state.stage === "submitted") return ended(action, prepared.correlationId, state.status, state.failureCode);
       if (state.stage !== "submitting") throw new Error("Owner action needs review");
       await sleep(5_000);
     }
@@ -134,9 +138,9 @@ export function useOwnerAction(setup: Setup) {
     signing: "Approve in your wallet…",
     filing: viewer?.canPropose ? `Confirm the proposal${viewer.canVote ? " and your vote" : ""} in your wallet…` : "File the proposal in Trezu…",
     voting: `Waiting for ${setup.dao?.id ?? "the DAO"} to approve · ${left === null ? "" : `${minutesSeconds(left)} left`}`,
-    settling: "Settling on chain…",
+    settling: "Checking the owner action’s outcome…",
   }[step];
-  return { run, busy: step !== "idle", label, error, digest };
+  return { run, busy: step !== "idle", label: label && <>{label}{setup.dao && (step === "voting" || step === "settling") && <> · <a className="underline" target="_blank" rel="noopener noreferrer" href={`https://trezu.app/${setup.dao.id}/requests`}>Review and vote in Trezu</a></>}</>, error, digest };
 }
 
 /**

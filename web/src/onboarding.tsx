@@ -1,4 +1,5 @@
 import { UsersThree, Wallet as WalletIcon } from "@phosphor-icons/react";
+import { Link } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useState } from "react";
 import { errorMessage, short, useAttempt } from "./lib";
@@ -7,7 +8,7 @@ import { linkTrezuDao } from "./treasury";
 import { Button, Card, ErrorBox, input, Section, Spinner, Step } from "./ui";
 import { connect, dao, send, useWallet } from "./wallet";
 
-function ActionRow({ label, busy, onClick, children }: { label: string | null; busy: boolean; onClick: () => void; children: ReactNode }) {
+function ActionRow({ label, busy, onClick, children }: { label: ReactNode; busy: boolean; onClick: () => void; children: ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
       <Button disabled={busy} onClick={onClick}>
@@ -176,9 +177,9 @@ export function Onboarding({ setup }: { setup: Setup }) {
               <p className="text-sm text-warning-muted-foreground">Only {ownerName(setup)} can issue grants. Connect that wallet.</p>
             )}
             <ErrorBox error={action.error} />
-            <ActionRow label={action.label} busy={action.busy || !canSign} onClick={() => action.run({ type: "grant_issue" })}>
+            {role === "treasury" ? <Link to="/automations" className="underline">Review and authorize the Treasury strategy</Link> : <ActionRow label={action.label} busy={action.busy || !canSign} onClick={() => action.run({ type: "grant_issue" })}>
               {isDao ? "Propose the grant" : "Issue grant"}
-            </ActionRow>
+            </ActionRow>}
           </Step>
         </ol>
       </Card>

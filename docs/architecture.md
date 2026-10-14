@@ -26,7 +26,7 @@ the provider call. `test/send-path.test.ts` fails if any other file sends. The c
 
 | Concern | Files |
 |---|---|
-| Intake | `invoice-http.ts` (the public invoice page, `/internal/agreements`), `agreements.ts` (requests, offers, terms), `invoices-server.ts` |
+| Intake | `invoice-http.ts` (public routes, `/internal/agreements`), `invoice-page.ts` (HTML and copy), `invoice-browser.js` (checked browser module), `agreements.ts` (requests, offers, terms), `invoices-server.ts` |
 | Payments | `invoices.ts` (files an invoice through dispatch), `invoice-store.ts` (SQLite: identity, revisions, reservations), `payouts.ts` (held payouts) |
 | Approval | `payment-approval.ts` (checks a held payout against provider evidence before the owner signs) |
 
@@ -137,7 +137,7 @@ held because their release-time checks have not been established.
 Anyone signs in with a full-access NEAR wallet key and files an amount and optional note for their
 own account. An agreed payee's filing is an invoice; anyone else's is an agreement request, stored apart
 from payments (`.agreements/`, `src/agreements.ts`) and never sent. Sign-in uses near-connect's wallet list pinned to one reviewed
-commit (`WALLET_MANIFEST` in `src/invoice-http.ts`). Residual supply-chain risk: each wallet's code
+commit (`WALLET_MANIFEST` in `src/invoice-page.ts`). Residual supply-chain risk: each wallet's code
 still loads from the URL that list names, mostly `raw.githubusercontent.com`, which its maintainers
 can change; the page also allows inline and `https:` scripts because wallets run as inline code in
 sandboxed frames that inherit its policy. Wallets can't read the session, and every signature is
@@ -165,3 +165,22 @@ Before upgrading an existing payout executor, follow the
 SQLite provides local atomicity, not exactly-once remote payment execution. These paths are covered
 by offline concurrency, HTTP authorization and process-crash tests, and the flow ran on mainnet on
 2026-10-12 ([mainnet log](mainnet-log.md)).
+
+## Frontend responsibilities (offline-tested)
+
+The invoice listener serves the page and its browser module from the same origin. The browser
+module owns drafts, refresh ordering and DOM updates; TypeScript checks its JSDoc types during
+`pnpm typecheck`. It is served as JavaScript without another build step. The browser regression
+loads the complete page renderer and module with mocked API and wallet responses; the HTTP test
+checks that the listener serves both resources. Neither test extracts functions from source comments.
+
+The Treasury strategy UI derives labels and control permissions in `web/src/strategy-presentation.ts`.
+This is presentation only; server controls and dispatch still recheck authorization. Query refreshes
+can name affected reads for local changes, or skip shared invalidation for plan previews.
+Money execution and recovery retain broad invalidation. These behaviors are tested offline in
+`test/strategy-presentation.test.ts`, `test/query-refresh.test.ts` and the browser suites.
+
+Invoice session isolation is offline browser-tested: account changes clear rendered records and
+polling, and pending reads or submissions from the previous session cannot update the new account's
+form or lists. Saved drafts remain scoped by account. This does not cancel a submission already
+accepted by the server.

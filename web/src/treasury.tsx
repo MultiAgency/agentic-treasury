@@ -1,10 +1,15 @@
 import { ArrowUUpLeft, Bank, LockKey, UsersThree } from "@phosphor-icons/react";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { ago, client, fromUnits, type Overview, short, toUnits, useAttempt } from "./lib";
+import { ago, client, fromUnits, kindOf, type Overview, short, toUnits, useAttempt } from "./lib";
 import type { Setup } from "./owner";
-import { AssetAmount, PayoutResult, useDestinations, usePayout } from "./payout";
+import { AssetAmount, PaymentReview, type PaymentReviewData, PayoutResult, useDestinations, usePayout } from "./payout";
+import { reviewedPolicyOf } from "./policy-review";
 import { useAgent } from "./shell";
-import { Badge, Button, Card, CopyButton, Details, ErrorBox, input, Section, Spinner } from "./ui";
+import { Badge, Button, Card, ConfirmButton, CopyButton, Details, ErrorBox, input, Section, Spinner } from "./ui";
+import { Field, focusInvalid } from "./form";
+import { accountError } from "./form-validation";
+import { useIsOperator } from "./viewer";
 import { connect, dao, type Transaction, send, useWallet } from "./wallet";
 
 export type Treasury = NonNullable<Awaited<ReturnType<typeof client.treasury.get>>>;
@@ -21,46 +26,51 @@ function LinkTreasury() {
   const wallet = useWallet();
   const daoWallet = dao.use();
   const [accountId, setAccountId] = useState("");
-  const link = useAttempt();
+  const link = useAttempt([["treasury"], ["setup"]]);
+  const operator = useIsOperator();
+  const [submitted, setSubmitted] = useState(false);
 
   const linkTo = (id: string) => link.attempt(() => client.treasury.link({ accountId: id }));
 
   return (
     <Card>
       <p className="text-sm text-muted-foreground">
-        Link the account this agent works for. Funds come from it, can return to it, and its payees become the agent's
-        agreed payees. A DAO votes on each step through Trezu.
+        Link the account this agent works for. Fund from it, review returns to it, and review its suggested payees
+        for policy approval. A DAO votes through Trezu.
       </p>
       <div className="flex flex-wrap gap-3">
         <Button
           variant="outline"
-          disabled={link.busy || wallet.status !== "connected"}
+          disabled={!operator || link.busy || wallet.status !== "connected"}
           onClick={() => wallet.accountId && linkTo(wallet.accountId)}
         >
           <Bank size={18} /> {wallet.accountId ? `Use ${short(wallet.accountId, 24)}` : "Use my account"}
         </Button>
         <Button
           variant="outline"
-          disabled={link.busy || daoWallet.status === "connecting"}
+          disabled={!operator || link.busy || daoWallet.status === "connecting"}
           onClick={() => link.attempt(linkTrezuDao)}
         >
           {daoWallet.status === "connecting" ? <Spinner /> : <UsersThree size={18} />} Connect a DAO with Trezu
         </Button>
       </div>
       <form
-        className="flex gap-3"
+        noValidate className="flex flex-wrap items-end gap-3"
         onSubmit={(e) => {
           e.preventDefault();
-          if (accountId.trim()) linkTo(accountId.trim());
+          setSubmitted(true);
+          if (accountError(accountId)) { focusInvalid(e.currentTarget); return; }
+          if (operator && !link.busy) linkTo(accountId.trim());
         }}
       >
-        <input
-          className={`${input} flex-1`}
-          placeholder="or any NEAR account, e.g. treasury.near or name.sputnik-dao.near"
+        <Field label="Treasury NEAR account" name="treasury-account" autoComplete="off" spellCheck={false} autoCapitalize="none"
+          className="flex-1"
+          error={submitted ? accountError(accountId) : undefined}
+          placeholder="treasury.near…"
           value={accountId}
           onChange={(e) => setAccountId(e.target.value)}
         />
-        <Button type="submit" variant="outline" disabled={link.busy || !accountId.trim()}>
+        <Button type="submit" variant="outline" disabled={link.busy || !operator}>
           {link.busy && <Spinner />} Link
         </Button>
       </form>
@@ -100,6 +110,8 @@ function Fund({ treasury }: { treasury: Treasury }) {
   const [asset, setAsset] = useState<"USDC" | "NEAR">("USDC");
   const [value, setValue] = useState("");
   const fund = useAttempt();
+  const [submitted, setSubmitted] = useState(false);
+  const [proposal, setProposal] = useState<number | null>();
   const amount = toUnits(value, asset === "USDC" ? 6 : 24);
 
   return (
@@ -112,26 +124,31 @@ function Fund({ treasury }: { treasury: Treasury }) {
         Funds land in the agent's private balance.
       </p>
       <form
-        className="flex flex-wrap gap-3"
+        noValidate className="flex flex-wrap items-end gap-3"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!amount) return;
+          setSubmitted(true);
+          if (!amount) { focusInvalid(e.currentTarget); return; }
+          if (fund.busy || !signer.ready) return;
+          setProposal(undefined);
           fund.attempt(async () => {
             const { transaction } = await client.treasury.fund({ asset, amount });
             const outcome = await signer.send(transaction);
             if (!signer.isDao) return "Sent. The book updates once the deposit lands.";
             const id = proposalId(outcome);
+            setProposal(id);
             return `Filed in Trezu${id === null ? "" : ` as proposal #${id}`}. It pays out once the DAO approves.`;
           });
         }}
       >
-        <input className={`${input} w-36`} inputMode="decimal" placeholder="Amount" value={value} onChange={(e) => setValue(e.target.value)} />
-        <select className={`${input} pr-8`} value={asset} onChange={(e) => setAsset(e.target.value as "USDC" | "NEAR")}>
+        <Field label="Funding amount" name="funding-amount" autoComplete="off" className="w-36" inputMode="decimal" placeholder="Amount" value={value} onChange={(e) => setValue(e.target.value)} error={submitted && !amount ? `Enter an amount greater than zero, with up to ${asset === "USDC" ? 6 : 24} decimal places.` : undefined} />
+        <label className="flex min-w-0 flex-col gap-1 text-sm"><span className="text-muted-foreground">Funding asset</span>
+        <select name="funding-asset" className={`${input} pr-8`} value={asset} onChange={(e) => setAsset(e.target.value as "USDC" | "NEAR")}>
           <option value="USDC">USDC</option>
           <option value="NEAR">NEAR (as wNEAR)</option>
-        </select>
+        </select></label>
         {signer.ready ? (
-          <Button type="submit" disabled={fund.busy || !amount}>
+          <Button type="submit" disabled={fund.busy}>
             {fund.busy && <Spinner />} {signer.isDao ? "File funding proposal" : "Send"}
           </Button>
         ) : (
@@ -145,7 +162,8 @@ function Fund({ treasury }: { treasury: Treasury }) {
           Connected as {short(signer.connected, 24)}, not {short(treasury.accountId, 24)}.
         </p>
       )}
-      {fund.message && <p className="text-sm text-success-muted-foreground">{fund.message}</p>}
+      <p role="status" className="text-sm text-success-muted-foreground">{fund.busy ? "Complete funding in your wallet…" : fund.message}</p>
+      {proposal !== undefined && <a className="text-sm underline" href={`https://trezu.app/${treasury.accountId}/requests${proposal === null ? "" : `/${proposal}`}`} target="_blank" rel="noopener noreferrer">Review and vote in Trezu</a>}
       <ErrorBox error={fund.error} />
     </div>
   );
@@ -174,9 +192,9 @@ function ConfidentialFund({ treasury, wallet }: { treasury: Treasury; wallet: st
       <p className="text-sm text-warning-muted-foreground">
         Keep the <code>nearcom:</code> prefix. Without it the payment leaves the private side and lands publicly.
       </p>
-      <Button className="self-start" onClick={() => window.open(payment, "_blank", "noopener")}>
+      <a href={payment} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 self-start items-center justify-center rounded-full bg-primary px-5 py-2 font-medium text-primary-foreground hover:bg-primary/90">
         Open payment in Trezu
-      </Button>
+      </a>
     </div>
   );
 }
@@ -185,6 +203,9 @@ function Return({ treasury, data, setup }: { treasury: Treasury; data: Overview;
   const destinations = useDestinations(data, setup);
   const entry = destinations.current.find((d) => d.address === treasury.accountId);
   const payout = usePayout();
+  const operator = useIsOperator();
+  const [submitted, setSubmitted] = useState(false);
+  const [review, setReview] = useState<PaymentReviewData>();
   const [asset, setAsset] = useState(data.book[0]?.asset ?? "");
   const [value, setValue] = useState("");
   const holding = data.book.find((h) => h.asset === asset);
@@ -199,18 +220,26 @@ function Return({ treasury, data, setup }: { treasury: Treasury; data: Overview;
             NEAR Intents balance.
           </p>
           <form
-            className="flex flex-wrap items-center gap-3"
+            noValidate className="flex flex-wrap items-end gap-3"
             onSubmit={(e) => {
               e.preventDefault();
-              if (amount) payout.pay({ recipient: treasury.accountId, asset, amount, confidential: entry.confidential });
+              setSubmitted(true);
+              if (!amount) { focusInvalid(e.currentTarget); return; }
+              if (operator && !payout.busy && holding) setReview({
+                request: { recipient: treasury.accountId, asset, amount, confidential: entry.confidential },
+                symbol: holding.symbol, decimals: holding.decimals, ownerApproval: data.policy.policy?.owner_approval,
+                expectedPolicy: reviewedPolicyOf(data),
+              });
             }}
           >
-            <AssetAmount book={data.book} asset={asset} setAsset={setAsset} value={value} setValue={setValue} />
-            <Button type="submit" disabled={payout.busy || !amount}>
-              {payout.busy ? <Spinner /> : <ArrowUUpLeft size={18} />} Return
+            <AssetAmount book={data.book} asset={asset} setAsset={setAsset} value={value} setValue={setValue} submitted={submitted} />
+            <Button type="submit" disabled={payout.busy || !operator}>
+              {payout.busy ? <Spinner /> : <ArrowUUpLeft size={18} />} {payout.busy ? "Sending…" : "Review return"}
             </Button>
             <PayoutResult result={payout.result} />
           </form>
+          <span role="status" className="sr-only">{payout.busy ? "Submitting return payment…" : ""}</span>
+          {review && <PaymentReview payment={review} currentPolicy={data.notInForce ? undefined : reviewedPolicyOf(data)} onClose={() => setReview(undefined)} onConfirm={payout.pay} />}
           <ErrorBox error={payout.error} />
         </>
       ) : (
@@ -265,18 +294,19 @@ function Deposit({ empty }: { empty: boolean }) {
             <p className="text-muted-foreground">
               {deposit.minAmount && `At least ${fromUnits(deposit.minAmount, 6)} USDC. `}
               {deposit.expiresAt && `Expires ${ago(deposit.expiresAt)}. `}
-              The book updates once it lands.
+              The book updates once it lands. Do not send to an expired or already used address.
             </p>
           </div>
         ) : (
           <div className="flex flex-col items-start gap-4">
             <p className="text-sm text-muted-foreground">Incoming funds need no grant and no owner signature.</p>
-            <ErrorBox error={error} />
             <Button disabled={busy} onClick={request}>
               {busy && <Spinner />} Get a deposit address
             </Button>
           </div>
         )}
+        {deposit && <Button className="self-start" variant="outline" disabled={busy} onClick={request}>{busy && <Spinner />} Get a new deposit address</Button>}
+        <ErrorBox error={error} />
       </Card>
     </Section>
   );
@@ -306,21 +336,23 @@ function ConfidentialSetting({ treasury }: { treasury: Treasury }) {
 
 export function TreasurySection() {
   const { treasury, data, setup } = useAgent();
-  const unlink = useAttempt();
-  const empty = data.book.every((h) => h.usd === 0);
+  const unlink = useAttempt([["treasury"], ["setup"]]);
+  const operator = useIsOperator();
+  const empty = data.book.every((h) => BigInt(h.public) + BigInt(h.confidential) === 0n);
   return (
     <>
+    {!treasury && <Deposit empty={empty} />}
     <Section
-      title="Treasury"
-      description="The account this agent works for: any NEAR account, or a DAO that votes on funding and payees."
+      title={treasury ? "Funding" : "Treasury account"}
+      description={treasury ? "Fund this agent from its linked account." : "Optional: link an account for funding, returns and suggested payees."}
     >
       {!treasury ? (
-        <LinkTreasury />
+        <Details summary="Link a treasury account"><LinkTreasury /></Details>
       ) : (
         <Card>
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex flex-col gap-1">
-              <span className="font-mono text-lg">{treasury.accountId}</span>
+              <span className="break-all font-mono text-lg">{treasury.accountId}</span>
               <span className="text-sm text-muted-foreground">
                 {treasury.balances.near} NEAR · {fromUnits(treasury.balances.usdc, 6)} USDC in the account
               </span>
@@ -352,16 +384,21 @@ export function TreasurySection() {
               </>
             )}
             <div>
-              <Button variant="outline" size="sm" disabled={unlink.busy} onClick={() => unlink.attempt(() => client.treasury.unlink())}>
-                Unlink this treasury
-              </Button>
+              <ConfirmButton label="Unlink this treasury" title="Unlink this treasury?"
+                description={`Unlink ${treasury.accountId} from this dashboard. Funding and its suggested payees will no longer be shown here. This does not move funds or change the signed policy.`}
+                confirm="Unlink treasury" disabled={unlink.busy || !operator} onConfirm={() => unlink.attempt(() => client.treasury.unlink())} />
             </div>
             <ErrorBox error={unlink.error} />
           </Details>
         </Card>
       )}
     </Section>
-    {!treasury && <Deposit empty={empty} />}
+    <div className="flex flex-wrap gap-4 text-sm">
+      <Link to="/" className="underline">Check the balance</Link>
+      <Link to={kindOf(data) === "treasury" ? "/automations" : "/payees"} hash={kindOf(data) === "treasury" ? "rebalance" : undefined} className="underline">
+        {kindOf(data) === "treasury" ? "Continue to rebalance preview" : "Continue to agreements"}
+      </Link>
+    </div>
     </>
   );
 }

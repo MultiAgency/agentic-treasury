@@ -3,7 +3,10 @@ import { useState } from "react";
 import type { Overview } from "./lib";
 import { ownerSigner, type Setup, useOwnerAction } from "./owner";
 import { BUDGET, changesOf, type Draft, differences, draftOf, WINDOWS } from "./policy-draft";
+import { focusInvalid } from "./form";
+import { useDirtyDraft, confirmDiscard } from "./dirty-draft";
 import { Button, Card, ErrorBox, input, Spinner } from "./ui";
+import { reviewedPolicyOf, sameReviewedPolicy } from "./policy-review";
 
 function Toggle({ checked, onChange, children }: { checked: boolean; onChange: (checked: boolean) => void; children: string }) {
   return (
@@ -18,20 +21,34 @@ function Toggle({ checked, onChange, children }: { checked: boolean; onChange: (
  * the owner's wallet, or by the DAO in one proposal. Destinations are edited under Payees.
  */
 export function Editor({ policy, data, setup, onDone }: { policy: AgentPolicy; data: Overview; setup: Setup; onDone: () => void }) {
-  const initial = draftOf(policy, data.book);
-  const [draft, setDraft] = useState(initial);
+  const [baseline, setBaseline] = useState(() => ({ draft: draftOf(policy, data.book), policy: reviewedPolicyOf(data) }));
+  const [draft, setDraft] = useState(baseline.draft);
   const [reviewing, setReviewing] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
   const action = useOwnerAction(setup);
   const result = changesOf(draft, data.book);
-  const lines = differences(initial, draft, data.book);
+  const lines = differences(baseline.draft, draft, data.book);
+  const currentPolicy = reviewedPolicyOf(data);
+  const stale = !sameReviewedPolicy(baseline.policy, currentPolicy);
   const set = (patch: Partial<Draft>) => {
     setReviewing(false);
     setDraft({ ...draft, ...patch });
   };
   const viaDao = ownerSigner(setup) === "dao";
+  const dirty = lines.length > 0;
+  useDirtyDraft((dirty || stale) && !action.busy);
+  const invalid = submitted && "invalid" in result ? result.invalid : undefined;
+  const fieldError = (name: string) => invalid === name;
+  const cancel = () => { if (!dirty || confirmDiscard()) onDone(); };
 
   return (
     <Card>
+      <form noValidate className="flex min-w-0 flex-col gap-5" onSubmit={(e) => {
+        e.preventDefault();
+        setSubmitted(true);
+        if ("invalid" in result) { focusInvalid(e.currentTarget); return; }
+        if (dirty && !stale && !action.busy) setReviewing(true);
+      }}>
       <div className="flex flex-col gap-3">
         <h3 className="text-lg font-medium">What the agent may do</h3>
         <Toggle checked={draft.swap} onChange={(swap) => set({ swap })}>
@@ -55,7 +72,7 @@ export function Editor({ policy, data, setup, onDone }: { policy: AgentPolicy; d
 
       <div className="flex flex-col gap-3 border-t pt-5">
         <h3 className="text-lg font-medium">Caps per asset</h3>
-        <p className="text-sm text-muted-foreground">Rolling windows. Blank means no cap in that window.</p>
+        <p className="text-sm text-muted-foreground">Per-asset reset timing is not verified on the deployed provider. Pinned provider tests use UTC calendar hours and days. Blank means no cap in that period.</p>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[32rem] text-sm">
             <thead>
@@ -74,17 +91,22 @@ export function Editor({ policy, data, setup, onDone }: { policy: AgentPolicy; d
                 .map((h) => (
                   <tr key={h.asset}>
                     <td className="py-1 pr-3">{h.symbol}</td>
-                    {WINDOWS.map(([window]) => (
+                    {WINDOWS.map(([window, label]) => (
                       <td key={window} className="py-1 pr-2">
                         <input
                           className={`${input} w-full`}
                           inputMode="decimal"
+                          name={`${h.asset}-${window}`} autoComplete="off"
+                          aria-label={`${h.symbol} ${label.toLowerCase()} cap`}
+                          aria-invalid={fieldError(`${h.symbol} ${label.toLowerCase()}`)}
+                          aria-describedby={fieldError(`${h.symbol} ${label.toLowerCase()}`) ? `${window}-${h.asset}-error` : undefined}
                           placeholder="No cap"
                           value={draft.caps[window][h.asset] ?? ""}
                           onChange={(e) =>
                             set({ caps: { ...draft.caps, [window]: { ...draft.caps[window], [h.asset]: e.target.value } } })
                           }
                         />
+                        {fieldError(`${h.symbol} ${label.toLowerCase()}`) && <p id={`${window}-${h.asset}-error`} className="mt-1 text-destructive-muted-foreground">Enter a positive amount with up to {h.decimals} decimal places, or leave blank for no cap.</p>}
                       </td>
                     ))}
                   </tr>
@@ -102,21 +124,31 @@ export function Editor({ policy, data, setup, onDone }: { policy: AgentPolicy; d
               className={input}
               inputMode="decimal"
               placeholder="No cap"
+              name={key} autoComplete="off"
+              aria-invalid={fieldError(`the budget ${label}`)}
+              aria-describedby={fieldError(`the budget ${label}`) ? `${key}-error` : undefined}
               value={draft.budget[key]}
               onChange={(e) => set({ budget: { ...draft.budget, [key]: e.target.value } })}
             />
+            {fieldError(`the budget ${label}`) && <span id={`${key}-error`} className="text-destructive-muted-foreground">Enter a nonnegative decimal amount, or leave blank for no cap.</span>}
           </label>
         ))}
         <label className="flex flex-col gap-1 text-sm">
           <span className="text-muted-foreground">Actions an hour</span>
-          <input className={input} inputMode="numeric" placeholder="No cap" value={draft.rate} onChange={(e) => set({ rate: e.target.value })} />
+          <input className={input} name="actions-per-hour" autoComplete="off" aria-invalid={fieldError("actions an hour")} aria-describedby={fieldError("actions an hour") ? "rate-error" : undefined} inputMode="numeric" placeholder="No cap" value={draft.rate} onChange={(e) => set({ rate: e.target.value })} />
+          {fieldError("actions an hour") && <span id="rate-error" className="text-destructive-muted-foreground">Enter a positive whole number, or leave blank for no cap.</span>}
         </label>
       </div>
 
       <div className="flex flex-col gap-3 border-t pt-5">
-        {"invalid" in result && <p className="text-sm text-warning-muted-foreground">Check {result.invalid}: it isn't a valid amount.</p>}
-        {reviewing && "changes" in result && (
-          <div className="flex flex-col gap-2 text-sm">
+        <ErrorBox error={stale ? "The policy changed or is unavailable. Your draft is preserved. Compare it with the current policy before signing." : undefined} />
+        {stale && <Button variant="outline" disabled={!currentPolicy || action.busy} onClick={() => {
+          setBaseline({ draft: draftOf(policy, data.book), policy: currentPolicy });
+          setReviewing(false);
+        }}>Compare draft with current policy</Button>}
+        <ErrorBox error={invalid ? `Check ${invalid}. Correct the highlighted field before reviewing.` : undefined} />
+        {reviewing && !stale && "changes" in result && (
+          <div role="status" className="flex flex-col gap-2 text-sm">
             <span className="text-muted-foreground">
               {viaDao ? "The DAO will be asked to sign these changes:" : "You will sign these changes:"}
             </span>
@@ -131,24 +163,25 @@ export function Editor({ policy, data, setup, onDone }: { policy: AgentPolicy; d
         )}
         <ErrorBox error={action.error} />
         <div className="flex flex-wrap items-center gap-3">
-          {reviewing && "changes" in result ? (
+          {reviewing && !stale && "changes" in result ? (
             <Button
               disabled={action.busy}
               onClick={async () => {
-                if (await action.run({ type: "policy_update", changes: result.changes })) onDone();
+                if (stale || !baseline.policy) return;
+                if (await action.run({ type: "policy_update", changes: result.changes, expectedPolicy: baseline.policy })) onDone();
               }}
             >
               {action.busy && <Spinner />} {viaDao ? "Propose in Trezu" : "Sign update"}
             </Button>
           ) : (
-            <Button disabled={!("changes" in result) || lines.length === 0} onClick={() => setReviewing(true)}>
+            <Button type="submit" disabled={action.busy || !dirty || stale}>
               Review changes
             </Button>
           )}
-          <Button variant="ghost" disabled={action.busy} onClick={onDone}>
+          <Button variant="ghost" disabled={action.busy} onClick={cancel}>
             Cancel
           </Button>
-          {action.label && <span className="text-sm text-muted-foreground">{action.label}</span>}
+          <span role="status" className="text-sm text-muted-foreground">{action.label}</span>
         </div>
         {action.digest && (
           <p className="text-sm text-muted-foreground">
@@ -156,6 +189,7 @@ export function Editor({ policy, data, setup, onDone }: { policy: AgentPolicy; d
           </p>
         )}
       </div>
+      </form>
     </Card>
   );
 }

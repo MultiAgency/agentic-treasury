@@ -15,6 +15,7 @@ the Agent Connect catalog and plans more:
 | **Treasury** (Agentic Treasury Management) | An agent rebalances toward a target on its own, quoting every swap, inside per-asset caps and a USD budget the DAO signed; idle funds stay confidential | [docs/treasury.md](docs/treasury.md) |
 
 Each doc measures its briefs requirement by requirement (complete, tested, live) and lists what isn't covered.
+The app shows the two running briefs and their evidence stages; additional roadmap briefs stay in those planning docs.
 
 ## How it works
 
@@ -67,15 +68,31 @@ The command line has only what the dashboard doesn't: owner actions signed with 
 Two pages on Railway. Signing in with a NEAR wallet signs a message, never a transaction.
 
 - **Dashboard**, https://proto.multiagency.ai. Signed out, it shows the two areas, Payables and
-  Treasury: each brief from the Agent Connect catalog as capabilities (what the agent does) and guarantees
+  Treasury: each running brief from the Agent Connect catalog as capabilities (what the agent does) and guarantees
   (what it can't do). Each guarantee names who stops a misbehaving agent (the signed policy, our server, or
-  nobody yet), and each row says how it's known: held or working on mainnet, tested offline, or not yet. Each
-  card counts its running brief's guarantees enforced by the signed policy and its requirements on mainnet.
+  nobody yet), and each row says how it's known: observed on mainnet, tested offline, per pinned provider source (deployed behavior unverified), or not yet.
+  The locally prepared cards always show **Evidence coverage** for the running brief: mainnet observations
+  on this agent, observations on another agent, offline-only tests and requirements not yet demonstrated.
+  Known limitations stay visible on public and compact signed-in cards. These are recorded observations,
+  not live status, a completion percentage or proof of every guarantee. The summary and limitations come
+  from the canonical inventory; detailed requirements remain under **Capabilities and guarantees**.
   It reads nothing from the server. Members of `agentic.sputnik-dao.near` sign in to see the treasury and
   the proposals.
   It is the treasury agent's executor and runs the payout agent approve-only.
 - **Invoices**, https://invoices.multiagency.ai, where anyone asks the DAO to be paid. It is the payout
   agent's executor.
+
+The frontend layout changes are prepared locally, not yet verified on the hosted deployment: signed-in
+entry cards retain loading/error/retry states; on mobile, visitors see both areas before the sign-in form.
+The cross-agent attention list keeps known items visible while independent checks load or fail.
+An existing agent’s records remain accessible without a grant; the run view explains why a new run
+is unavailable without a grant or on an approve-only host.
+Treasury's Overview summarizes the latest retained run, even after a quiet day, and links to retained history; Payables keeps
+payment timelines prominent. Overview labels incomplete attention checks, and its visible evidence link
+opens the running brief without nested disclosures. Public requirement stages remain expandable.
+Install the pinned browser once with `pnpm exec playwright install chromium`, then run
+`pnpm test:browser` to build the app and run all offline browser suites in `test/browser/`.
+They intercept requests and cover mobile layouts, unavailable data, retry and recorded run outcomes. Automations holds settings and manual previews, with a link to the run view and **Run now**.
 
 Each agent in `deploy/dashboard.json` names its `owner`, and the gateway decides per agent who may see
 it, from that owner at most a minute old. When the owner is a Sputnik DAO, an account in any of its roles
@@ -142,10 +159,8 @@ key is derived from the DAO, so every owner action becomes a DAO proposal callin
 When the vote passes, the server picks up the signature and submits it. The Agent API needs no
 changes. See `src/dao-owner.ts`.
 
-Tested on mainnet with `agentic.sputnik-dao.near`: creating an agent, issuing a grant, changing its
-policy and freezing it, each by DAO vote (proposals #9 to #12). The freeze was filed from the
-dashboard through Trezu. Later, policy edits and the approvals of two held payouts were filed and
-voted the same way from the dashboard; both payouts settled (approvals #17 and #21, edits #20 and #22).
+The recorded DAO ownership checks and their evidence limits are in the
+[demo verification table](DEMO.md#what-is-verified).
 
 A confidential Trezu treasury funds its agent with a payment from its confidential balance to
 `nearcom:<the agent's wallet account>`, which the Funding page links to. Without the `nearcom:`
@@ -158,17 +173,41 @@ Each area's doc maps every claim to how it is known: [Payables](docs/facilitator
 [docs/mainnet-log.md](docs/mainnet-log.md). Operation ids and amounts are kept in a private record, since the
 treasury is confidential; they are available to reviewers on request.
 
-Beyond the briefs, the signed-out page lists how the hosts were shown to run on mainnet (`PROVEN` in
-`web/src/beats.ts`):
-- On the 2026-10-12 build ([DEMO.md](DEMO.md#what-is-verified)):
-  - state survived a restart and a redeploy;
-  - the autopilot ran on schedule;
-  - each agent had one executor;
-  - signed-out callers were refused every agent read.
-- Every policy revision reproduces its hash, and the owner's grant and approval signatures verify
-  ([log](docs/mainnet-log.md#policy-signatures-and-operation-proofs-2026-10-13t0410z)).
+The app and the area tables use one [canonical requirement/evidence inventory](evidence/inventory.ts).
+Historical deployment checks and their limits are in the generated
+[demo verification table](DEMO.md#what-is-verified). Edit the inventory, then run
+`pnpm evidence:write`; `pnpm evidence:check` and `pnpm test` reject stale generated sections.
+Record new mainnet observations in [the dated log](docs/mainnet-log.md), then reference that evidence
+in the inventory. Keep private release details out of both. Walkthroughs link to these records instead
+of maintaining separate requirement statuses.
 
 ## Not done yet
+
+- Payment recovery reads and owner-action discovery are locally implemented and offline-tested, not
+  verified on the deployed hosts. Recent payout discovery scans at most 250 provider records and
+  filters to the past day; incomplete scans are explicit. Original terms depend on provider/local
+  retention, and owner actions are discoverable only on the instance holding their durable records.
+  The dashboard withholds repeat signing while a recorded action is prepared or submitted; this is
+  not a new cross-instance lock or a stronger payment-settlement guarantee.
+  During setup failure, read-only Activity depends on the gateway continuing to authorize access.
+  Unverified ownership after a cold gateway restart remains denied; retained records are not fresh
+  provider outcomes. Setup recovery is locally tested, not verified on deployed hosts.
+
+- The inline Treasury strategy workflow is locally implemented and offline/browser-fixture tested,
+  not deployed or mainnet-observed. Operators edit allocations and limits, save with the schedule off,
+  and explicitly enable only after the owner authorizes the saved strategy. Server controls reject
+  stale reviews; stop does not require provider availability. Configuration coordination is single-host,
+  not distributed fencing; direct file edits and provider changes after a read remain outside it.
+- Prepared-invoice continuation is locally implemented and offline-tested (`test/invoice-http.test.ts`),
+  but not yet verified on a deployed host. It reuses the authenticated payee’s stored terms and operation
+  identity; revised or submission-attempted invoices are refused. It does not resolve unknown outcomes.
+
+- The AG-UI run-log adapter, private dashboard export and read-only recording inspector are offline-tested
+  ([Treasury](docs/treasury.md#run-log-adapter-and-export-offline-tested)). The inspector steps through
+  recorded observations; it provides no timed playback or live stream. New ticks record intermediate
+  stages and provider-accepted submissions for the polling run view; older ticks retain only their
+  original evidence. See the [progress rollout](docs/operations.md#run-progress-rollout) before deployment.
+  No real-recording or mainnet validation is claimed for these additions.
 
 The [enforcement assessment](docs/enforcement.md#status) tracks the current evidence for the signed
 spending envelope, including cumulative limits, policy binding and execution-artifact trust.

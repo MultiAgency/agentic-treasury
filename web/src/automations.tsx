@@ -1,15 +1,20 @@
-import { ArrowRight, ArrowsLeftRight, CheckCircle, LockKey, Timer } from "@phosphor-icons/react";
+import { ArrowRight, ArrowsLeftRight, CheckCircle, LockKey } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { ago, amount, client, swaps, useAttempt, useRun, usd } from "./lib";
+import { StrategyWorkflow } from "./strategy-workflow";
+import { amount, client, swaps, useAttempt, useRun, usd } from "./lib";
+import { useIsOperator } from "./viewer";
 import { useAgent } from "./shell";
-import { Runs } from "./timeline-run";
-import { Badge, Button, Card, CardHeader, ConfirmButton, Dot, Empty, ErrorBox, input, Note, NotExecuted, Section, Spinner, StatusBadge, statusTone } from "./ui";
+import { Badge, Button, Card, CardHeader, ConfirmButton, Dot, Empty, ErrorBox, Loading, QueryError, Note, NotExecuted, Section, Spinner, StatusBadge, statusTone } from "./ui";
 
 function Rebalance() {
+  const operator = useIsOperator();
+  const executor = useAgent().setup.executor !== false;
+  const hasGrant = Boolean(useAgent().setup.grant);
   const { data } = useAgent();
   const split = data.book.map((h) => `${Math.round((data.target[h.asset] ?? 0) * 100)}% ${h.symbol}`).join(" / ");
-  const preview = useRun(client.rebalance);
+  const preview = useRun(client.rebalance, []);
   const execution = useRun(client.executePlan);
   const busy = preview.state === "running" || execution.state === "running";
   const plan = preview.events.find((e) => e.type === "plan");
@@ -84,6 +89,7 @@ function Rebalance() {
         })}
         {rejected?.type === "rejected" && <NotExecuted problems={rejected.problems} again="Preview" />}
         <ErrorBox error={preview.error ?? execution.error} />
+        {(executed || execution.error) && <Link to="/activity" className="text-sm underline">Review operation outcomes before another preview</Link>}
       </div>
 
       <div className="mt-auto flex flex-wrap items-center justify-between gap-3">
@@ -95,15 +101,15 @@ function Rebalance() {
               : plan && `Budget remaining ${usd(plan.budget)}`}
         </span>
         <div className="flex gap-3">
-          <Button variant="outline" disabled={busy} onClick={() => preview.run(undefined)}>
+          <Button variant="outline" disabled={busy || !operator || !executor || !hasGrant} onClick={() => preview.run(undefined)}>
             {preview.state === "running" ? <Spinner /> : null}
             Preview
           </Button>
           <ConfirmButton
             label={execution.state === "running" ? <><Spinner /> Executing</> : "Execute"}
-            disabled={busy || !saved || executed}
+            disabled={busy || !saved || executed || !executor || !hasGrant}
             title="Execute the previewed rebalance on mainnet?"
-            description="Runs the previewed swaps exactly as shown, under the agent's grant, each held to its previewed floor. If the policy, a balance or the price moved past the floor, or the plan expired, nothing runs."
+            description="Runs the previewed swaps exactly as shown, under the agent's grant, each held to its previewed floor. Actions run in sequence. Checks run before execution and before later actions; if execution stops, earlier completed actions remain."
             confirm="Execute swaps"
             onConfirm={() => saved && execution.run({ planId: saved.plan.id })}
           />
@@ -114,6 +120,9 @@ function Rebalance() {
 }
 
 function Sweep() {
+  const operator = useIsOperator();
+  const executor = useAgent().setup.executor !== false;
+  const hasGrant = Boolean(useAgent().setup.grant);
   const { events, state, input, error, run } = useRun(client.sweep);
   const running = state === "running";
   const plan = events.find((e) => e.type === "plan");
@@ -147,12 +156,12 @@ function Sweep() {
         <ErrorBox error={error} />
       </div>
       <div className="mt-auto flex justify-end gap-3">
-        <Button variant="outline" size="sm" disabled={running} onClick={() => run({ execute: false })}>
+        <Button variant="outline" size="sm" disabled={running || !operator || !executor || !hasGrant} onClick={() => run({ execute: false })}>
           Preview
         </Button>
         <ConfirmButton
           label={running && input?.execute ? <><Spinner /> Shielding</> : "Shield"}
-          disabled={exposed.length === 0 || running || input?.execute}
+          disabled={exposed.length === 0 || running || input?.execute || !executor || !hasGrant}
           title="Shield every public balance?"
           description="Moves each public balance into the agent's confidential balance on mainnet. It stays in the account, out of public view."
           confirm="Shield"
@@ -163,85 +172,46 @@ function Sweep() {
   );
 }
 
-/**
- * The agent working on its own (src/autopilot.ts). Each tick sweeps, then previews a rebalance and
- * executes it only when its swaps are worth no more than the limit; anything larger waits for the owner.
- */
-function Autopilot() {
-  const status = useQuery({ queryKey: ["autopilot"], queryFn: () => client.autopilot.get(), refetchInterval: 30_000 });
-  const [draft, setDraft] = useState<{ everyMin: string; maxUsd: string }>();
-  const { error, busy, attempt } = useAttempt();
-  if (!status.data) return null;
-  const s = status.data;
-  const form = draft ?? { everyMin: String(s.everyMin), maxUsd: String(s.maxUsd) };
-  const everyMin = Number(form.everyMin);
-  const maxUsd = Number(form.maxUsd);
-  const valid = Number.isInteger(everyMin) && everyMin >= 5 && Number.isInteger(maxUsd) && maxUsd >= 0;
-
-  const act = (work: () => Promise<unknown>) =>
-    attempt(async () => {
-      await work();
-      setDraft(undefined);
-    });
-  const save = (on: boolean) => act(() => client.autopilot.set({ on, everyMin, maxUsd }));
-
-  return (
-    <Card>
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <CardHeader
-          icon={<Timer size={20} weight="bold" />}
-          title="Autopilot"
-          description="Sweeps public balances, then rebalances on its own when the swaps are within the limit. Larger rebalances wait for you. The policy's caps and budget still bound everything."
-        />
-        <Badge tone={s.on ? "success" : "neutral"}>{s.on ? `On · next ${s.nextRun ? ago(s.nextRun) : "soon"}` : "Off"}</Badge>
-      </div>
-      <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-        <label className="flex flex-col gap-1">
-          <span className="text-muted-foreground">Every (minutes)</span>
-          <input className={input} inputMode="numeric" value={form.everyMin} onChange={(e) => setDraft({ ...form, everyMin: e.target.value })} />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-muted-foreground">Execute rebalances up to (USD)</span>
-          <input className={input} inputMode="numeric" value={form.maxUsd} onChange={(e) => setDraft({ ...form, maxUsd: e.target.value })} />
-        </label>
-      </div>
-      {!valid && <p className="text-sm text-warning-muted-foreground">At least every 5 minutes, and a limit in whole dollars, $0 or more.</p>}
-      <ErrorBox error={error} />
-      <div className="mt-auto flex flex-wrap justify-end gap-3">
-        {draft && s.on && (
-          <Button variant="outline" size="sm" disabled={busy || !valid} onClick={() => save(true)}>
-            Save
-          </Button>
-        )}
-        {s.on ? (
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => save(false)}>
-            Turn off
-          </Button>
-        ) : (
-          <ConfirmButton
-            label="Turn on"
-            disabled={busy || !valid}
-            title="Let the agent act on its own?"
-            description={`Every ${everyMin} minutes this server shields public balances and executes rebalances of up to $${maxUsd} without asking. It runs while this server runs.`}
-            confirm="Turn on"
-            onConfirm={() => save(true)}
-          />
-        )}
-      </div>
-    </Card>
-  );
+/** Existing Payables schedules can be stopped without offering Treasury configuration. */
+function PayablesSchedule() {
+  const operator = useIsOperator();
+  const executor = useAgent().setup.executor !== false;
+  const status = useQuery({ queryKey: ["autopilot"], queryFn: () => client.autopilot.get(), retry: false });
+  const { busy, error, message, attempt } = useAttempt();
+  if (status.error) return <QueryError error={status.error} retry={() => status.refetch()} />;
+  if (status.isPending) return <Loading label="Checking for an existing schedule…" />;
+  if (!status.data.on && !message) return null;
+  return <Card>
+    {status.data.on && <><p>An existing schedule is on. Treasury strategy configuration is not available for Payables.</p>
+      <Button variant="outline" disabled={busy || !operator || !executor} onClick={() => attempt(async () => {
+        await client.autopilot.stop();
+        return "Schedule off. Operations already submitted may still finish.";
+      })}>Turn off</Button></>}
+    {message && <p role="status">{message}</p>}
+    <ErrorBox error={error} />
+  </Card>;
 }
 
 /** The fixed strategies, each run on demand, and the autopilot that runs them unattended. */
 export function Automations() {
+  const operator = useIsOperator();
+  const executor = useAgent().setup.executor !== false;
+  const hasGrant = Boolean(useAgent().setup.grant);
   const { data } = useAgent();
   return (
-    <Section title="Automations" description="Each strategy previews first. Executing asks once, then runs under the agent's grant.">
-      <Autopilot />
-      <Runs />
+    <Section title="Automations" description={swaps(data) ? "Preview a strategy before executing under the agent’s grant." : "Preview a sweep to shield public balances."}>
+      <nav className="flex flex-wrap gap-4 text-sm" aria-label="Automation actions">
+        {swaps(data) && <a href="#rebalance" className="underline">Preview a rebalance</a>}
+        <a href="#sweep" className="underline">Preview a sweep</a>
+        <Link to="/policy" hash="grants" className="underline">Review or renew the grant</Link>
+      </nav>
+      {(!operator || !executor) && <Note>Operators on the executor can preview, execute, and change automation settings. Members can review recorded runs.</Note>}
+      {!hasGrant && <Note>A grant is required for new automation actions. <Link to="/policy" hash="grants" className="underline">Review grants and permissions</Link>.</Note>}
+      {swaps(data) ? <StrategyWorkflow /> : <PayablesSchedule />}
+      {swaps(data) && <Link to="/follow/run" className="self-start text-sm font-medium underline">View treasury runs and run now →</Link>}
       <div className="grid gap-6 lg:grid-cols-2">
-        {swaps(data) && <Rebalance />}
-        <Sweep />
+        {swaps(data) && <div id="rebalance" className="scroll-mt-48 lg:col-span-2"><Rebalance /></div>}
+        <div id="sweep" className="scroll-mt-48"><Sweep /></div>
       </div>
     </Section>
   );

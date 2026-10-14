@@ -119,3 +119,18 @@ test("a shield that becomes uncertain prevents the swap and subsequent legs", as
   assert.equal(events.at(-1)?.type, "action");
   assert.equal(readOps()[0]?.status, "UNCERTAIN");
 });
+
+
+test("submission observers run after the journal records acceptance and cannot stop outcome tracking", async () => {
+  const plan = savePlan((await observe()).snapshot, "rebalance", "offline test", [swap("5")], new Date(time));
+  const observations: { method: string; recorded: boolean }[] = [];
+  const events = [];
+  for await (const event of executePlan(plan.id, () => new Date(time), { onSubmitted(method, correlationId) {
+    observations.push({ method, recorded: readOps().some(op => op.correlationId === correlationId && op.status === "SENT") });
+    throw new Error("supplementary display failed");
+  } })) events.push(event);
+  assert.deepEqual(observations, [{ method: "swap", recorded: true }]);
+  assert.deepEqual(sends, ["swap"]);
+  assert.ok(events.some(event => event.type === "action" && event.status === "SUCCESS"));
+  assert.equal(readOps()[0]!.status, "SUCCESS");
+});

@@ -1,6 +1,6 @@
 import { Check, Copy } from "@phosphor-icons/react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
-import { useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { ASSET_COLOR } from "./lib";
 import { useIsOperator } from "./viewer";
 
@@ -19,11 +19,11 @@ export function Button({
   size = "default",
   className = "",
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: keyof typeof BUTTON; size?: "sm" | "default" }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { ref?: React.Ref<HTMLButtonElement>; variant?: keyof typeof BUTTON; size?: "sm" | "default" }) {
   return (
     <button
       type="button"
-      className={`inline-flex items-center justify-center gap-2 rounded-full font-medium whitespace-nowrap transition-colors focus-visible:outline-2 disabled:pointer-events-none disabled:opacity-50 ${size === "sm" ? "h-9 px-4 text-sm" : "h-11 px-5"} ${BUTTON[variant]} ${className}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-full font-medium whitespace-nowrap transition-colors focus-visible:outline-2 disabled:pointer-events-none disabled:opacity-50 ${size === "sm" ? "min-h-11 px-4 text-sm" : "h-11 px-5"} ${BUTTON[variant]} ${className}`}
       {...props}
     />
   );
@@ -101,41 +101,73 @@ export function ConfirmButton({
   onConfirm,
   disabled,
   ownerAction = false,
+  permitted,
+  reviewKey,
 }: {
   label: ReactNode;
   title: string;
   description: string;
   confirm: string;
   onConfirm: () => void;
+  /** Bind this confirmation to a reviewed version; changes require reopening it. */
+  reviewKey?: string;
   disabled?: boolean;
   ownerAction?: boolean;
+  /** Explicit access to the target agent for cross-agent actions. UI only; the gateway enforces it. */
+  permitted?: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const allowed = useIsOperator() || ownerAction;
+  const operator = useIsOperator();
+  const allowed = permitted ?? (operator || ownerAction);
+  const titleId = useId();
+  const descriptionId = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [review, setReview] = useState<{ key: string; title: string; description: string; confirm: () => void }>();
+  const [invalidated, setInvalidated] = useState(false);
+  const changed = Boolean(review && (review.key !== reviewKey || disabled || !allowed));
+  const invalidReview = invalidated || changed;
+  useEffect(() => {
+    if (changed) setInvalidated(true);
+  }, [changed]);
   return (
     <>
-      <Button disabled={disabled || !allowed} title={allowed ? undefined : "Operators only"} onClick={() => dialog.current?.showModal()}>
+      <Button ref={trigger} disabled={disabled || !allowed} title={allowed ? undefined : "Operators only"} onClick={() => {
+        setInvalidated(false);
+        setReview(reviewKey === undefined ? undefined : { key: reviewKey, title, description, confirm: onConfirm });
+        dialog.current?.showModal();
+      }}>
         {label}
       </Button>
       {/* Native modal: focus trap, Escape and backdrop come with the element. */}
       <dialog
         ref={dialog}
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        onClose={() => {
+          setReview(undefined);
+          setInvalidated(false);
+          if (trigger.current?.disabled) document.getElementById("agent-main")?.focus();
+          else trigger.current?.focus();
+        }}
         onClick={(e) => e.target === dialog.current && dialog.current.close()}
-        className="m-auto w-[calc(100%-2rem)] max-w-md rounded-3xl border bg-card p-6 text-foreground shadow-xl backdrop:bg-black/40 backdrop:backdrop-blur-xs"
+        className="m-auto max-h-[90dvh] overflow-y-auto overscroll-contain w-[calc(100%-2rem)] max-w-md rounded-3xl border bg-card p-6 text-foreground shadow-xl backdrop:bg-black/40 backdrop:backdrop-blur-xs"
       >
         <div className="flex flex-col gap-6">
           <div className="flex flex-col gap-2">
-            <h3 className="text-lg font-medium">{title}</h3>
-            <p className="text-sm text-muted-foreground">{description}</p>
+            <h3 id={titleId} className="text-lg font-medium">{review?.title ?? title}</h3>
+            <p id={descriptionId} className="text-sm text-muted-foreground">{review?.description ?? description}</p>
+            {invalidReview && <p role="alert" className="text-sm">This review is no longer current. Cancel and review the action again.</p>}
           </div>
           <div className="flex justify-end gap-3">
-            <Button variant="ghost" onClick={() => dialog.current?.close()}>
+            <Button autoFocus variant="ghost" onClick={() => dialog.current?.close()}>
               Cancel
             </Button>
             <Button
+              disabled={disabled || !allowed || invalidReview}
               onClick={() => {
+                if (disabled || !allowed || invalidReview) return;
                 dialog.current?.close();
-                onConfirm();
+                (review?.confirm ?? onConfirm)();
               }}
             >
               {confirm}
@@ -193,14 +225,13 @@ export function Step({
 
 /** Why an action failed, in the server's or wallet's words; nothing when it didn't. */
 export function ErrorBox({ error }: { error?: string }) {
-  if (!error) return null;
-  return <p className="rounded-xl bg-destructive-muted px-4 py-3 text-sm text-destructive-muted-foreground">{error}</p>;
+  return <div role="alert" aria-atomic="true" className={error ? undefined : "sr-only"}>{error && <p className="rounded-xl bg-destructive-muted px-4 py-3 text-sm text-destructive-muted-foreground">{error}</p>}</div>;
 }
 
 /** A query still on its way: what is loading, so an empty list is never shown in its place. */
 export function Loading({ label }: { label: string }) {
   return (
-    <p className="flex items-center gap-3 text-sm text-muted-foreground">
+    <p role="status" className="flex items-center gap-3 text-sm text-muted-foreground">
       <Spinner /> {label}
     </p>
   );
@@ -209,10 +240,10 @@ export function Loading({ label }: { label: string }) {
 /** A query that failed: the server's words, and a retry, so a failure never reads as "nothing here". */
 export function QueryError({ error, retry }: { error: { message: string }; retry: () => void }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-destructive-muted px-4 py-3 text-sm text-destructive-muted-foreground">
+    <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-destructive-muted px-4 py-3 text-sm text-destructive-muted-foreground">
       <span>{error.message}</span>
       <Button variant="ghost" size="sm" onClick={retry}>
-        Retry
+        Check again
       </Button>
     </div>
   );
@@ -229,11 +260,11 @@ export function StatusBadge({ status, failureCode, children }: { status: string;
   );
 }
 
-/** A plan that didn't run, and why: anything that changed since it was made. */
+/** A rejection can occur after earlier actions; never infer non-execution from it. */
 export function NotExecuted({ problems, again }: { problems: string[]; again: string }) {
   return (
     <div className="flex flex-col gap-1 rounded-xl bg-warning-muted px-4 py-3 text-sm text-warning-muted-foreground">
-      <span className="font-medium">Not executed. {again} again.</span>
+      <span className="font-medium">Execution stopped. Earlier actions may have completed. Review Activity before creating a new {again.toLowerCase()}.</span>
       {problems.map((p) => (
         <span key={p}>– {p}</span>
       ))}
@@ -242,10 +273,28 @@ export function NotExecuted({ problems, again }: { problems: string[]; again: st
 }
 
 export function CopyButton({ text }: { text: string }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ text: string; message: string }>();
+  const message = result?.text === text ? result.message : "";
+  const copy = async () => {
+    setBusy(true);
+    setResult(undefined);
+    try {
+      await navigator.clipboard.writeText(text);
+      setResult({ text, message: "Copied." });
+    } catch {
+      setResult({ text, message: "Could not copy. Try again or copy the displayed text." });
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
-    <Button variant="ghost" size="sm" onClick={() => navigator.clipboard.writeText(text)}>
-      <Copy size={16} /> Copy
-    </Button>
+    <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-2">
+      <Button variant="ghost" size="sm" disabled={busy} onClick={copy}>
+        <Copy size={16} aria-hidden="true" /> {busy ? "Copying…" : "Copy"}
+      </Button>
+      <span role="status" aria-atomic="true" className={message ? "text-sm text-muted-foreground" : "sr-only"}>{message}</span>
+    </span>
   );
 }
 

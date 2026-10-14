@@ -1,12 +1,19 @@
 import { HandCoins, PaperPlaneTilt, Plus, X } from "@phosphor-icons/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { ago, client, fromUnits, kindOf, queries, toUnits, useAttempt } from "./lib";
-import { AssetAmount, PayoutResult, useDestinations, usePayout } from "./payout";
+import { AssetAmount, PaymentReview, type PaymentReviewData, PayoutResult, useDestinations, usePayout } from "./payout";
+import { reviewedPolicyOf } from "./policy-review";
 import { useAgent } from "./shell";
-import { Badge, Button, Card, Details, ErrorBox, input, Loading, QueryError, Section, Spinner } from "./ui";
+import { Badge, Button, Card, ConfirmButton, Details, ErrorBox, Loading, QueryError, Section, Spinner } from "./ui";
 import { useNameOf } from "./names";
 import { useIsOperator } from "./viewer";
+import { Field, focusInvalid } from "./form";
+import { payeeError, deadlineError } from "./form-validation";
+import { intentsAccount, isNearcomAddress } from "../../src/intents-account.js";
+import { useDirtyDraft } from "./dirty-draft";
+import { InvoicePageLink } from "./invoice-link";
 
 /** Thirty days from now, as a date input's value: the default deadline of new terms. */
 const inThirtyDays = () => new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
@@ -30,6 +37,7 @@ export function PayeesSection({ moneyOut = false }: { moneyOut?: boolean }) {
   // Every edit signs an allow-list (src/owner-requests.ts), so a block-list policy isn't edited here.
   const except = data.policy.policy?.destinations.mode === "except";
   const [newPayee, setNewPayee] = useState("");
+  const [addSubmitted, setAddSubmitted] = useState(false);
   const editable = !except && !destinations.action.busy && !destinations.blocked;
   // Authorization pays a payout only to agreed payees: confidential destinations of an `only` policy (src/authorize.ts).
   const agreed = new Set(data.agreed);
@@ -39,7 +47,7 @@ export function PayeesSection({ moneyOut = false }: { moneyOut?: boolean }) {
       {facilitator && <Agreements listed={listed} destinations={destinations} />}
       <Section
         title={facilitator ? "Agreed payees" : moneyOut ? "Money out: from this agent to a payee" : "Payees"}
-        description="Who the agent may pay. The provider refuses anyone the policy doesn't list, and any payment over its caps."
+        description={except ? "Recipients blocked by the policy." : "Who the policy allows the agent to pay. Its caps still apply."}
       >
         <Card>
           {except && (
@@ -88,18 +96,24 @@ export function PayeesSection({ moneyOut = false }: { moneyOut?: boolean }) {
           )}
 
           {!except && (
+            <Details summary={facilitator ? "Add a payee without agreement terms" : "Add a payee"} open={!facilitator}>
+            {facilitator && <p className="text-muted-foreground">This updates the policy only. Offer terms above to record an amount ceiling and deadline.</p>}
             <form
-              className="flex gap-3 border-t pt-4"
+              noValidate className="flex flex-wrap items-end gap-3 border-t pt-4"
               onSubmit={(e) => {
                 e.preventDefault();
-                if (newPayee.trim()) destinations.add({ address: newPayee.trim(), confidential: Boolean(treasury?.dao) });
+                setAddSubmitted(true);
+                if (payeeError(newPayee)) { focusInvalid(e.currentTarget); return; }
+                if (editable) destinations.add({ address: intentsAccount(newPayee), confidential: facilitator || isNearcomAddress(newPayee) || Boolean(treasury?.dao) });
               }}
             >
-              <input className={`${input} flex-1`} placeholder="Payee's NEAR account" value={newPayee} onChange={(e) => setNewPayee(e.target.value)} />
-              <Button type="submit" variant="outline" disabled={!editable || !newPayee.trim()}>
+              <Field label="Payee’s NEAR account" name="payee" autoComplete="off" spellCheck={false} autoCapitalize="none" className="flex-1" placeholder="payee.near or nearcom:…" value={newPayee} onChange={(e) => setNewPayee(e.target.value)} error={addSubmitted ? payeeError(newPayee) : undefined} />
+              <Button type="submit" variant="outline" disabled={!editable}>
                 <Plus size={16} /> Add
               </Button>
             </form>
+            <RecipientHint value={newPayee} />
+            </Details>
           )}
           <span className="text-sm text-muted-foreground">{destinations.action.label ?? destinations.blocked}</span>
           <ErrorBox error={destinations.action.error} />
@@ -114,7 +128,11 @@ export function PayeesSection({ moneyOut = false }: { moneyOut?: boolean }) {
 /** On a treasury agent's Funding page: where its funds may go, only when it is that kind of agent. */
 export function TreasuryPayees() {
   const { data } = useAgent();
-  return kindOf(data) === "treasury" ? <PayeesSection moneyOut /> : null;
+  return kindOf(data) === "treasury" ? (
+    <Details summary="Send money to a payee">
+      <PayeesSection moneyOut />
+    </Details>
+  ) : null;
 }
 
 /** A payment sent by hand, folded away: the provider decides, refusing anyone the policy doesn't list. */
@@ -125,55 +143,67 @@ function ManualPayment({ listed, open }: { listed: Set<string>; open?: boolean }
   const [asset, setAsset] = useState(data.book[0]?.asset ?? "");
   const [value, setValue] = useState("");
   const payout = usePayout();
+  const operator = useIsOperator();
+  const [submitted, setSubmitted] = useState(false);
+  const [review, setReview] = useState<PaymentReviewData>();
   const holding = data.book.find((h) => h.asset === asset);
   const amount = holding ? toUnits(value, holding.decimals) : null;
-  const destination = data.policy.policy?.destinations.list.find((d) => d.address === recipient.trim());
+  const account = intentsAccount(recipient);
+  const destination = data.policy.policy?.destinations.list.find((d) => d.action === "transfer" && d.address === account);
+  const confidential = destination?.action === "transfer" ? destination.confidential : true;
   return (
     <Details summary="Send a payment by hand" open={open} className="border-t pt-4">
       <p className="text-muted-foreground">The agent sends under its grant; the provider refuses anyone the policy doesn't list.</p>
-      {listed.size > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-muted-foreground">To:</span>
-          {[...listed].map((address) => (
-            <Button key={address} size="sm" variant={recipient === address ? "default" : "outline"} onClick={() => setRecipient(address)}>
-              {nameOf(address)}
-            </Button>
-          ))}
-        </div>
-      )}
       <form
-        className="flex flex-col gap-3"
+        noValidate className="flex flex-col gap-3"
         onSubmit={(e) => {
           e.preventDefault();
-          if (amount && recipient.trim())
-            payout.pay({ recipient: recipient.trim(), asset, amount, confidential: destination?.action === "transfer" ? destination.confidential : true });
+          setSubmitted(true);
+          if (!amount || payeeError(recipient)) { focusInvalid(e.currentTarget); return; }
+          if (operator && !payout.busy && holding) setReview({
+            request: { recipient: account, asset, amount, confidential },
+            symbol: holding.symbol, decimals: holding.decimals, ownerApproval: data.policy.policy?.owner_approval,
+            expectedPolicy: reviewedPolicyOf(data),
+          });
         }}
       >
-        <input className={input} list="payees" placeholder="Recipient's NEAR account" value={recipient} onChange={(e) => setRecipient(e.target.value)} />
+        <Field label="Recipient’s NEAR account" name="recipient" autoComplete="off" spellCheck={false} autoCapitalize="none" list="payees" placeholder="payee.near or nearcom:…" value={recipient} onChange={(e) => setRecipient(e.target.value)} error={submitted ? payeeError(recipient) : undefined} />
+        <RecipientHint value={recipient} confidential={confidential} />
         <datalist id="payees">
           {[...listed].map((address) => (
-            <option key={address} value={address} />
+            <option key={address} value={address} label={nameOf(address)} />
           ))}
         </datalist>
         <div className="flex flex-wrap items-center gap-3">
-          <AssetAmount book={data.book} asset={asset} setAsset={setAsset} value={value} setValue={setValue} />
-          <Button type="submit" disabled={payout.busy || !amount || !recipient.trim()}>
-            {payout.busy ? <Spinner /> : <PaperPlaneTilt size={18} />} Pay
+          <AssetAmount book={data.book} asset={asset} setAsset={setAsset} value={value} setValue={setValue} submitted={submitted} />
+          <Button type="submit" disabled={payout.busy || !operator}>
+            {payout.busy ? <Spinner /> : <PaperPlaneTilt size={18} />} {payout.busy ? "Sending…" : "Review payment"}
           </Button>
           <PayoutResult result={payout.result} />
         </div>
-        {recipient.trim() && !listed.has(recipient.trim()) && (
+        {account && !listed.has(account) && (
           <span className="text-sm text-warning-muted-foreground">The policy doesn't list this account: expect a refusal.</span>
         )}
       </form>
+      <span role="status" className="sr-only">{payout.busy ? "Submitting payment…" : ""}</span>
+      {review && <PaymentReview payment={review} currentPolicy={data.notInForce ? undefined : reviewedPolicyOf(data)} onClose={() => setReview(undefined)} onConfirm={payout.pay} />}
       <ErrorBox error={payout.error} />
     </Details>
   );
 }
 
+/** Explain the actual transfer destination before an owner reviews or submits it. */
+function RecipientHint({ value, confidential = true }: { value: string; confidential?: boolean }) {
+  return isNearcomAddress(value) && !payeeError(value) ? <p className="break-words text-sm text-muted-foreground">
+    Destination: <span className="break-all font-mono">{intentsAccount(value)}</span>. {confidential
+      ? "A confidential transfer reaches the balance near.com shows."
+      : "The policy lists a public transfer: it reaches the legacy public balance, which near.com does not show by default."}
+  </p> : null;
+}
+
 const STATUS_WORDS = {
   requested: ["Asked to be paid", "warning"],
-  proposed: ["Agreement proposed", "info"],
+  proposed: ["Terms saved; policy approval needed", "info"],
   agreed: ["Agreed, invoice not filed yet", "success"],
   filed: ["Invoice filed", "neutral"],
   declined: ["Declined", "neutral"],
@@ -189,10 +219,16 @@ function Agreements({ listed, destinations }: { listed: Set<string>; destination
   const nameOf = useNameOf();
   const queryClient = useQueryClient();
   const list = useQuery(queries.agreements);
-  const decline = useAttempt();
+  // Observe the shell's policy read without starting another request.
+  const policyRead = useQuery({ queryKey: ["overview"], queryFn: () => client.overview(), enabled: false });
+  const { setup, data } = useAgent();
+  const pending = useQuery({ queryKey: ["owner", "pending"], queryFn: () => client.owner.pending(), refetchInterval: 5_000 });
+  const policyWaiting = pending.data?.some((p) => p.type === "policy_update" && p.state === "waiting");
+  const decline = useAttempt([["agreements"]]);
   const agreeing = useAttempt();
   // Each request's own deadline, until someone changes it: thirty days out.
   const [untilOf, setUntilOf] = useState<Record<string, string>>({});
+  const [dateChecked, setDateChecked] = useState<Record<string, boolean>>({});
   const until = (id: string) => untilOf[id] ?? inThirtyDays();
   const open = (list.data ?? []).filter((a) => a.status !== "filed" && a.status !== "declined");
   const closed = (list.data ?? []).filter((a) => a.status === "filed" || a.status === "declined");
@@ -209,9 +245,10 @@ function Agreements({ listed, destinations }: { listed: Set<string>; destination
   return (
     <Section
       title="Agreements"
-      description="Who asked to be paid, and what the DAO offered. Agreeing lists the payee in the policy, by vote; each payment is still voted on."
+      description="Review requested or offered terms. The owner signs any required policy update; payment approval is a separate decision."
     >
       <Card>
+        <InvoicePageLink next={!list.error && !policyRead.error && !data.notInForce && data.policy.policy?.destinations.mode === "only" && open.some(a => a.status === "agreed" && data.agreed.includes(a.payee))} />
         {list.error ? (
           <QueryError error={list.error} retry={() => list.refetch()} />
         ) : !list.data ? (
@@ -233,18 +270,35 @@ function Agreements({ listed, destinations }: { listed: Set<string>; destination
                   {a.origin === "owner" ? "Offered" : "Requested"} {ago(a.at)}
                   {a.terms && ` · each invoice up to ${fromUnits(a.terms.maxAmount, 6)} USDC until ${new Date(a.terms.until).toLocaleDateString()}`}
                 </span>
+                {a.status === "proposed" && <div className="flex flex-col gap-2">
+                  <p>The terms are saved. The policy has not yet agreed this payee.</p>
+                  {setup.dao && <a className="underline" href={`https://trezu.app/${setup.dao.id}/requests`} target="_blank" rel="noopener noreferrer">Review the policy proposal in Trezu</a>}
+                  {policyWaiting ? <p>A policy proposal is still waiting. Complete its vote before preparing another.</p> : <>
+                    <p>If the wallet was cancelled before filing, continue with the saved terms. If submission is uncertain, ask the operator to review it first.</p>
+                    <Button size="sm" className="self-start" disabled={blocked || !pending.isSuccess || agreeing.busy} onClick={() => destinations.add({ address: a.payee, confidential: true })}>Continue policy approval</Button>
+                  </>}
+                  <Link to="/policy" className="underline">Review the current policy</Link>
+                  <ErrorBox error={pending.error?.message} />
+                </div>}
+                {a.status === "agreed" && <p className="text-muted-foreground">The payee files from their own account on the invoice page.</p>}
                 {a.status === "requested" && (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <input type="date" className={`${input} w-44`} aria-label="Terms hold until" value={until(a.id)}
+                    <form noValidate className="flex flex-wrap items-end gap-2" onSubmit={(e) => {
+                      e.preventDefault();
+                      setDateChecked((all) => ({ ...all, [a.id]: true }));
+                      if (deadlineError(until(a.id))) { focusInvalid(e.currentTarget); return; }
+                      if (!blocked && !agreeing.busy) agree(a.id, a.payee);
+                    }}>
+                      <Field label="Terms hold until" name="until" autoComplete="off" type="date" className="w-44" value={until(a.id)}
+                        error={dateChecked[a.id] ? deadlineError(until(a.id)) : undefined}
                         onChange={(e) => setUntilOf((all) => ({ ...all, [a.id]: e.target.value }))} />
-                      <Button size="sm" disabled={blocked || agreeing.busy} onClick={() => agree(a.id, a.payee)}>
+                      <Button type="submit" size="sm" disabled={blocked || agreeing.busy}>
                         Agree to these terms
                       </Button>
-                      <Button size="sm" variant="outline" disabled={!operator || decline.busy}
-                        onClick={() => decline.attempt(async () => { await client.agreements.decline({ id: a.id }); await queryClient.invalidateQueries(queries.agreements); })}>
-                        Decline
-                      </Button>
-                    </div>
+                      <ConfirmButton label="Decline" title="Decline this agreement request?"
+                        description={`Decline the request from ${a.payee} for ${fromUnits(a.amount, 6)} USDC. It moves to filed or declined requests; this does not change the policy or cancel a payment.`}
+                        confirm="Decline request" disabled={!operator || decline.busy}
+                        onConfirm={() => decline.attempt(() => client.agreements.decline({ id: a.id }))} />
+                    </form>
                 )}
               </li>
             ))}
@@ -252,7 +306,7 @@ function Agreements({ listed, destinations }: { listed: Set<string>; destination
         )}
         {/* Why Agree or Decline is off, once for every request. */}
         <span className="text-sm text-muted-foreground">
-          {[destinations.action.label ?? destinations.blocked, open.some((a) => a.status === "requested") && !operator && "Only operators can decline."].filter(Boolean).join(" ")}
+          {destinations.action.label ?? destinations.blocked}{open.some((a) => a.status === "requested") && !operator && " Only operators can decline."}
         </span>
         <ErrorBox error={destinations.action.error ?? agreeing.error ?? decline.error} />
         <Offer listed={listed} destinations={destinations} />
@@ -279,34 +333,44 @@ function Offer({ listed, destinations }: { listed: Set<string>; destinations: Re
   const [payee, setPayee] = useState("");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
-  const [until, setUntil] = useState(inThirtyDays());
+  const [initialUntil] = useState(inThirtyDays);
+  const [until, setUntil] = useState(initialUntil);
+  const [submitted, setSubmitted] = useState(false);
+  const recipientError = payeeError(payee);
+  const amountError = toUnits(amount, 6) ? undefined : "Enter a USDC amount greater than zero, with up to 6 decimal places.";
+  const dateError = deadlineError(until);
+  useDirtyDraft(Boolean(payee || amount || note || until !== initialUntil));
   return (
-    <Details summary="Offer terms (a purchase order, a bounty or grant award)" className="border-t pt-4">
+    <Details open summary="Offer terms (a purchase order, a bounty or grant award)" className="border-t pt-4">
       <form
-        className="flex flex-col gap-3"
+        noValidate className="flex flex-col gap-3"
         onSubmit={(e) => {
           e.preventDefault();
+          setSubmitted(true);
+          if (recipientError || amountError || dateError) { focusInvalid(e.currentTarget); return; }
+          if (offer.busy || destinations.action.busy || destinations.blocked) return;
           offer.attempt(async () => {
-            const account = payee.trim().toLowerCase();
+            const account = intentsAccount(payee);
             await client.agreements.offer({ payee: account, amount, note, until: endOf(until) });
             await queryClient.invalidateQueries(queries.agreements);
-            setPayee(""); setAmount(""); setNote("");
+            setPayee(""); setAmount(""); setNote(""); setUntil(initialUntil); setSubmitted(false);
             if (!listed.has(account)) await destinations.add({ address: account, confidential: true });
           });
         }}
       >
-        <input className={input} placeholder="Payee's NEAR account" value={payee} onChange={(e) => setPayee(e.target.value)} />
+        <Field label="Payee’s NEAR account" name="offer-payee" autoComplete="off" spellCheck={false} autoCapitalize="none" placeholder="payee.near or nearcom:…" value={payee} onChange={(e) => setPayee(e.target.value)} error={submitted ? recipientError : undefined} />
+        <RecipientHint value={payee} />
         <div className="flex flex-wrap gap-3">
-          <input className={`${input} w-36`} inputMode="decimal" placeholder="Up to (USDC)" value={amount} onChange={(e) => setAmount(e.target.value)} />
-          <input type="date" className={`${input} w-44`} value={until} onChange={(e) => setUntil(e.target.value)} />
+          <Field label="Up to (USDC)" name="offer-amount" autoComplete="off" className="w-36" inputMode="decimal" placeholder="Up to (USDC)" value={amount} onChange={(e) => setAmount(e.target.value)} error={submitted ? amountError : undefined} />
+          <Field label="Terms hold until (UTC)" name="offer-until" autoComplete="off" type="date" className="w-44" value={until} onChange={(e) => setUntil(e.target.value)} error={submitted ? dateError : undefined} />
         </div>
-        <input className={input} maxLength={200} placeholder="What it's for (PO-17, audit bounty…)" value={note} onChange={(e) => setNote(e.target.value)} />
-        <Button type="submit" className="self-start" disabled={offer.busy || destinations.action.busy || Boolean(destinations.blocked) || !payee.trim() || !amount.trim()}>
+        <Field label="What it’s for" name="offer-note" autoComplete="off" maxLength={200} placeholder="What it's for (PO-17, audit bounty…)" value={note} onChange={(e) => setNote(e.target.value)} />
+        <Button type="submit" className="self-start" disabled={offer.busy || destinations.action.busy || Boolean(destinations.blocked)}>
           {offer.busy ? <Spinner /> : <HandCoins size={18} />} Offer
         </Button>
         <span className="text-muted-foreground">
-          The payee signs in on the invoice page and files against these terms. If the policy doesn't list them yet, this also files the
-          policy update for the DAO's vote.
+          The payee signs in on the invoice page and files against these terms. If the policy doesn't list them yet,
+          the owner must also approve a policy update.
         </span>
       </form>
       <ErrorBox error={offer.error} />

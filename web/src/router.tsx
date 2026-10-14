@@ -33,8 +33,8 @@ export const router = createRouter({
     page("/payees", () => <PayeesSection />),
     page("/policy", Policy),
     // One payment or one autopilot run, step by step; reached from the Overview, not the menu.
-    page("/follow/payment", PaymentTimeline),
-    page("/follow/run", RunTimeline),
+    createRoute({ getParentRoute: () => root, path: "/follow/payment", component: PaymentTimeline, validateSearch: (search: Record<string, unknown>): { payment?: string } => ({ payment: typeof search.payment === "string" ? search.payment : undefined }) }),
+    createRoute({ getParentRoute: () => root, path: "/follow/run", component: RunTimeline, validateSearch: (search: Record<string, unknown>): { run?: string } => ({ run: typeof search.run === "string" ? search.run : undefined }) }),
     page("/activity", () => (
       <>
         <Unresolved />

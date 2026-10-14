@@ -46,6 +46,44 @@ shared-tee-helpers@f75a74e, skills@2e68162, sdk-typescript@00cdb65, examples@859
 out-layer/api-spec@fb54744. The [source manifest](envelope/sources/2026-10-12/manifest.json) records their
 URLs and SHA-256 hashes so each can be fetched again and checked.
 
+**Upstream follow-up, 2026-10-14 UTC.** The historical manifest above is unchanged. The
+[SDK at 8571d90](https://github.com/NEAR-Intents-Agent-API/sdk-typescript/blob/8571d90afe892dcd4ab09dacb6081c4fd67b06d7/README.md)
+also describes assets as tokens the agent may spend. The provider's
+[recipient documentation at skills@8e03b0e](https://github.com/NEAR-Intents-Agent-API/skills/blob/8e03b0ea8e8f24f66923346f82c7afa56c40c6d1/near-intents-agent-api/references/executions.md)
+and [demo at 77cce32](https://github.com/NEAR-Intents-Agent-API/demo/blob/77cce320ee810fbd53916bdafd2f2a9153f50948/lib/agent-api/address.ts)
+describe stripping `nearcom:` and lowercasing its account for Intents transfers. These are
+documentation/source observations, not evidence of a deployed provider version.
+
+Our dashboard normalizes owner-entered payees before policy matching and payment review; the RPC
+normalizes transfer destinations before preparation or dispatch. Signed policies and provider
+evidence are not rewritten. Equivalent recipient inputs reach the existing duplicate held-payout
+check. Expired and revoked grants remain visible as history; only live grants can authorize new
+actions. These changes are tested offline in `test/upstream-compat.test.ts`,
+`test/intents-account.test.ts`, `test/form-validation.test.ts` and
+`test/browser/upstream-compat.cjs`; they have not been verified on mainnet.
+
+**Provider display follow-up, 2026-10-14 UTC (offline-tested).** Upstream's
+[funds changes at demo@f888f7d](https://github.com/NEAR-Intents-Agent-API/demo/commit/f888f7d)
+retain price timestamps and snake-case transaction/refund fields; its
+[error changes at demo@7841c1e](https://github.com/NEAR-Intents-Agent-API/demo/commit/7841c1e)
+allowlist budget and availability metadata. Our dashboard now preserves balances when prices are
+missing, marks stale or unverified price freshness, and withholds the managed book's USD total and
+allocation when a held managed asset lacks a fresh price. Unmanaged holdings remain listed separately.
+Prices expire against the browser clock even if a refresh fails.
+The demo preflight also refuses an unavailable or invalid managed-book USD total instead of
+counting missing values as zero (`test/demo-check.test.ts`, offline fixtures).
+This read-only projection is separate from execution's holdings calculations and adds no authorization
+rule. Managed-asset metadata falls back to this application's fixed asset definitions if the catalogue
+omits an asset; unknown unmanaged decimals remain unknown.
+
+RPC errors and immediate payment refusals carry only validated budget-remaining and availability
+metadata. Availability is an observation, not permission to retry; ambiguous outcomes remain unresolved.
+Supplementary refusal metadata is not persisted in the journal. Payment review shows provider-reported
+transaction hashes and refund fields, marks missing evidence explicitly, and does not infer an explorer
+URL, refund asset, or independent settlement proof. Refund amounts remain exact raw units. These changes
+are covered by `test/provider-display.test.ts`, `test/provider-values.test.ts`,
+`test/payment-status.test.ts` and `test/browser/provider-display.cjs`; deployed behavior is unverified.
+
 **Deployed identity is unknown.** `outlayer.near`'s code hash is `2K9si4Kct6awAvbUTgAohivmfnGHV3UVXJc9KyQqvsae`
 with no build metadata, and its build script isn't reproducible. The coordinator reports `git_sha`
 `ff99b418b1be-dirty` (built 2026-10-09), a commit not in the public repository. No build identity was found
@@ -60,7 +98,7 @@ recorded post-settlement (:386, current) and before execution (:1077, older, mat
 ## Status
 | Constraint | Status |
 |---|---|
-| Output asset | **Observed enforcement failure.** A direct-API mainnet swap into an asset outside `assets` succeeded (2026-10-10, [log](mainnet-log.md#a-swap-into-an-unlisted-asset-2026-10-10)). The open-source policy engine checks only a swap's input (wallet_policy.rs:467–476, :1011–1014), unchanged at the head of every public provider repo on 2026-10-12. Our executor checks the output (`outputAssetRefusal`, src/policy.ts); nothing below it is shown to. |
+| Output asset | **Documented provider limitation relative to our stricter requirement.** A direct-API mainnet swap into an asset outside `assets` succeeded (2026-10-10, [log](mainnet-log.md#a-swap-into-an-unlisted-asset-2026-10-10)). The provider now explicitly documents `assets` as tokens the agent may spend; swaps may buy unlisted tokens ([skills@8e03b0e, policy reference](https://github.com/NEAR-Intents-Agent-API/skills/blob/8e03b0ea8e8f24f66923346f82c7afa56c40c6d1/near-intents-agent-api/references/policy.md), reviewed 2026-10-14 UTC). This agrees with the input-only check in the pinned policy engine (wallet_policy.rs:467–476, :1011–1014). Our executor retains the stricter output check (`outputAssetRefusal`, src/policy.ts); provider output-asset enforcement is not claimed. |
 | Cumulative per-asset caps | **Serialized per wallet, per upstream tests; strict enforcement unproven. A monthly-cap refusal is observed:** on an isolated agent, after a settled small USDC swap, the identical request was refused with `policy_denied` and nothing dispatched; only the monthly cap, set below the two swaps together, was exceeded (2026-10-13T03:27Z; [mainnet log](mainnet-log.md#isolated-test-agent-shield-and-monthly-cap-2026-10-13t0327z)). Sequential, not concurrent. Upstream end-to-end tests show that of two simultaneous spends against one limit exactly one passes, that usage is written while the wallet is held, that every caller shares one usage row, and that a crash leaves an operation uncharged until a later read repairs it and charges it once (outlayer@b8c58c0 tests/wallet_concurrent_spend_e2e.sh, velocity_two_doors_e2e.sh, stuck_request_repair_e2e.sh). The API specification documents that a swap holds the wallet for its duration. Unknown: whether new admissions are blocked until a crashed operation is repaired, how the lock coordinates across service instances, and which version is deployed. The coordinator is private. |
 | USD budget | **Held in one concurrent trial; mechanism unverified.** Five simultaneous identical small swaps sent directly with one grant, with room for two: one executed, one got `wallet_busy`, three got `spend_budget_exceeded`, and the budget did not overshoot (isolated agent, 2026-10-13T03:32Z; [mainnet log](mainnet-log.md#isolated-test-agent-usd-budget-under-concurrency-2026-10-13t0332z)). Admission was more conservative than the reported remaining budget. One trial, one grant, one host: not proof of atomicity across grants or instances, or after a crash. |
 | Signed policy binding | **Not independently verifiable.** The API's `policy_hash` is reproducible: sha256 of the returned policy with sorted keys (recomputed on 2026-10-13 for all 15 returned revisions: treasury 1–11, payout 1, isolated agent 1–3). The on-chain `agent_policy_hash` is not a function of the policy (two treasury revisions share one `policy_hash` but carry different `agent_policy_hash` values on chain), and the public `store_wallet_policy` takes no such argument. The enforced policy is stored encrypted to a custody keystore key and signed by the custody wallet key, not the owner, so it proves neither that the owner signed those terms nor that no owner authorization exists elsewhere. A NEP-413 `update_policy` message, captured unsigned on the demo host, carries the complete plaintext policy, revision, agent, owner and domain, so an owner can read what they sign for API-enforced edits; whether the provider-enforced part matches it is the open question. A NEP-366 `policy_update` (an asset change), also captured unsigned, signs only a delegate to `store_wallet_policy` carrying `encrypted_data`: the readable policy appears only in the unsigned preview, so for those edits the owner signs ciphertext. What the message's `target_id` identifies is unknown. Captures are in the private release record. |
@@ -69,7 +107,7 @@ recorded post-settlement (:386, current) and before execution (:1077, older, mat
 | Input asset, actions, frozen, per-transaction cap | Enforced in the provider's TEE, per its source. The deployed version is not established. |
 | Destinations | Enforced by the Agent API, per its docs. One mainnet refusal was observed. |
 | Deposit conversion | **Scope question, not a known spending bypass.** Public API docs explicitly say deposits need an API key, no grant or owner signature, and do not spend treasury funds. Whether the agreement restricts conversion targets, and whether that is enforced, remains open. |
-| Shield under a non-empty `only` list | **Observed working on an isolated agent.** Under a destination list copied byte-for-byte from the treasury's (revision 11), a shield of its public wNEAR succeeded and charged no USD budget (2026-10-13T03:27Z, an isolated test agent; [log](mainnet-log.md#isolated-test-agent-shield-and-monthly-cap-2026-10-13t0327z)). The treasury agent itself has still never shielded. No `policy_confidential_whitelist_conflict` exists in any public source. |
+| Shield under a non-empty `only` list | **Observed working on an isolated agent.** Under a destination list copied byte-for-byte from the treasury's (revision 11), a shield of its public wNEAR succeeded and charged no USD budget (2026-10-13T03:27Z, an isolated test agent; [log](mainnet-log.md#isolated-test-agent-shield-and-monthly-cap-2026-10-13t0327z)). For the treasury agent’s subsequent sweep observation, see the [canonical Treasury requirements and evidence](treasury.md#02-agentic-treasury-management). That observation does not independently establish enforcement under every destination configuration. No `policy_confidential_whitelist_conflict` exists in any public source. |
 
 ## Recovery limitation
 
@@ -79,6 +117,25 @@ accounting also treats those statuses as terminal (`src/invoice-store.ts`). This
 status semantics. It does not independently establish that a failed operation had no payment effect
 or that a replacement payment is safe. Acceptance case E7 requires that distinction; it remains open.
 A missing operation ID on a claimed or legacy operation cannot be repaired by status-only reconciliation.
+
+## Local presentation limits
+
+The public and member requirement views list individual controls and evidence stages without counting
+them as guarantees enforced by the signed policy. This presentation change is browser-fixture tested,
+not verified on the hosted deployment. The underlying provider dependencies above still apply.
+
+Agreement terms are voter guidance, not an invoice-to-agreement binding. An owner offer is marked
+filed when any later invoice from that payee exists (`src/agreements.ts`); multiple offers can match
+the same invoice. Payment review shows the payee's latest non-declined recorded terms, which need not
+be the terms of that invoice. The browser regression covers selecting the latest terms, including
+excluding declined agreements and other payees. It does not establish agreement-specific enforcement.
+
+Autopilot summaries distinguish swaps skipped for cost from a book with no rebalance legs meeting
+the minimum size (`test/autopilot.test.ts`). This correction is offline-tested, not mainnet-observed.
+Historical summaries are preserved; a past "book on target" message alone does not establish that
+the allocation matched its target. Report classification still relies partly on historical English
+summary prefixes (`src/report.ts`); replacing that with structured outcomes requires a compatible
+record-format change.
 
 ## Local crash and concurrency recovery
 
@@ -127,7 +184,7 @@ across hosts or prove remote exactly-once execution. See the
      since the provider checked them under the policy when the payment was requested.
    - Verified in current local source. Deployed-source correspondence was not established by the public-documentation review; do not infer deployment from these tests.
 2. **One grant-using send site, enforced.** Done: test/send-path.test.ts fails if anything but
-   `dispatch` → `send` (src/agent.ts) calls swap, transfer, shield, unshield or withdraw on a grant, or if
+   `dispatch` → `send` (src/agent.ts) calls swap, transfer, shield or unshield on a grant, or if
    the quote in src/treasury.ts `quoteLeg` stops being `dry: true`.
 3. **Verify execution routes.** The credential and route inventory (M1) is
    kept locally, outside the repository (research/enforcement/M1-CREDENTIALS.md). Check which rules
@@ -144,8 +201,8 @@ does not justify a separate signer, custody contract or local budget engine.
 
 | Finding | Then |
 |---|---|
-| The output asset is checked at admission (deployed) | Confirm with acceptance test E1. The local rule stays as defence in depth. |
-| It isn't, or won't be | The output-asset limit stays an application guarantee. State that in the claim. |
+| A future provider change adds output-asset enforcement at admission | Confirm deployed behavior with acceptance test E1 before strengthening the claim. Keep the local rule. |
+| Current documented spend-only asset semantics | The output-asset limit remains an application guarantee. The 2026-10-10 observation is consistent with that limitation. |
 | `wallet_busy` serializes until usage is durable, across hosts and grants | No local per-asset reservations. Confirm with E2–E4. |
 | It doesn't | Record the exact failure and required provider correction. Keep strict cumulative enforcement unproven. |
 | USD charging is atomic, with stated semantics | Rely on it. Confirm with E5–E9. |
@@ -212,7 +269,8 @@ allowlist matching every procedure (G2, `test/member-access.test.ts`). Observed 
 monthly cap, sequentially, and a shield under a non-empty destination list (E10; unshield not yet run);
 the USD budget under one concurrent trial (E5, once). Still open: verifying an owner signature against
 the enforced policy (S1, S2); the credential and route inventory (M1); a direct-credential swap into an
-unlisted asset refused upstream (E1; the 2026-10-10 success stands until a fix); per-asset caps under
+unlisted asset refused upstream (E1; requires a provider capability beyond the documented spend-only
+asset list, with the 2026-10-10 success preserved as historical evidence); per-asset caps under
 concurrency, across grants and instances (E2–E4); retries around timeout and restart (E6); release on
 proven non-execution only (E7); tightening the policy while work is queued or held (E8); revoking or
 freezing at each dispatch boundary (E9); crash points (E11); window edges (E12); price and rounding edges
@@ -238,8 +296,57 @@ and operation terms to the signed artifact; and whether both swap assets will be
 Missing evidence narrows the claim; it doesn't call for a separate signer, custody contract or local
 budget engine.
 
+**Dashboard review freshness (offline-tested).** Dashboard payments carry the policy revision and
+mandate digest shown at review. Dispatch compares them with its fresh policy read under the money
+lock and records a refusal before submission if either changed. Policy updates likewise require the
+reviewed revision and digest before generating the owner's signing payload; the generated request
+retains the provider's `expected_revision`. An open editor preserves its draft after a refresh and
+requires an explicit comparison against the new policy before re-review. Tests are in
+`test/policy-review.test.ts` and `test/browser/web-interface.cjs`; this is not mainnet-observed.
+
+The payment check is local: it does not make the provider read and later submission atomic. A policy
+change at the provider after that read can still affect whether the payment is held. The dashboard
+therefore describes the reviewed approval requirement and directs the operator to the recorded
+outcome; it does not promise a hold. Closing this interval requires a provider-enforced transfer
+precondition, whose deployed behavior has not been established. Existing invoice and plan paths
+retain their own bindings; they do not use the dashboard confirmation contract.
+
 **Proposed scope change, pending acceptance: no unshield for payouts.** Payouts are confidential
 transfers between confidential balances, so the treasury keeps no public reserve and exact-shortfall
 unshielding isn't built. The
 provider documents that a confidential transfer's recipient must have confidential intents enabled; a
 payee without it would need an explicit public payout, built then and bound to its approved terms.
+
+
+### Dashboard strategy configuration (offline-tested)
+
+Reviewed strategy saves and schedule mutations share a single-host configuration lock. Saves compare
+the current strategy digest and persist schedule-off before replacing the strategy. Enablement requires
+an unchanged digest, policy in force, a live held Treasury grant matching the strategy, and no unresolved
+operation; the digest is checked again after asynchronous reads. Stop is independent of provider reads.
+The dashboard binds an open enable confirmation to its reviewed digest and displayed terms. A
+changed digest or unavailable readiness invalidates it until the operator cancels and reviews again
+(`test/browser/schedule.cjs`, offline browser fixtures).
+After a failed strategy or schedule refresh, the dashboard labels readiness unknown rather than
+presenting cached authorization as current. Cached strategy details remain available for editing,
+and the stop control remains available. Recovery restores the label after successful reads.
+Treasury owner preparation requires a reviewed saved digest, derives the grant suffix server-side,
+and requires the schedule off. Grant completion does not switch it on. The legacy settings endpoint
+uses the same controls and refuses unreviewed changes or combined change-and-enable requests.
+
+These controls are tested offline in `test/strategy-controls.test.ts`; they add no rule to `authorize.ts`
+and do not replace dispatch checks. They coordinate dashboard configuration on one host, not manual
+file edits, provider changes after observation, or multiple executors. Previously submitted operations
+may finish after stop. The new workflow has not been deployed or observed on mainnet.
+
+
+### Intermediate run observations (offline-tested)
+
+Intermediate stage events and provider-accepted submission observations are supplementary evidence.
+A stage returning does not prove success; a provider operation ID does not prove settlement.
+The submission observer runs only after the journal records acceptance, and exceptions in it do
+not prevent status tracking. Failure to write progress stops that tick's progress writer, flags
+incompleteness when the end can be saved, and does not change authorization or recovery decisions.
+A crash before that flag can be saved leaves an unfinished tick; no finish is inferred.
+`test/autopilot.test.ts`, `test/plan-recovery.test.ts` and `test/run-progress.test.ts` cover these
+boundaries offline. The UI polls snapshots; transport latency and deployed behavior remain unverified.

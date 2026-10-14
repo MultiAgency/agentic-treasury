@@ -4,8 +4,8 @@ import { createServer } from "node:http";
 import { after, before, test } from "node:test";
 import { api } from "../src/api.js";
 import { sessionToken } from "../src/signin.js";
-import { payoutPolicy } from "../src/policy.js";
-import { getInvoice, invoiceId } from "../src/invoice-store.js";
+import { ASSETS, payoutPolicy } from "../src/policy.js";
+import { getInvoice, invoiceId, prepareInvoice, noteRevision, claimInvoiceSubmission } from "../src/invoice-store.js";
 import { mayCall } from "../src/gateway/allowlist.js";
 import { freshDirectory } from "./fixtures/harness.js";
 import { remoteStore } from "../src/agreements.js";
@@ -65,7 +65,7 @@ test("retries retain identity and another signed-in payee cannot read it", async
   assert.equal(response.status, 200);
   assert.equal(sent.length, 1);
   const other = await fetch(`${origin}/api/invoices`, { headers: { cookie: cookie("bob.near") } });
-  assert.deepEqual(await other.json(), { invoices: [], agreements: [] });
+  assert.deepEqual(await other.json(), { invoices: [], agreements: [], agreed: true });
   const mine = await fetch(`${origin}/api/invoices`, { headers: { cookie: cookie("alice.near") } });
   const text = await mine.text();
   assert.equal((JSON.parse(text) as { invoices: unknown[] }).invoices.length, 1);
@@ -117,4 +117,60 @@ test("once agreed, the payee files the request as an invoice: same identity, pai
   const own = await (await fetch(`${origin}/api/invoices`, { headers: { cookie: cookie("carol.near") } })).json() as { agreements: unknown[]; invoices: unknown[] };
   assert.deepEqual(own.agreements, [], "a filed agreement shows as its invoice");
   assert.equal(own.invoices.length, 1);
+});
+
+test("invoice refresh reports current eligibility without reauthentication or sending", async () => {
+  const read = async () => (await (await fetch(`${origin}/api/invoices`, { headers: { cookie: cookie("refresh.near") } })).json()) as { agreed: boolean };
+  const before = sent.length;
+  assert.equal((await read()).agreed, false);
+  payees.push("refresh.near");
+  try { assert.equal((await read()).agreed, true); }
+  finally { payees.splice(payees.indexOf("refresh.near"), 1); }
+  assert.equal((await read()).agreed, false);
+  assert.equal(sent.length, before);
+});
+
+
+
+
+
+test("prepared invoice continuation uses stored terms, preserves identity, and sends once", async () => {
+  const stored = prepareInvoice({ payee: "alice.near", submission: "abcdefab-cdef-abcd-efab-cdefabcdef01", amount: "1234567", note: "Original terms" }, ASSETS.USDC);
+  const url = `${origin}/api/invoices/${stored.id}/continue`;
+  const start = sent.length;
+  assert.equal((await fetch(url, { method: "POST", headers: { cookie: cookie("bob.near") } })).status, 404);
+  assert.equal(sent.length, start);
+  const replies = await Promise.all([0, 1].map(() => fetch(url, { method: "POST", headers: { cookie: cookie("alice.near"), "content-type": "application/json" }, body: JSON.stringify({ amount: "999", recipient: "bob.near" }) })));
+  assert.ok(replies.some((r) => r.status === 200));
+  assert.equal(sent.length, start + 1);
+  assert.deepEqual(sent.at(-1)?.amount, "1234567");
+  assert.equal(getInvoice(stored.id)?.operation.idempotencyKey, stored.operation.idempotencyKey);
+  assert.equal((await fetch(url, { method: "POST", headers: { cookie: cookie("alice.near") } })).status, 409);
+  assert.equal(sent.length, start + 1);
+});
+
+test("continuation refuses revised or submission-attempted invoices without a new send", async () => {
+  for (const changed of [false, true]) {
+    const input = { payee: "alice.near", submission: changed ? "abcdefab-cdef-abcd-efab-cdefabcdef02" : "abcdefab-cdef-abcd-efab-cdefabcdef03", amount: "1000000", note: "Original" };
+    const stored = prepareInvoice(input, ASSETS.USDC);
+    if (changed) noteRevision({ ...input, amount: "2000000" });
+    else claimInvoiceSubmission(stored.operation.idempotencyKey, stored.operation.request);
+    const start = sent.length;
+    assert.equal((await fetch(`${origin}/api/invoices/${stored.id}/continue`, { method: "POST", headers: { cookie: cookie("alice.near") } })).status, 409);
+    assert.equal(sent.length, start);
+  }
+});
+
+
+
+
+
+test("invoice page serves its checked browser module from the same origin", async () => {
+  const html = await (await fetch(origin)).text();
+  assert.match(html, /import \{ mountInvoicePage \} from "\/invoice-browser.js"/);
+  assert.doesNotMatch(html, /function syncRows|async function refresh/);
+  const response = await fetch(`${origin}/invoice-browser.js`);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type")!, /javascript/);
+  assert.match(await response.text(), /export async function mountInvoicePage/);
 });

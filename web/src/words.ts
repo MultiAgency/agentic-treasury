@@ -17,6 +17,7 @@ const REFUSALS: Record<string, string> = {
   grant_missing: "no live grant",
   grant_purpose_denied: "the grant isn't for this",
   policy_not_in_force: "the policy isn't in force",
+  reviewed_policy_changed: "the policy changed since review; refresh and review the payment again",
   payee_not_agreed: "payee not agreed",
   per_transaction_exceeded: "over the per-payment cap",
   owner_approval_required: "the policy must hold payments for approval",

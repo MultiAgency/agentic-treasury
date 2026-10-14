@@ -12,15 +12,27 @@ const fastnearHeaders: Record<string, string> = process.env.FASTNEAR_API_KEY
  * after 30 seconds without an answer, so a stalled indexer never holds up a caller (or a lock it holds).
  */
 export async function fastnearPost<T>(url: string, body: object) {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json", ...fastnearHeaders },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30_000),
-  });
-  const result = (await response.json().catch(() => ({}))) as T & { error?: string; message?: string };
-  if (!response.ok || result.error) throw new Error(`FastNear ${new URL(url).pathname}: ${result.message ?? result.error ?? response.status}`);
-  return result;
+  // Do not forward upstream bodies or transport messages: they may contain request details.
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...fastnearHeaders },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch { throw new Error("FastNear read unavailable. Check connectivity and try the read again."); }
+  if (response.status === 401 || response.status === 403)
+    throw new Error("FastNear authentication or access failed. Check the server API key and endpoint.");
+  if (response.status === 429) throw new Error("FastNear rate limit reached. Wait before refreshing this read.");
+  if (!response.ok) throw new Error(`FastNear read unavailable (HTTP ${response.status}). No outcome inferred.`);
+  let result: unknown;
+  try { result = await response.json(); }
+  catch { throw new Error("FastNear returned an invalid response. The read is unavailable."); }
+  if (!result || typeof result !== "object" || Array.isArray(result))
+    throw new Error("FastNear returned an invalid response. The read is unavailable.");
+  if ("error" in result && result.error) throw new Error("FastNear reported an error. The read is unavailable.");
+  return result as T;
 }
 
 /** FastNear's Transactions API: an account's transactions, relayed ones included, with their receipts. */

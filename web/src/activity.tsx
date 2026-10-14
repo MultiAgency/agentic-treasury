@@ -1,6 +1,8 @@
+import { OwnerActions } from "./owner-actions";
 import { DownloadSimple } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useLocation } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { ago, amountOf, client, describeRequest, fromUnits, type Overview, queries, swaps, useAttempt } from "./lib";
 import { useNameOf } from "./names";
 import { useIsOperator } from "./viewer";
@@ -13,9 +15,12 @@ import { Badge, Button, Card, ConfirmButton, CopyButton, Details, ErrorBox, Load
  * are resolved. Recovery only reads statuses; ambiguous replay is blocked.
  */
 export function Unresolved() {
+  const operator = useIsOperator();
+  const { data: overview } = useAgent();
   const unresolved = useQuery(queries.unresolved);
   const data = unresolved.data ?? [];
   const { busy, message, error, attempt } = useAttempt();
+  const [checks, setChecks] = useState<Awaited<ReturnType<typeof client.recover>>>([]);
   // A failed read can't show that nothing is unresolved: say so instead of hiding the section.
   if (unresolved.error)
     return (
@@ -23,12 +28,15 @@ export function Unresolved() {
         <QueryError error={unresolved.error} retry={() => unresolved.refetch()} />
       </Section>
     );
+  if (unresolved.isPending) return <Section title="Unresolved"><Loading label="Checking unresolved operations…" /></Section>;
   if (data.length === 0 && !message && !error) return null;
 
   const run = () =>
     attempt(async () => {
       const counts = new Map<string, number>();
-      for (const { outcome } of await client.recover()) counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
+      const results = await client.recover();
+      setChecks(results);
+      for (const { outcome } of results) counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
       return [...counts].map(([outcome, n]) => `${n} ${outcome}`).join(" · ") || "Nothing left to resolve.";
     });
 
@@ -52,11 +60,18 @@ export function Unresolved() {
           ))}
         </ul>
         <div className="flex flex-wrap items-center justify-end gap-3 pt-4">
-          {message && <span className="mr-auto text-sm text-muted-foreground">{message}</span>}
-          <Button variant="outline" size="sm" disabled={busy} onClick={() => run()}>
+          <span role="status" aria-atomic="true" className="mr-auto text-sm text-muted-foreground">
+            {busy ? "Checking operation outcomes…" : message ? `Status check complete: ${message}` : ""}
+          </span>
+          <Button variant="outline" size="sm" disabled={busy || !operator} onClick={() => run()}>
             {busy && <Spinner />} Check status
           </Button>
         </div>
+        {data.length > 0 && <div className="flex flex-col gap-2 text-sm">
+          <p>{operator ? "If checking leaves an unknown outcome, investigate the provider record before sending again." : "Ask an operator to check these operations."} Copy these references for the operator; they contain private agent information.</p>
+          <div><CopyButton text={JSON.stringify({ agent: overview.agentId, unresolved: data.map(({ key, status, at }) => ({ key, status, at })) }, null, 2)} /> Copy review references</div>
+        </div>}
+        {checks.length > 0 && <div className="flex flex-col gap-3 text-sm"><h3 className="font-medium">Last status check</h3>{checks.map((check) => <div key={check.key}><p className="break-all font-mono text-xs">{check.key}</p><p>{check.outcome} · {check.status ?? "status unknown"}</p>{check.detail && <p>{check.detail}</p>}</div>)}</div>}
         <Details summary="Why it isn't simply sent again">
           <p className="text-muted-foreground">Replay is blocked. Missing operation IDs require review; they do not prove a payment was unsent.</p>
         </Details>
@@ -109,7 +124,7 @@ type ActivityRow = Awaited<ReturnType<typeof client.activity>>[number];
 function Row({ op, book, nameOf }: { op: ActivityRow; book: Overview["book"]; nameOf: (account: string) => string }) {
   const probe = isProbe(op);
   return (
-    <li className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b py-3 text-sm last:border-0">
+    <li id={op.correlationId ? `operation-${op.correlationId}` : undefined} className="scroll-mt-48 flex flex-wrap items-center gap-x-4 gap-y-1 border-b py-3 text-sm last:border-0">
       <span className="whitespace-nowrap text-muted-foreground sm:w-32">{ago(op.at)}</span>
       <span className="w-20 font-medium capitalize">{probe ? "Policy test" : op.kind}</span>
       <span className="order-last basis-full tabular-nums sm:order-none sm:basis-0 sm:flex-1">{describeRequest(op.request, book, nameOf)}</span>
@@ -126,6 +141,7 @@ function Row({ op, book, nameOf }: { op: ActivityRow; book: Overview["book"]; na
           <Badge tone={statusTone(op.status)}>{op.status?.toLowerCase() ?? "unsettled"}</Badge>
         )}
       </span>
+      {op.correlationId && <span className="basis-full break-all font-mono text-xs">{op.correlationId}</span>}
       {op.policyDigest && (
         <Details summary={`Ran under policy revision ${op.policyRevision ?? "–"}`} className="order-last basis-full">
           <span className="flex flex-wrap items-center gap-2">
@@ -142,13 +158,41 @@ function Row({ op, book, nameOf }: { op: ActivityRow; book: Overview["book"]; na
 /** Every action the agent sent, newest first; `limit` shows only the latest few, with a link to the rest. */
 export function Activity({ limit }: { limit?: number }) {
   const { data: overview } = useAgent();
-  const activity = useQuery({ queryKey: ["activity"], queryFn: () => client.activity() });
-  const data = activity.data ?? [];
   const nameOf = useNameOf();
+  return <ActivityRecords limit={limit} overview={overview} nameOf={nameOf} />;
+}
+
+/** Local records remain reviewable without inventing balances or policy observations. */
+export function RecoveryActivity() {
+  const unresolved = useQuery({ ...queries.unresolved, retry: false });
+  return <>
+    <p role="status" className="text-sm">Read-only recovery view. Some agent details are unavailable. These are this instance’s retained records, not fresh provider outcomes; check unresolved outcomes before creating another payment.</p>
+    <Section title="Unresolved" description="Recorded operations without a proven outcome.">
+      {unresolved.isPending && <Loading label="Checking unresolved records…" />}
+      {unresolved.error && <QueryError error={unresolved.error} retry={() => unresolved.refetch()} />}
+      {unresolved.isSuccess && !unresolved.data.length && <p>No unresolved operations are recorded on this instance.</p>}
+      {(!unresolved.error ? unresolved.data ?? [] : []).map(op => <p key={op.key} className="break-all text-sm">{op.kind} · {op.status ?? "outcome unknown"} · <span className="font-mono">{op.key}</span></p>)}
+    </Section>
+    <ActivityRecords />
+  </>;
+}
+
+function ActivityRecords({ limit, overview, nameOf = (account: string) => account }: {
+  limit?: number; overview?: Overview; nameOf?: (account: string) => string;
+}) {
+  const activity = useQuery({ queryKey: ["activity"], queryFn: () => client.activity(), retry: false });
+  const data = activity.error ? [] : activity.data ?? [];
+  const hash = useLocation({ select: (location) => location.hash });
+  // The query may finish after router navigation; scroll only once its target row exists.
+  useEffect(() => {
+    if (!limit && hash.startsWith("operation-") && activity.data) document.getElementById(hash)?.scrollIntoView({ block: "start" });
+  }, [hash, activity.data, limit]);
   const actions = data.filter((op) => !isProbe(op));
   const probes = data.filter(isProbe);
 
   return (
+    <>
+    {!limit && <OwnerActions />}
     <Section
       title={limit ? "Recent activity" : "Activity"}
       description="Every action the agent sent, from the local ops log, newest first."
@@ -166,11 +210,11 @@ export function Activity({ limit }: { limit?: number }) {
       ) : !activity.data ? (
         <Loading label="Loading activity…" />
       ) : actions.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No actions yet.{swaps(overview) && " Preview a rebalance to get started."}</p>
+        <p className="text-sm text-muted-foreground">No actions recorded on this instance.{overview && swaps(overview) && " Preview a rebalance to get started."}</p>
       ) : (
         <ol className="flex flex-col">
           {actions.slice(0, limit).map((op) => (
-            <Row key={`${op.at}-${op.kind}`} op={op} book={overview.book} nameOf={nameOf} />
+            <Row key={`${op.at}-${op.kind}`} op={op} book={overview?.book ?? []} nameOf={nameOf} />
           ))}
         </ol>
       )}
@@ -178,12 +222,13 @@ export function Activity({ limit }: { limit?: number }) {
         <Details summary={`Earlier policy tests (${probes.length}): requests sent to be refused, from retired probes`}>
           <ol className="flex flex-col">
             {probes.map((op) => (
-              <Row key={`${op.at}-${op.kind}`} op={op} book={overview.book} nameOf={nameOf} />
+              <Row key={`${op.at}-${op.kind}`} op={op} book={overview?.book ?? []} nameOf={nameOf} />
             ))}
           </ol>
         </Details>
       )}
     </Section>
+    </>
   );
 }
 

@@ -211,3 +211,13 @@ Agreements and was declined there; the store records the decline, not its time. 
 A Run now on the treasury agent, on dao `0d5964ea` (from `d9cb581`), executed one small USDC → wNEAR leg (settled
 00:51:48Z). The run's record shows the daily USD budget left before and after, lower by the swap's value; the
 dashboard's Latest run panel shows the same. This is the treasury agent's own budget, not an isolated agent's.
+
+## The payout rehearsal, 2026-10-14T02:02Z
+
+An agreed payee who isn't a DAO member filed an invoice on invoices.multiagency.ai; it was held for approval at
+02:02:37Z. A member approved it from the dashboard, filing and voting in one transaction: proposal #57, on chain
+02:04:12Z, Approved with one vote. The DAO's signature was submitted at 02:05:10Z and the payout settled at
+02:05:14Z, about a minute after the vote. The flow wasn't as expected on the dashboard (dao `4becd066`).
+Reading the code afterwards found why the payment timeline can't follow it to the end there: it lists held
+payments, and a settled payment sent from the invoice host isn't in the approve-only copy's activity, so it drops
+out once paid. The next build keeps a payment in view through to Paid.

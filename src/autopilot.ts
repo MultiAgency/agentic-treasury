@@ -1,3 +1,5 @@
+import { progressRecorder } from "./run-progress.js";
+import type { ProgressEvent } from "./run-progress-schema.js";
 import { LocalRefusal } from "./agent.js";
 import { api } from "./api.js";
 import { agentId, saveEnv } from "./env.js";
@@ -75,31 +77,40 @@ export async function tick(trigger: TickStart["trigger"]): Promise<string> {
   running = true;
   try {
     try {
-      recordStart({ id, at, trigger, schedule, ...(await context()) });
+      recordStart({ id, at, trigger, schedule, ...(busy ? {} : { progressVersion: 1 as const }), ...(await context()) });
     } catch (error) {
       const outcome = `Not run: the tick's evidence could not be recorded (${error instanceof Error ? error.message : String(error)}).`;
       post("warn", outcome);
       return outcome;
     }
+    const recorder = progressRecorder(".", agentId(), id);
     const end = (outcome: string, before: TickEnd["before"], after: TickEnd["after"]) => {
       try {
-        recordEnd({ id, endedAt: new Date().toISOString(), before, after, ...found, outcome });
+        recordEnd({ id, endedAt: new Date().toISOString(), before, after, ...found, outcome, ...(recorder.failed ? { progressIncomplete: true } : {}) });
       } catch (error) {
         post("warn", `Tick ${id} ran, but its evidence end could not be recorded: ${error instanceof Error ? error.message : String(error)}`);
       }
       return outcome;
     };
     if (busy) return end("Skipped: a tick is already running.", { error: "another tick was running" }, { error: "another tick was running" });
+    const progress = recorder.record;
+    progress({ type: "STEP_STARTED", stepName: "balances-before" });
     const before = await observe();
-    const outcome = await run(found);
-    return end(outcome, before, await observe());
+    progress({ type: "STEP_FINISHED", stepName: "balances-before" });
+    const outcome = await run(found, progress);
+    progress({ type: "STEP_STARTED", stepName: "balances-after" });
+    const after = await observe();
+    progress({ type: "STEP_FINISHED", stepName: "balances-after" });
+    return end(outcome, before, after);
   } finally {
     if (!busy) running = false;
   }
 }
 
 /** What a tick does, also recorded in the inbox. */
-async function run(found: Found): Promise<string> {
+async function run(found: Found, progress: (event: ProgressEvent) => void): Promise<string> {
+  const onSubmitted = (method: "swap" | "shield" | "transfer" | "unshield", correlationId: string) =>
+    progress({ type: "CUSTOM", name: "treasury.observation", value: { stage: "submission", method, correlationId } });
   const { maxUsd } = settings();
   const done = (text: string) => post("run", text).text;
   try {
@@ -108,7 +119,9 @@ async function run(found: Found): Promise<string> {
     if (policy.frozen) return done("Skipped: the agent is frozen.");
     // Reads the status of each action without a proven outcome; resends nothing, which is a person's call.
     // What still blocks is exactly what blocks the money lock (`blocksDispatch`).
+    progress({ type: "STEP_STARTED", stepName: "recovery" });
     const unresolved = (await recover()).filter((r) => blocksDispatch({ ...r.op, status: r.status ?? r.op.status }));
+    progress({ type: "STEP_FINISHED", stepName: "recovery" });
     if (unresolved.length > 0) {
       const list = unresolved.map((r) => `${r.op.idempotencyKey} (${r.outcome}, ${ageMinutes(r.op)} min old)`).join(", ");
       post("warn", `Money actions without a proven outcome: ${list}. Check them under Activity; the autopilot waits until then.`);
@@ -119,14 +132,20 @@ async function run(found: Found): Promise<string> {
     // Every send, a sweep's shield included, needs the owner's grant for the strategy in force.
     const approved = await mandateApproved();
     if (!approved) report.push("sweep left for the owner: the owner's grant doesn't approve this strategy");
-    else for await (const event of sweep({ execute: true, autopilot: true })) {
-      if (event.type !== "shield") continue;
-      report.push(`shielded ${event.asset}: ${event.status}`);
-      found.shields.push({ asset: event.asset, status: event.status, correlationId: event.correlationId });
-      if (event.status !== "SUCCESS") post("warn", `A sweep shield of ${event.asset} ended ${event.status} (${event.correlationId}).`);
+    else {
+      progress({ type: "STEP_STARTED", stepName: "sweep" });
+      for await (const event of sweep({ execute: true, autopilot: true, onSubmitted })) {
+        if (event.type !== "shield") continue;
+        report.push(`shielded ${event.asset}: ${event.status}`);
+        found.shields.push({ asset: event.asset, status: event.status, correlationId: event.correlationId });
+        if (event.status !== "SUCCESS") post("warn", `A sweep shield of ${event.asset} ended ${event.status} (${event.correlationId}).`);
+      }
+
+      progress({ type: "STEP_FINISHED", stepName: "sweep" });
     }
 
     if (policy.actions.includes("swap")) {
+      progress({ type: "STEP_STARTED", stepName: "planning" });
       let usd = 0;
       let planId: string | undefined;
       let legs: { usd: number }[] = [];
@@ -140,7 +159,8 @@ async function run(found: Found): Promise<string> {
           found.plan.usd = usd;
         }
       }
-      if (!planId) report.push("book on target");
+      progress({ type: "STEP_FINISHED", stepName: "planning" });
+      if (!planId) report.push(legs.length ? "rebalance skipped: all proposed swaps exceed the cost limit" : "no rebalance legs meet the minimum size");
       else if (usd > maxUsd) {
         post("action", `A rebalance of $${usd.toFixed(2)} is above the $${maxUsd.toFixed(2)} auto-execute limit. Preview and execute it from Automations.`);
         report.push(`rebalance of $${usd.toFixed(2)} left for the owner`);
@@ -151,7 +171,8 @@ async function run(found: Found): Promise<string> {
         );
         report.push(`rebalance of $${usd.toFixed(2)} left for the owner: the owner's grant doesn't approve this strategy`);
       } else {
-        for await (const event of executePlan(planId, undefined, { autopilot: true })) {
+        progress({ type: "STEP_STARTED", stepName: "execution" });
+        for await (const event of executePlan(planId, undefined, { autopilot: true, onSubmitted })) {
           if (event.type === "rejected") {
             found.rejected.push(...event.problems);
             report.push(`rebalance not executed: ${event.problems.join("; ")}`);
@@ -161,6 +182,7 @@ async function run(found: Found): Promise<string> {
           report.push(`step ${event.index + 1}: ${event.status}`);
           if (event.status !== "SUCCESS") post("warn", `Autopilot step ${event.index + 1} ended ${event.status} (${event.correlationId || "no correlation id"}).`);
         }
+        progress({ type: "STEP_FINISHED", stepName: "execution" });
       }
     }
     return done(report.length ? report.join(", ") : "Nothing to do.");

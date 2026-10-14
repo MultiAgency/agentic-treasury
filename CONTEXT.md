@@ -25,7 +25,8 @@ It runs the **Payables** area (docs/facilitator.md).
 An area is what one agent shows: **Payables** (the payout agent) or **Treasury** (the treasury agent). A
 brief is an experiment from the Agent Connect catalog that an area runs or plans, keeping its catalog
 number and title (01 Confidential Treasury Facilitator, 02 Agentic Treasury Management). Each brief's
-requirements are measured as complete, tested or live, or open.
+requirements distinguish mainnet observations, offline tests, pinned provider source with deployed
+behavior unverified, and requirements not yet demonstrated.
 _Avoid_: prototype (for an area), use case
 
 **Executor**:
@@ -143,7 +144,18 @@ _Avoid_: bot, cron job
 **Tick**:
 One autopilot run: sweep, then rebalance if the strategy's grant approves it and the plan fits the
 limit. Scheduled on the strategy's interval, counted from the previous tick's end, or run by an
-operator. Each records a start and an end in the evidence.
+operator. Each records a start and an end in the evidence. New ticks also record intermediate stage
+starts/returns and provider-accepted submissions in a supplementary progress file. These observations
+never authorize a send or establish settlement; older ticks have no reconstructed stages.
+
+**Run log / Recording**:
+A private, versioned projection of a tick's recorded observations into AG-UI events. It preserves the
+tick's outcome separately from later journal observations. Missing timing stays unknown; a recorded
+tick end does not prove every operation settled. It never authorizes a money action. The adapter is
+offline-tested. Members can export a recording from its executor and inspect its recorded observations
+in the dashboard. The inspector is read-only, with no timed playback or live stream; it keeps source
+gaps, unknown timing and later observations explicit. The inspector and export access controls are
+tested offline, not mainnet-observed.
 
 **Inbox**:
 What the agent tells its owner while no one is watching: a record of each tick, and warnings or

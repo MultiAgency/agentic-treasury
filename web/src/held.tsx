@@ -1,53 +1,47 @@
 import { CheckCircle, XCircle } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { ago, type client, describeRequest, fromUnits, kindOf, type Overview, queries } from "./lib";
+import { ago, APPROVAL_WINDOW_MS, client, exactPayment, kindOf, type Overview, queries } from "./lib";
+import { Link } from "@tanstack/react-router";
+import { paymentOwnerState } from "./payment-owner-state";
 import { ownerName, type Setup, useOwnerAction, useSigner } from "./owner";
-import { Badge, Button, Card, ErrorBox, Loading, QueryError, Section, Spinner } from "./ui";
+import { Button, Card, ConfirmButton, ErrorBox, Loading, QueryError, Section, Spinner } from "./ui";
+import { Payments } from "./timeline-payment";
 import { useNameOf } from "./names";
 import { useViewer } from "./viewer";
 
-/** How long the API keeps a held payment approvable (the server's APPROVAL_TTL_MS). */
-export const APPROVAL_WINDOW_MS = 24 * 60 * 60_000;
-
-type Agreement = Awaited<ReturnType<typeof client.agreements.list>>[number];
-
 /**
- * A held payout against its payee's latest agreed terms (src/agreements.ts `withinTerms`): what a
- * voter checks. The terms are this server's record; the vote is what enforces them.
+ * Payments the policy holds for the owner: each one released or rejected by its own vote. The payout
+ * agent shows them as timelines, approved in place (timeline-payment.tsx); any other agent lists what
+ * waits, when something does.
  */
-function TermsCheck({ request, agreements }: { request: Record<string, unknown>; agreements: Agreement[] }) {
-  const { recipient, amount } = request as { recipient?: string; amount?: string };
-  const terms = agreements.filter((a) => a.payee === recipient && a.terms && a.status !== "declined").at(-1)?.terms;
-  if (!terms || !amount) return <Badge>No agreed terms on record</Badge>;
-  const over = BigInt(amount) > BigInt(terms.maxAmount);
-  const late = Date.now() > Date.parse(terms.until);
-  if (!over && !late) return <Badge tone="success">Within the agreed terms</Badge>;
-  return (
-    <Badge tone="warning">
-      Outside the agreed terms: {[over && `over ${fromUnits(terms.maxAmount, 6)} USDC`, late && `after ${new Date(terms.until).toLocaleDateString()}`].filter(Boolean).join(", ")}
-    </Badge>
-  );
+export function Held({ data, setup }: { data: Overview; setup: Setup }) {
+  return kindOf(data) === "facilitator" ? <Payments /> : <HeldList data={data} setup={setup} />;
 }
 
-/** Payments the policy holds for the owner: each one released or rejected by its own vote. */
-export function Held({ data, setup }: { data: Overview; setup: Setup }) {
+function HeldList({ data, setup }: { data: Overview; setup: Setup }) {
   const held = useQuery(queries.held);
+  const ownerActions = useQuery({ queryKey: ["owner", "actions"], queryFn: () => client.owner.actions(), refetchInterval: 5_000, retry: false });
+  const pending = useQuery({ queryKey: ["owner", "pending"], queryFn: () => client.owner.pending(), refetchInterval: 5_000, retry: false });
   const action = useOwnerAction(setup);
   const { viaDao, canSign, needsWallet } = useSigner(setup);
   const viewer = useViewer();
   const [voting, setVoting] = useState<string>();
   const nameOf = useNameOf();
-  const facilitator = kindOf(data) === "facilitator";
-  // Newest first from the server; oldest first here, so the latest terms come last.
-  const agreements = [...(useQuery({ ...queries.agreements, enabled: facilitator }).data ?? [])].reverse();
   // A member who may propose and vote files and approves in one wallet confirmation.
   const oneClick = viewer?.canPropose && viewer.canVote;
-  // Paying by vote is the payout agent's story, so it always shows the section; elsewhere it shows only when something waits.
-  if (!facilitator && !held.error && !held.data?.length) return null;
+  if (held.isPending) return <Section title="Held payouts"><Loading label="Checking held payouts…" /></Section>;
+  if (!held.error && held.data?.length === 0) return null;
+
+  const blocked = (id: string) => {
+    const state = paymentOwnerState(ownerActions.data ?? [], id);
+    return !ownerActions.isSuccess || Boolean(ownerActions.error) || !pending.isSuccess || Boolean(pending.error)
+      || Boolean(state.recovering || state.succeeded)
+      || Boolean(pending.data?.some(p => p.payment?.correlationId === id && p.state !== "expired"));
+  };
 
   const vote = async (item: NonNullable<typeof held.data>[number], verdict: "approve" | "reject") => {
+    if (blocked(item.correlationId) || action.busy || !canSign) return;
     setVoting(item.correlationId);
     await action.run({ type: "approval_vote", approvalId: item.approvalId, verdict, correlationId: item.correlationId });
     setVoting(undefined);
@@ -59,20 +53,16 @@ export function Held({ data, setup }: { data: Overview; setup: Setup }) {
       description={
         viaDao
           ? oneClick
-            ? "Each payment stays approvable for 24 hours. Approve files the proposal and your vote in one wallet confirmation; the signing window then closes about five minutes later."
-            : "Each payment stays approvable for 24 hours. Approve files one proposal, and the signing window closes about five minutes later, so vote in Trezu right away."
-          : "Each payment stays approvable for 24 hours and waits for your signature."
-      }
-      action={
-        // The payment timeline is the payout agent's page (OFF_NAV in shell.tsx).
-        facilitator && (
-          <Link to="/follow/payment" className="text-sm text-muted-foreground hover:text-foreground">
-            Follow a payment →
-          </Link>
-        )
+            ? "Each payout has an approval deadline. Filing combines the proposal and your vote in one wallet confirmation; follow the separate signing window shown after preparation."
+            : "Each payout has an approval deadline. Filing starts a separate signing window; follow the deadline shown and complete the vote in Trezu."
+          : "Each payout has an approval deadline and waits for your signature. The displayed estimate is rechecked against provider evidence before approval."
       }
     >
       <Card>
+        {ownerActions.isPending && <Loading label="Checking existing owner actions…" />}
+        {ownerActions.error && <QueryError error={ownerActions.error} retry={() => ownerActions.refetch()} />}
+        {pending.isPending && <Loading label="Checking existing proposals…" />}
+        {pending.error && <QueryError error={pending.error} retry={() => pending.refetch()} />}
         {held.error ? (
           <QueryError error={held.error} retry={() => held.refetch()} />
         ) : !held.data ? (
@@ -81,26 +71,34 @@ export function Held({ data, setup }: { data: Overview; setup: Setup }) {
           <p className="text-sm text-muted-foreground">Nothing waits for a vote.</p>
         ) : (
         <ul className="flex flex-col divide-y">
-          {held.data.map((item) => (
+          {held.data.map((item) => {
+            const state = paymentOwnerState(ownerActions.data ?? [], item.correlationId);
+            const existing = state.recovering ?? state.succeeded;
+            return (
             <li key={item.correlationId} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
               <div className="flex flex-col gap-1 text-sm">
-                <span>{describeRequest(item.request, data.book, nameOf)}</span>
+                <span>{exactPayment(item.request, data.book)}</span>
                 <span className="text-muted-foreground">
-                  {item.kind} · requested {ago(item.at)} · approvable until {new Date(Date.parse(item.at) + APPROVAL_WINDOW_MS).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                  {item.kind} · requested {ago(item.at)} · estimated approval deadline {new Date(Date.parse(item.at) + APPROVAL_WINDOW_MS).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
                 </span>
-                {facilitator && <TermsCheck request={item.request} agreements={agreements} />}
+                {existing && <p role="status">
+                  {state.succeeded ? `${state.rejected ? "Rejection" : "Approval"} submitted. Follow the payment outcome separately.` : existing.stage === "submitted" ? "Submission attempted. Check the existing owner action; do not sign again." : "An owner action is already prepared. Review it or wait for its signing window to close."}{" "}
+                  <Link to="/activity" hash={`owner-${existing.correlationId}`} className="underline">Review the existing owner action</Link>
+                </p>}
+                {!existing && pending.data?.some(p => p.payment?.correlationId === item.correlationId && p.state !== "expired") && <p>An existing proposal needs review. <Link to="/activity" className="underline">Review owner actions</Link>.</p>}
               </div>
               <div className="flex items-center gap-2">
                 {voting === item.correlationId && action.label && <span className="text-sm text-muted-foreground">{action.label}</span>}
-                <Button size="sm" disabled={action.busy || !canSign} onClick={() => vote(item, "approve")}>
-                  {voting === item.correlationId && action.busy ? <Spinner /> : <CheckCircle size={16} />} Approve
-                </Button>
-                <Button size="sm" variant="outline" disabled={action.busy || !canSign} onClick={() => vote(item, "reject")}>
-                  <XCircle size={16} /> Reject
-                </Button>
+                <ConfirmButton ownerAction disabled={action.busy || !canSign || blocked(item.correlationId)}
+                  label={viaDao ? oneClick ? "File proposal and vote" : "File approval proposal" : "Sign approval"}
+                  title="Approve this held payout?" description={`${exactPayment(item.request, data.book)}. Successful approval releases this payout for processing; it is not proof of completed payment.${viaDao ? " A proposal and your vote do not prove the DAO threshold passed." : ""}`}
+                  confirm="Continue to approval" onConfirm={() => vote(item, "approve")} />
+                <ConfirmButton ownerAction disabled={action.busy || !canSign || blocked(item.correlationId)} label={viaDao ? "Propose rejection" : "Sign rejection"}
+                  title="Reject this held payout?" description={`Reject ${exactPayment(item.request, data.book)}. Rejection releases no payment.`}
+                  confirm="Continue to rejection" onConfirm={() => vote(item, "reject")} />
               </div>
             </li>
-          ))}
+          ); })}
         </ul>
         )}
         {!canSign && Boolean(held.data?.length) && (

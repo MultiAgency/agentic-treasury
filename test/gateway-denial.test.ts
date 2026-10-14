@@ -51,7 +51,7 @@ const agentServer = (owner: string | null) => createServer((req, res) => {
     return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ json: path === "setup" ? setup : null }));
   }
   reached.push(path);
-  res.writeHead(200, { "content-type": "application/json" }).end('{"json":null}');
+  res.writeHead(200, { "content-type": "application/json", "cache-control": "public, max-age=3600" }).end('{"json":null}');
 });
 
 before(async () => {
@@ -153,6 +153,19 @@ test("the controls: a member's reads and an operator's calls do get through", as
   assert.equal((await call("overview", "member.near")).status, 200);
   assert.equal((await call("pay", "ops.near")).status, 200);
   assert.deepEqual(reached, ["overview", "pay"]);
+});
+
+test("run-log exports enforce per-agent membership and cannot inherit public caching", async () => {
+  reached.length = 0;
+  const denied = await call("autopilot/log");
+  assert.equal(denied.status, 401);
+  assert.match(denied.headers.get("cache-control")!, /no-store/);
+  assert.equal((await call("autopilot/log", "member.near", "wallet")).status, 403);
+  assert.deepEqual(reached, []);
+  const allowed = await call("autopilot/log", "member.near");
+  assert.equal(allowed.status, 200);
+  assert.equal(allowed.headers.get("cache-control"), "private, no-store");
+  assert.deepEqual(reached, ["autopilot/log"]);
 });
 
 const recorded = () => {
@@ -274,4 +287,17 @@ test("an operator sees only the interventions on the agents it operates", async 
   const calls = async (account: string) => ((await (await interventions(account)).json()) as { calls: { agent: string }[] }).calls;
   assert.ok((await calls("ops.near")).some((c) => c.agent === "treasury"));
   assert.deepEqual((await calls(OWNER)).filter((c) => c.agent !== "wallet" && c.agent !== "new"), []);
+});
+
+test("owner recovery and receipt discovery require agent membership and prohibit caching", async () => {
+  for (const path of ["owner/actions", "paymentHistory", "strategy/get"]) {
+    reached.length = 0;
+    assert.equal((await call(path)).status, 401);
+    assert.equal((await call(path, "member.near", "wallet")).status, 403);
+    assert.deepEqual(reached, []);
+    const response = await call(path, "member.near");
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
+    assert.deepEqual(reached, [path]);
+  }
 });

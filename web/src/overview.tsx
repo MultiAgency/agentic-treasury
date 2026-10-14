@@ -7,11 +7,15 @@ import { Held } from "./held";
 import { destinationsOf } from "./payout";
 import { WhatThisShows } from "./showcase";
 import { TopUp } from "./topup";
+import { RunPreview } from "./timeline-run";
 import { bindingBudget, PERIOD } from "./budget";
 import { useNameOf } from "./names";
-import { ASSET_COLOR, ago, amount, bookValue, client, type Holding, kindOf, type Overview as Book, queries, swaps, units, usd, useAttempt } from "./lib";
+import { ASSET_COLOR, ago, amount, bookValue, client, fromUnits, type Holding, kindOf, type Overview as Book, queries, swaps, units, usd, useAttempt } from "./lib";
+import { useIsOperator } from "./viewer";
 import { useAgent } from "./shell";
-import { ErrorBox, Section } from "./ui";
+import { Details, ErrorBox, Loading, QueryError, Section } from "./ui";
+import { useValuedBook } from "./valuation";
+import { priceState } from "../../src/valuation.js";
 
 function Figure({ label, value, children }: { label: string; value: string; children?: React.ReactNode }) {
   return (
@@ -33,7 +37,7 @@ function Meter({ value, className = "bg-brand" }: { value: number; className?: s
 
 function Figures({ data }: { data: Book }) {
   const total = bookValue(data);
-  const shielded = data.book.reduce((sum, h) => sum + units(h.confidential, h.decimals) * h.price, 0);
+  const shielded = total === null ? null : data.book.reduce((sum, h) => sum + (BigInt(h.confidential) === 0n ? 0 : units(h.confidential, h.decimals) * h.price!), 0);
   const window = bindingBudget(data);
   const limit = Number(window?.limit_usd ?? 0);
   const budget = window ? (
@@ -63,12 +67,12 @@ function Figures({ data }: { data: Book }) {
   }
   return (
     <div className="grid gap-10 sm:grid-cols-3">
-      <Figure label="Book value" value={usd(total)}>
-        <span className="text-sm text-muted-foreground">Across {data.book.length} assets at API prices</span>
+      <Figure label="Book value" value={total === null ? "Unavailable" : usd(total)}>
+        <span className="text-sm text-muted-foreground">{total === null ? "Some held assets lack a fresh price. Balances remain available; no complete USD total is shown." : `Across ${data.book.length} assets at API prices`}</span>
       </Figure>
       {budget}
-      <Figure label="Held privately" value={total ? `${Math.round((shielded / total) * 100)}%` : "—"}>
-        <Meter value={total ? shielded / total : 0} className="bg-chart-3" />
+      <Figure label="Held privately" value={total && shielded !== null ? `${Math.round((shielded / total) * 100)}%` : "—"}>
+        <Meter value={total && shielded !== null ? shielded / total : 0} className="bg-chart-3" />
         <span className="text-sm text-muted-foreground">
           {usd(shielded)} in the confidential balance
         </span>
@@ -81,23 +85,25 @@ function Figures({ data }: { data: Book }) {
 function drift(data: Book) {
   const total = bookValue(data);
   if (!total) return 0;
-  return Math.max(...data.book.map((h) => Math.abs(h.usd / total - (data.target[h.asset] ?? 0))));
+  return Math.max(...data.book.map((h) => Math.abs(h.usd! / total - (data.target[h.asset] ?? 0))));
 }
 
-type Item = { to?: LinkProps["to"]; text: string; dismiss?: () => void };
+type Item = { tone?: "destructive" | "warning" | "info"; action?: string; hash?: string; to?: LinkProps["to"]; text: string; dismiss?: () => void };
 
 /** Everything that stops the agent working, or that the owner should decide on, each with where to act. */
 function useAttention(dismissing: ReturnType<typeof useAttempt>): Item[] {
-  const { setup, data, treasury } = useAgent();
+  const { setup, data: rawData, treasury } = useAgent();
+  const data = useValuedBook(rawData);
   const held = useQuery(queries.held).data ?? [];
   const inbox = useQuery(queries.inbox).data ?? [];
   const unresolved = useQuery(queries.unresolved).data ?? [];
-  // Held payouts head this page in their own section; the DAO home lists them as attention items.
+  // Held payments head this page in their own section (Payments on the payout agent); the DAO home lists them as attention items.
   const nameOf = useNameOf();
   const items: Item[] = attentionOf({ setup, overview: data, held, unresolved, inbox, nameOf })
     .filter(({ to }) => to !== "/")
-    .map(({ to, text, inboxIds }) => ({
-      to,
+    .map(({ to, text, action, tone, inboxIds }) => ({
+      to, action, tone,
+      hash: action === "Renew" || action === "Issue" ? "grants" : to === "/automations" ? "rebalance" : undefined,
       text,
       dismiss: inboxIds ? () => dismissing.attempt(async () => { for (const id of inboxIds) await client.inbox.dismiss({ id }); }) : undefined,
     }));
@@ -111,64 +117,77 @@ function useAttention(dismissing: ReturnType<typeof useAttempt>): Item[] {
   const gap = drift(data);
   // A payout agent pays only from its confidential USDC, the balance its Overview shows.
   const payable = data.book.find((h) => h.symbol === "USDC")?.confidential ?? "0";
-  if (kindOf(data) === "facilitator" ? BigInt(payable) === 0n : bookValue(data) === 0)
-    items.push({ to: "/funding", text: kindOf(data) === "facilitator"
+  if (kindOf(data) === "facilitator" ? BigInt(payable) === 0n : data.book.every(h => BigInt(h.public) + BigInt(h.confidential) === 0n))
+    items.push({ to: "/funding", action: "Fund the account", text: kindOf(data) === "facilitator"
       ? "The payout wallet's confidential USDC is empty: invoices are refused until it is funded."
       : "The book is empty. Fund it to give the agent something to manage." });
-  if (!treasury) items.push({ to: "/funding", text: "No treasury linked. Link the account this agent works for." });
   if (asked.length)
-    items.push({ to: "/payees", text: `${asked.length} account${asked.length === 1 ? " asks" : "s ask"} to be paid and ${asked.length === 1 ? "isn't" : "aren't"} agreed yet.` });
+    items.push({ to: "/payees", action: "Review agreement requests", text: `${asked.length} account${asked.length === 1 ? " asks" : "s ask"} to be paid and ${asked.length === 1 ? "isn't" : "aren't"} agreed yet.` });
   if (candidates.length)
-    items.push({ to: kindOf(data) === "treasury" ? "/funding" : "/payees", text: `${treasury?.accountId} approved ${candidates.length} payee${candidates.length === 1 ? "" : "s"} the policy doesn't list yet.` });
+    items.push({ to: kindOf(data) === "treasury" ? "/funding" : "/payees", action: "Review suggested payees", text: `${treasury?.accountId} approved ${candidates.length} payee${candidates.length === 1 ? "" : "s"} the policy doesn't list yet.` });
   if (exposed.length)
-    items.push({ to: "/automations", text: `${exposed.map((h) => amount(h.public, h)).join(", ")} sit${exposed.length === 1 ? "s" : ""} in the public balance, visible to anyone. Sweep shields it.` });
+    items.push({ to: "/automations", hash: "sweep", action: "Review sweep", text: `${exposed.map((h) => amount(h.public, h)).join(", ")} sit${exposed.length === 1 ? "s" : ""} in the public balance, visible to anyone. Sweep shields it.` });
   for (const u of data.unmanaged) {
     // Without token data the API gives no decimals, so the amount stays in raw units.
     const quantity = u.decimals === null ? `${u.amount} raw units of ${u.symbol}` : amount(u.amount, { decimals: u.decimals, symbol: u.symbol });
     const holding = u.usd === null ? quantity : `${quantity} (${usd(u.usd)})`;
     const sellable = policy && (policy.assets === "any" || policy.assets.includes(u.asset));
     items.push({
-      to: "/policy",
+      // Strategy targets cannot be extended here; do not suggest an unrelated policy edit.
+      to: sellable ? undefined : "/policy",
+      action: sellable ? undefined : "Review policy assets",
+      tone: sellable ? "info" : "warning",
       text: sellable
         ? `The agent holds ${holding}, outside the assets its strategies manage. Nothing will rebalance it.`
         : `The agent holds ${holding}, outside the policy's assets: it can't sell it until the owner lists it.`,
     });
   }
-  if (swaps(data) && gap > 0.05) items.push({ to: "/automations", text: `The book is ${(gap * 100).toFixed(1)} points off target. Preview a rebalance.` });
+  if (swaps(data) && gap > 0.05) items.push({ to: "/automations", hash: "rebalance", action: "Review rebalance", text: `The book is ${(gap * 100).toFixed(1)} points off target.` });
   return items;
 }
 
 function Attention() {
-  const dismissing = useAttempt();
+  const operator = useIsOperator();
+  const { data } = useAgent();
+  const reads = [useQuery(queries.held), useQuery(queries.inbox), useQuery(queries.unresolved), useQuery({ ...queries.agreements, enabled: kindOf(data) === "facilitator" })];
+  const required = kindOf(data) === "facilitator" ? reads : reads.slice(0, 3);
+  const unavailable = required.find((q) => q.error);
+  const loading = required.some((q) => q.isPending);
+  const checked = Math.min(...required.map((q) => q.dataUpdatedAt));
+  const dismissing = useAttempt([["inbox"]]);
   const items = useAttention(dismissing);
+
   return (
     <Section title="Needs attention">
       <ErrorBox error={dismissing.error} />
-      {items.length === 0 ? (
+      {unavailable?.error && <><p className="text-sm">Attention checks are incomplete. Previously loaded items may be out of date.</p><QueryError error={unavailable.error} retry={() => { for (const q of required) void q.refetch(); }} /></>}
+      {loading && <Loading label="Checking payouts, unresolved operations and requests…" />}
+      {checked > 0 && <p className="text-xs text-muted-foreground">Last checked {new Date(checked).toLocaleString()}</p>}
+      {items.length === 0 && !loading && !unavailable ? (
         <p className="flex items-center gap-3 text-sm text-muted-foreground">
-          <CheckCircle size={18} className="text-success" /> Nothing. The agent is working inside its policy.
+          <CheckCircle size={18} className="text-success" /> No items need attention in the records checked.
         </p>
       ) : (
         <ul className="flex flex-col">
           {items.map((item) => {
             const body = (
               <>
-                <WarningCircle size={18} className="shrink-0 text-warning-muted-foreground" />
-                <span className="flex-1">{item.text}</span>
+                <WarningCircle size={18} className={`shrink-0 ${item.tone === "destructive" ? "text-destructive-muted-foreground" : item.tone === "info" ? "text-info-muted-foreground" : "text-warning-muted-foreground"}`} />
+                <span className="flex-1">{item.text}{item.action && <span className="block font-medium">{item.action}{!operator && item.action === "Check status" ? " · operator required" : ""}</span>}</span>
               </>
             );
             return (
               <li key={item.text} className="flex items-center gap-2 border-b last:border-0">
                 {item.to ? (
-                  <Link to={item.to} className="group flex flex-1 items-center gap-3 py-3 text-sm">
+                  <Link to={item.to} hash={item.hash} className="group flex flex-1 items-center gap-3 py-3 text-sm">
                     {body}
                     <ArrowRight size={16} className="text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                   </Link>
                 ) : (
                   <div className="flex flex-1 items-center gap-3 py-3 text-sm">{body}</div>
                 )}
-                {item.dismiss && (
-                  <button type="button" disabled={dismissing.busy} onClick={item.dismiss} className="shrink-0 p-1 text-muted-foreground hover:text-foreground" aria-label="Dismiss">
+                {item.dismiss && operator && (
+                  <button type="button" disabled={dismissing.busy} onClick={item.dismiss} className="min-h-11 min-w-11 shrink-0 p-2 text-muted-foreground hover:text-foreground" aria-label="Dismiss">
                     <X size={16} />
                   </button>
                 )}
@@ -188,7 +207,7 @@ function Allocation({ data }: { data: Book }) {
       {data.book.map((h) => (
         <div
           key={h.asset}
-          className={`${ASSET_COLOR[h.symbol]} transition-all duration-700`}
+          className={`${ASSET_COLOR[h.symbol]} `}
           style={{ width: `${share(h) * 100}%` }}
         />
       ))}
@@ -198,7 +217,7 @@ function Allocation({ data }: { data: Book }) {
     <Section title="Allocation" description="Where the book sits against its target, valued at the API's token prices.">
       <div className="grid grid-cols-[4rem_1fr] items-center gap-x-4 gap-y-3 text-sm">
         <span className="text-muted-foreground">Now</span>
-        {bar((h) => (total ? h.usd / total : 0))}
+        {total === null ? <span>Allocation unavailable without fresh prices</span> : bar((h) => (total ? h.usd! / total : 0))}
         <span className="text-muted-foreground">Target</span>
         {bar((h) => data.target[h.asset] ?? 0)}
       </div>
@@ -214,7 +233,7 @@ function Allocation({ data }: { data: Book }) {
           </thead>
           <tbody>
             {data.book.map((h) => {
-              const weight = total ? h.usd / total : 0;
+              const weight = total ? h.usd! / total : 0;
               const target = data.target[h.asset] ?? 0;
               const drift = weight - target;
               return (
@@ -223,16 +242,23 @@ function Allocation({ data }: { data: Book }) {
                     <div className="flex items-center gap-3">
                       <span className={`size-2.5 rounded-full ${ASSET_COLOR[h.symbol]}`} />
                       <span className="font-medium">{h.symbol}</span>
-                      <span className="hidden text-muted-foreground sm:inline">{usd(h.price)}</span>
+                      <span className="hidden text-muted-foreground sm:inline">{priceState(h, Date.now()) === "fresh" ? usd(h.price) : "—"}</span>
                     </div>
+                    <p className="mt-1 whitespace-normal break-all text-xs text-muted-foreground">
+                      {fromUnits((BigInt(h.public) + BigInt(h.confidential)).toString(), h.decimals)} {h.symbol}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground whitespace-normal">
+                      {priceState(h, Date.now()) === "fresh" ? "Fresh price" : priceState(h, Date.now()) === "stale" ? "Stale price" : "Price or freshness unavailable"}
+                      {h.priceUpdatedAt && Number.isFinite(Date.parse(h.priceUpdatedAt)) && <> · updated <time dateTime={h.priceUpdatedAt}>{h.priceUpdatedAt}</time></>}
+                    </p>
                   </td>
                   <td className="py-4 pr-4 text-right font-medium">{usd(h.usd)}</td>
                   <td className="py-4 text-right">
-                    {(weight * 100).toFixed(1)}% · {(target * 100).toFixed(0)}%{" "}
-                    <span className={Math.abs(drift) < 0.02 ? "text-muted-foreground" : "text-brand-strong"}>
+                    {total === null ? "—" : `${(weight * 100).toFixed(1)}%`} · {(target * 100).toFixed(0)}%{" "}
+                    {total !== null && <span className={Math.abs(drift) < 0.02 ? "text-muted-foreground" : "text-brand-strong"}>
                       ({drift >= 0 ? "+" : ""}
                       {(drift * 100).toFixed(1)})
-                    </span>
+                    </span>}
                   </td>
                 </tr>
               );
@@ -244,83 +270,22 @@ function Allocation({ data }: { data: Book }) {
   );
 }
 
-/** The facilitator's story as counts: who asked, who is agreed, what waits for a vote, what was paid. */
-function Funnel() {
-  const agreements = useQuery(queries.agreements).data ?? [];
-  const held = useQuery(queries.held).data ?? [];
-  const activity = useQuery({ queryKey: ["activity"], queryFn: () => client.activity() }).data ?? [];
-  const paid = activity.filter((op) => op.status === "SUCCESS" && (op.request as { recipient?: string }).recipient).length;
-  const stages: { label: string; count: number; to: LinkProps["to"] }[] = [
-    { label: "Asked to be paid", count: agreements.filter((a) => a.status === "requested").length, to: "/payees" },
-    { label: "Agreement proposed or agreed", count: agreements.filter((a) => a.status === "proposed" || a.status === "agreed").length, to: "/payees" },
-    { label: "Held for the DAO's vote", count: held.length, to: "/" },
-    { label: "Paid confidentially", count: paid, to: "/activity" },
-  ];
-  return (
-    <ol className="grid gap-3 sm:grid-cols-4">
-      {stages.map((stage, i) => (
-        <li key={stage.label}>
-          <Link to={stage.to} className="flex h-full flex-col gap-1 rounded-2xl border bg-card p-4 hover:bg-muted">
-            <span className="text-sm text-muted-foreground">
-              {i + 1}. {stage.label}
-            </span>
-            <span className="font-heading text-3xl font-semibold tabular-nums">{stage.count}</span>
-          </Link>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-/** The treasury's story ends with what the autopilot did on its own, run by run. */
-function AutopilotRuns() {
-  const status = useQuery({ queryKey: ["autopilot"], queryFn: () => client.autopilot.get() }).data;
-  const runs = (useQuery(queries.inbox).data ?? []).filter((e) => e.level === "run").slice(0, 3);
-  if (!status) return null;
-  return (
-    <Section
-      title="Autopilot"
-      description={status.on ? `Runs every ${status.everyMin} minutes, executing rebalances up to $${status.maxUsd}.` : "Off: rebalances run only when someone runs them."}
-      action={
-        <span className="flex gap-4">
-          <Link to="/follow/run" className="text-sm text-muted-foreground hover:text-foreground">
-            Follow the latest run →
-          </Link>
-          <Link to="/automations" className="text-sm text-muted-foreground hover:text-foreground">
-            Automations
-          </Link>
-        </span>
-      }
-    >
-      {runs.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No runs yet.</p>
-      ) : (
-        <ul className="flex flex-col divide-y text-sm">
-          {runs.map((r) => (
-            <li key={r.id} className="flex gap-3 py-2">
-              <span className="w-28 shrink-0 text-muted-foreground">{ago(r.at)}</span>
-              <span>{r.text}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Section>
-  );
-}
-
 export function Overview() {
-  const { data, setup } = useAgent();
+  const { data: rawData, setup } = useAgent();
+  const data = useValuedBook(rawData);
   const kind = kindOf(data);
   return (
     <>
+      <Attention />
       <Held data={data} setup={setup} />
-      <WhatThisShows kind={kind} dao={setup.dao?.id} />
-      {kind === "facilitator" && <Funnel />}
+      {kind === "treasury" && <RunPreview />}
+      <p className="text-sm text-muted-foreground">{kind === "treasury" ? "What this demonstrates: recorded Treasury actions under a policy and grant." : "What this demonstrates: held payouts reviewed and decided by the owner."} <a href="#evidence" className="underline">Inspect evidence and limitations</a></p>
       <Figures data={data} />
       {kind === "treasury" && <Allocation data={data} />}
-      {kind === "treasury" && <AutopilotRuns />}
-      <Attention />
-      <Activity limit={5} />
+      <Details summary="Recent activity">
+        <Activity limit={5} />
+      </Details>
+      <section id="evidence" className="scroll-mt-48"><WhatThisShows kind={kind} dao={setup.dao?.id} openRunning /></section>
     </>
   );
 }
