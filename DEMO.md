@@ -17,23 +17,25 @@ known, and reads nothing from the server.
 ## What is verified
 
 The table was checked on the 2026-10-12 build: dao `aa6ec064` and invoices `a3aa194a`, from commit `fe3330c`.
-The current deployment is invoices `fcdc06a6` (22:46:57Z) and dao `2d08148b` (22:48:02Z), 2026-10-13, from a clean
-export of commit `9b2941a` per the deployer (Railway records no commit). After both were up, `pnpm smoke` passed
-against both, including that signed out only DAO-owned agents are listed, and the operator signed in and opened
-both agents under the per-agent owner check. The walkthrough below describes this build, except that Steward has since left the treasury menu (reached at
-`/a/treasury/steward`), which is not deployed yet. Of the table, only the
-first row has been re-checked on it. The deployment before it was dao `cd3115ee` and invoices `1be6e29c` (2026-10-13, 18:31–18:32Z,
-from `37cbba2`). Operation ids and amounts for the rows below are in the private release record.
+The current deployment is dao `708557e6` (2026-10-14 01:23Z), from a clean export of commit `2d94325` per the
+deployer (Railway records no commit), and invoices `fcdc06a6` (2026-10-13 22:46:57Z), from `9b2941a`: `d9cb581` and
+`2d94325` changed only dashboard pages and docs. On the live dashboard, Automations shows the "Latest run" panel with
+the treasury's 00:50Z run, and Steward is out of the treasury menu. After the dao deploy, `pnpm smoke` passed against
+both hosts, signed out and signed in as the operator. The walkthrough below describes this build. Before it: dao
+`0d5964ea` (00:43Z, from `d9cb581`), whose text checks on the card bundle these rows refer to. Of the table, the first, second and fourth rows
+have been re-checked on it, and the signed-in operator reads. Before it: dao `2d08148b` (2026-10-13 22:48:02Z, from `9b2941a`), after which the operator
+signed in and opened both agents under the per-agent owner check; and earlier dao `cd3115ee` and invoices `1be6e29c`
+(18:31–18:32Z, from `37cbba2`). Operation ids and amounts for the rows below are in the private release record.
 
 | Claim | How it is known | When |
 |---|---|---|
-| Both hosts healthy; signed-out callers refused every agent read; cross-site writes refused | `pnpm smoke`, live, read-only | 2026-10-12 22:13Z; re-checked on dao `2d08148b` / invoices `fcdc06a6`, 2026-10-13 23:05Z |
-| One executor per agent | Railway: one live deployment each, older ones removed | 2026-10-12 22:13Z |
+| Both hosts healthy; signed-out callers refused every agent read; cross-site writes refused | `pnpm smoke`, live, read-only | 2026-10-12 22:13Z; re-checked on dao `0d5964ea` / invoices `fcdc06a6`, 2026-10-14 00:48Z |
+| One executor per agent | Railway: one live deployment each, older ones removed | 2026-10-12 22:13Z; re-checked 2026-10-14 00:48Z |
 | State survives a restart and a redeploy | Signed-in smoke snapshot before and after | 2026-10-12 20:50–21:37Z |
-| Autopilot runs on schedule on that build | First tick's evidence: scheduled, build digests match | 2026-10-12 21:37Z |
+| Autopilot runs on schedule on that build | First tick's evidence: scheduled, build digests match | 2026-10-12 21:37Z; re-checked on dao `0d5964ea`: the first scheduled tick, 2026-10-14 00:46:01Z, records that deployment |
 | Invoice → DAO approval → payment, paid | Submitted at 21:46Z, inferred, by the deployed `invoices` service; approval prepared on an unidentified host, not this laptop's stores; proposal 50 filed and voted in two transactions; executed by the provider: SUCCESS | 2026-10-12 21:48Z |
 | Same flow, not paid | Submitted at 22:16Z, inferred, by the deployed `invoices` service; approval prepared and signed by the user's local approve-only server running the one-click code, uncommitted at the time (proposal 51); executed by the provider: FAILED, reason redacted (an empty wallet afterwards suggests insufficient funds, unproven) | 2026-10-12 22:17Z |
-| Signed-in views (member, operator, payee) | Not re-checked on that build | — |
+| Signed-in views (member, operator, payee) | Signed-in `pnpm smoke` as the operator passed on dao `0d5964ea`: both agents open under the per-agent owner check, and the DAO's proposals read. The member and payee views, and the pages themselves, not re-checked | 2026-10-14 |
 | Typecheck, offline tests, web build | Local; tests use mocks, not the provider or chain | per release |
 
 Offline tests prove the code's own logic against mocked providers. They don't prove what the Agent API, OutLayer or
@@ -109,8 +111,8 @@ signed: don't retune the strategy or limits for a demo.
 2. **Execute plan.** Every step goes through the same checks and policy as any other send. The swap settles in
    about a minute: Overview's Allocation now drifts from the target, and the budget figure drops.
 3. **Automations → Run now.** The autopilot reads the book, plans the correction and quotes each leg, then sells
-   the wNEAR back toward the target, in about a minute and a half. The budget meter drops again. **Follow the
-   latest run →** (under Overview's Autopilot) shows that run step by step.
+   the wNEAR back toward the target, in about a minute and a half. It plays out under **Latest run**, right below
+   the Autopilot settings: the book before, the quoted plan, the send, and the daily budget before and after.
 4. **Activity** lists the steward's swap and the autopilot's correction, each with the policy revision it ran
    under.
 5. **The refusal.** When the daily budget is nearly used (`demo-check` and Overview show what's left), ask the
@@ -284,8 +286,8 @@ most two swaps to rebalance, so two is the honest number. Nothing signed changes
    totalling no more than the ceiling, each with its quote's worst cost under the strategy's cost cap. Prices move:
    if the total is over the ceiling, the autopilot would leave it for the owner, so adjust the top-up and preview
    again.
-4. Run now. Both swaps settle in about a minute; Overview's budget figure drops by their USD value, and
-   Activity lists both with the policy revision and digest they ran under.
+4. Run now. Both swaps play out under **Latest run** on Automations and settle in about a minute; the daily budget
+   shown there drops by their USD value, and Activity lists both with the policy revision and digest they ran under.
 
 ## What keeps it safe
 

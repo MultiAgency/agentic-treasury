@@ -183,7 +183,7 @@ export function Step({
       <div className="flex min-w-0 flex-1 flex-col gap-3 pt-1">
         <div className="flex flex-col gap-0.5">
           <h3 className={`text-lg font-medium ${status === "upcoming" ? "text-muted-foreground" : ""}`}>{title}</h3>
-          {status === "complete" && summary && <p className="truncate text-sm text-muted-foreground">{summary}</p>}
+          {status === "complete" && summary && <p className="text-sm text-pretty break-words text-muted-foreground">{summary}</p>}
         </div>
         {status === "current" && children}
       </div>

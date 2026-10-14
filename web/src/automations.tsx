@@ -1,8 +1,9 @@
 import { ArrowRight, ArrowsLeftRight, CheckCircle, LockKey, Timer } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { ago, amount, client, queries, swaps, useAttempt, useRun, usd } from "./lib";
+import { ago, amount, client, swaps, useAttempt, useRun, usd } from "./lib";
 import { useAgent } from "./shell";
+import { Runs } from "./timeline-run";
 import { Badge, Button, Card, CardHeader, ConfirmButton, Dot, Empty, ErrorBox, input, Note, NotExecuted, Section, Spinner, StatusBadge, statusTone } from "./ui";
 
 function Rebalance() {
@@ -168,7 +169,6 @@ function Sweep() {
  */
 function Autopilot() {
   const status = useQuery({ queryKey: ["autopilot"], queryFn: () => client.autopilot.get(), refetchInterval: 30_000 });
-  const inbox = useQuery(queries.inbox);
   const [draft, setDraft] = useState<{ everyMin: string; maxUsd: string }>();
   const { error, busy, attempt } = useAttempt();
   if (!status.data) return null;
@@ -177,7 +177,6 @@ function Autopilot() {
   const everyMin = Number(form.everyMin);
   const maxUsd = Number(form.maxUsd);
   const valid = Number.isInteger(everyMin) && everyMin >= 5 && Number.isInteger(maxUsd) && maxUsd >= 0;
-  const runs = (inbox.data ?? []).filter((e) => e.level === "run").slice(0, 5);
 
   const act = (work: () => Promise<unknown>) =>
     attempt(async () => {
@@ -207,16 +206,6 @@ function Autopilot() {
         </label>
       </div>
       {!valid && <p className="text-sm text-warning-muted-foreground">At least every 5 minutes, and a limit in whole dollars, $0 or more.</p>}
-      {runs.length > 0 && (
-        <ul className="flex flex-col divide-y text-sm">
-          {runs.map((r) => (
-            <li key={r.id} className="flex gap-3 py-2">
-              <span className="w-28 shrink-0 text-muted-foreground">{ago(r.at)}</span>
-              <span>{r.text}</span>
-            </li>
-          ))}
-        </ul>
-      )}
       <ErrorBox error={error} />
       <div className="mt-auto flex flex-wrap justify-end gap-3">
         {draft && s.on && (
@@ -224,14 +213,6 @@ function Autopilot() {
             Save
           </Button>
         )}
-        <ConfirmButton
-          label={busy ? <Spinner /> : "Run now"}
-          disabled={busy}
-          title="Run one autopilot tick on mainnet?"
-          description="Shields any public balance and executes a rebalance if its swaps are within the limit. Anything larger is left for you."
-          confirm="Run now"
-          onConfirm={() => act(() => client.autopilot.tick())}
-        />
         {s.on ? (
           <Button size="sm" variant="outline" disabled={busy} onClick={() => save(false)}>
             Turn off
@@ -257,6 +238,7 @@ export function Automations() {
   return (
     <Section title="Automations" description="Each strategy previews first. Executing asks once, then runs under the agent's grant.">
       <Autopilot />
+      <Runs />
       <div className="grid gap-6 lg:grid-cols-2">
         {swaps(data) && <Rebalance />}
         <Sweep />

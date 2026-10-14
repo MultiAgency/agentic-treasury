@@ -177,3 +177,37 @@ A read-only check of the treasury agent: no public NEAR Intents balance on chain
 `mt_tokens_for_owner` empty), and the API reports all three of its assets in the confidential balance.
 This shows the position private at that moment. It is kept so by this server's requests, not by the policy,
 which allows public swaps and unshield ([enforcement](enforcement.md)).
+
+## A sweep on the treasury agent, 2026-10-14 (UTC)
+
+The treasury agent keeps nothing public on its own (its deposits and swaps are confidential), so a public
+balance was made on purpose: a one-time public deposit address for USDC from the API (a direct call with
+`confidential: false`; the dashboard only asks for confidential ones). A small USDC transfer on NEAR to that
+address was credited to the agent's public balance (deposit created 00:33:15Z, settled 00:37:24Z). The
+dashboard's Sweep (Automations: the same `sweep` the autopilot runs each tick) shielded it: SUCCESS, 00:39:13Z
+to 00:39:24Z. At 00:41:38Z the public balance was empty again. Before the USDC, a native NEAR transfer was sent
+to the same address by mistake; it hasn't appeared on the agent and its outcome is unknown. Privacy cost: the
+sending account is linked on chain to that deposit address.
+
+## A bounty paid, 2026-10-14 (UTC)
+
+The payout wallet was empty, so the treasury agent topped it up first with the dashboard's Top up, its own
+send with no vote (00:45:47Z to 00:45:53Z). The DAO offered an award to an agreed payee from the dashboard's
+Agreements; the winner signed in on invoices.multiagency.ai and filed under the offer. The payout was held
+for approval at 00:47:18Z. A member approved it from the dashboard in one transaction, proposal #56 (on chain
+00:50:07Z, Approved, one vote); the approval was signed by 00:50:23Z and the confidential transfer settled at
+00:50:32Z.
+
+## An agreement request, declined, 2026-10-14 (UTC)
+
+An account the DAO hadn't agreed to pay signed in on invoices.multiagency.ai and asked to be paid (00:55:43Z).
+The invoice host recorded it as an agreement request, not a payment: nothing reached the provider (the payout
+agent's latest operation is still the bounty's approval at 00:49:58Z). The request showed on the dashboard's
+Agreements and was declined there; the store records the decline, not its time. The payee's page then read
+"The DAO declined this request." No policy update was filed.
+
+## A rebalance charges the treasury's budget, 2026-10-14T00:50Z
+
+A Run now on the treasury agent, on dao `0d5964ea` (from `d9cb581`), executed one small USDC → wNEAR leg (settled
+00:51:48Z). The run's record shows the daily USD budget left before and after, lower by the swap's value; the
+dashboard's Latest run panel shows the same. This is the treasury agent's own budget, not an isolated agent's.

@@ -32,10 +32,10 @@ changes here first, then there.
 |---|---|---|---|---|
 | Capability | A contractor invoices the DAO and gets paid | — | Working on mainnet | Invoices filed at invoices.multiagency.ai, voted and paid on the payout agent, 2026-10-12 and 2026-10-13 (`docs/mainnet-log.md`; DEMO.md "What is verified") (proposals #47, #50, #53, #54) |
 | Capability | Requests reach the DAO without contacting a member | — | Working on mainnet | A payee signs in on the invoice page and files there; the DAO votes on the held payment. Invoices filed and paid that way on the payout agent, 2026-10-12 and 2026-10-13 (proposals #47, #53, #54) |
-| Guarantee | No payment moves without the members' vote | The signed policy | Held on mainnet | The payout policy holds every payment for the owner, and the owner is the DAO, so only its on-chain vote releases one. Held and released by vote on the payout agent, 2026-10-11 to 2026-10-13 (proposals #26, #47, #53, #54) |
+| Guarantee | No payment moves without the members' vote | The signed policy | Held on mainnet | The payout policy holds every payment for the owner, and the owner is the DAO, so only its on-chain vote releases one. Held and released by vote on the payout agent, 2026-10-11 to 2026-10-14 (proposals #26, #47, #53, #54, #56) |
 | Guarantee | The contractor can't learn the council roster | Not possible on Sputnik | Tested offline | Not possible on Sputnik: a DAO's roles are public on chain. Our invoice page never reads them (`test/invoice-roster.test.ts`) |
-| Capability | A bounty program pays winners from the private balance | — | Tested offline | The DAO offers an award and the winner's invoice files under it (`test/agreements.test.ts`); payouts are confidential transfers. No award paid on mainnet yet |
-| Capability | A new payee's request is routed to a new agreement | — | Tested offline | Recorded as a request, never paid (`test/invoice-http.test.ts`); the flow hasn't run on mainnet |
+| Capability | A bounty program pays winners from the private balance | — | Working on mainnet | The DAO offered an award; the winner filed under it on the invoice page and was paid confidentially from the payout agent after the DAO's vote, 2026-10-14 (`test/agreements.test.ts`) (proposals #56) |
+| Capability | A new payee's request is routed to a new agreement | — | Working on mainnet | An account the DAO hadn't agreed to pay filed on the invoice page, 2026-10-14 00:55Z: recorded as an agreement request, nothing sent to the provider, then declined from the dashboard's Agreements (`test/invoice-http.test.ts`) |
 | Guarantee | No one outside the DAO's agreement is paid | The signed policy | Held on mainnet, on another agent | The destination list is the agreement, and changing it takes the DAO's signature. An unlisted account refused with `policy_destination_denied` on the treasury agent, 2026-10-11; the treasury agent's list changed only by DAO vote (proposals #23, #24, #25) |
 | Guarantee | An over-limit payment can't go through, even with votes | The signed policy | Tested offline | Enforced by the signed policy, per OutLayer source: the keystore re-checks the per-transaction cap before signing, after the vote; not observed. Our approval re-check is tested offline (`test/authorize.test.ts`, `test/two-machine.test.ts`). A cap refusal was seen on the treasury agent, 2026-10-11, with no vote involved |
 | Guarantee | Chain watchers can't reconstruct the DAO's payout graph | The signed policy | Held on mainnet | Payees are confidential destinations in the policy, so a public payout matches none. The payout agent's account has no public transactions and the payee sees no sender, 2026-10-11. Limits: each approval is a public proposal whose timing shows, and 1Click and NEAR Intents can see the mapping |
@@ -66,7 +66,8 @@ changes here first, then there.
 - A payee must be able to receive confidentially: the provider documents that a confidential transfer's
   recipient needs confidential intents enabled. A requester without it can be agreed but not paid; a public
   payout for them isn't built.
-- The agreement-request flow hasn't run on mainnet yet: record its date and proposal number here once
+- An agreement request has been filed and declined on mainnet (2026-10-14), but agreeing to one, which
+  files a policy update for the DAO's vote, hasn't run yet: record its date and proposal number here once
   it has.
 - See README **Not done yet** and [enforcement](enforcement.md).
 

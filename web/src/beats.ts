@@ -73,8 +73,8 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
             known: "mainnet",
             where: "agent",
             evidence:
-              "The payout policy holds every payment for the owner, and the owner is the DAO, so only its on-chain vote releases one. Held and released by vote on the payout agent, 2026-10-11 to 2026-10-13",
-            proposals: [26, 47, 53, 54],
+              "The payout policy holds every payment for the owner, and the owner is the DAO, so only its on-chain vote releases one. Held and released by vote on the payout agent, 2026-10-11 to 2026-10-14",
+            proposals: [26, 47, 53, 54, 56],
           },
           {
             type: "guarantee",
@@ -87,16 +87,19 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
           {
             type: "capability",
             text: "A bounty program pays winners from the private balance",
-            known: "offline",
+            known: "mainnet",
+            where: "agent",
             evidence:
-              "The DAO offers an award and the winner's invoice files under it (test/agreements.test.ts); payouts are confidential transfers. No award paid on mainnet yet",
+              "The DAO offered an award; the winner filed under it on the invoice page and was paid confidentially from the payout agent after the DAO's vote, 2026-10-14 (test/agreements.test.ts)",
+            proposals: [56],
           },
           {
             type: "capability",
             text: "A new payee's request is routed to a new agreement",
-            known: "offline",
+            known: "mainnet",
+            where: "agent",
             evidence:
-              "Recorded as a request, never paid (test/invoice-http.test.ts); the flow hasn't run on mainnet",
+              "An account the DAO hadn't agreed to pay filed on the invoice page, 2026-10-14 00:55Z: recorded as an agreement request, nothing sent to the provider, then declined from the dashboard's Agreements (test/invoice-http.test.ts)",
           },
           {
             type: "guarantee",
@@ -252,9 +255,9 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
             type: "capability",
             text: "Shows budget headroom ticking down with each dispatch",
             known: "mainnet",
-            where: "other",
+            where: "agent",
             evidence:
-              "The provider charges each swap to the USD budget: charged on an isolated test agent, 2026-10-13; on the treasury agent, the 13:57Z spend_budget_exceeded followed usage from earlier swaps, 2026-10-12. The Overview shows the window with least left (test/budget-window.test.ts)",
+              "On the treasury agent, a Run now swap took the daily budget left down by its value, shown as before and after under Automations' Latest run, 2026-10-14 00:50Z. The Overview and each run show the window with least left (test/budget-window.test.ts)",
           },
           {
             type: "guarantee",
@@ -277,9 +280,10 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
           {
             type: "capability",
             text: "Sweeps idle stables into the confidential balance",
-            known: "offline",
+            known: "mainnet",
+            where: "agent",
             evidence:
-              "Our autopilot shields public balances each tick (test/autopilot.test.ts). Never run on the treasury agent: deposits land confidential, and the only shield was a one-off script on an isolated test agent",
+              "A small USDC deposit to a public deposit address landed in the treasury agent's public balance; the dashboard's Sweep (the same sweep the autopilot runs each tick) shielded it, and nothing was left public, 2026-10-14 00:33Z to 00:39Z (test/autopilot.test.ts)",
           },
           {
             type: "guarantee",
