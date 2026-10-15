@@ -61,7 +61,7 @@ test("progress initializes during execution without converting or rewriting exis
 
 test("a process exiting after a recorded stage leaves it unfinished after restart", () => {
   const child = spawnSync(fileURLToPath(new URL("../node_modules/.bin/tsx", import.meta.url)),
-    [fileURLToPath(new URL("./fixtures/progress-child.ts", import.meta.url)), process.cwd(), agent, tick], { encoding: "utf8" });
+    [fileURLToPath(new URL("./fixtures/progress-child.ts", import.meta.url)), process.cwd(), agent, tick], { encoding: "utf8", timeout: 15_000 });
   assert.equal(child.status, 23, child.stderr);
   const read = readProgress(".", agent, tick, since);
   assert.equal(read.records.length, 1);

@@ -3,14 +3,23 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 /**
- * The signed-out page shows the prototypes and sign-in, and reads nothing: no balances, payments or
+ * The signed-out page shows the areas and sign-in, and reads nothing: no balances, payments or
  * agents, and no roster or proposals. Pinned at the source, so a fetch added later fails here.
  */
 test("the signed-out page reads nothing from the server", () => {
   const source = readFileSync(new URL("../web/src/public.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(source, /fetch\(|gw[<(]|client\.|useQuery/);
   const imports = [...source.matchAll(/from "([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(imports.sort(), ["./app/session", "./features/evidence/showcase", "@phosphor-icons/react"]);
+  assert.deepEqual(imports, ["./app/session"]);
+  const entry = readFileSync(new URL("../web/src/main.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(entry, /PrototypeExplorer|public\/prototype-explorer/);
+});
+
+test("legacy public links retain static presentation without authored run state or playback", () => {
+  const source = readFileSync(new URL("../web/src/public/prototype-explorer.tsx", import.meta.url), "utf8");
+  const imports = [...source.matchAll(/from "([^"]+)"/g)].map(m => m[1]);
+  assert.deepEqual(imports.sort(), ["../features/evidence/showcase", "react"].sort());
+  assert.doesNotMatch(source, /useState|setTimeout|setInterval|@ag-ui|PublicDemo|demoEvents/);
 });
 
 test("its prototype cards read nothing either, and show requirements and their phases, never the evidence", () => {

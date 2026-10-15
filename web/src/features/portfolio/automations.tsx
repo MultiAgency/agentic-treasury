@@ -4,16 +4,17 @@ import { SCHEDULE_STOPPED, SCHEDULE_STOP_SCOPE } from "../../shared/schedule-cop
 import { queries } from "../../shared/queries";
 import { ArrowRight, ArrowsLeftRight, CheckCircle } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useLocation } from "@tanstack/react-router";
 
 import { StrategyWorkflow } from "./strategy-workflow";
 import { amount, client, kindOf, swaps, useAttempt, useRun, usd } from "../../shared/lib";
-import { useIsOperator } from "../../app/viewer";
+import { useCanCall } from "../../app/viewer";
 import { useAgent } from "../../app/agent-context";
-import { Badge, Button, Card, CardHeader, Dot, Empty, ErrorBox, Loading, QueryError, Note, NotExecuted, Section, Spinner, StatusBadge, statusTone } from "../../shared/ui";
+import { Badge, Button, Card, CardHeader, Details, Dot, Empty, ErrorBox, Loading, QueryError, Note, NotExecuted, Section, Spinner, StatusBadge, statusTone } from "../../shared/ui";
 
-function Rebalance() {
-  const operator = useIsOperator();
+export function Rebalance({ disabledReason, onExecute }: { disabledReason?: string; onExecute?: (planId: string) => void }) {
+  const canPreview = useCanCall("rebalance");
+  const canExecute = useCanCall("executePlan");
   const executor = useAgent().setup.executor !== false;
   const hasGrant = Boolean(useAgent().setup.grant);
   const { data } = useAgent();
@@ -25,25 +26,26 @@ function Rebalance() {
   const saved = preview.events.find((e) => e.type === "saved");
   const executed = !!saved && execution.input?.planId === saved.plan.id && execution.state !== "idle";
   const rejected = execution.events.find((e) => e.type === "rejected");
+  const blocked = Boolean(disabledReason) || !executor || !hasGrant;
 
   return (
     <Card className="lg:col-span-2 lg:row-span-2">
       <CardHeader
         icon={<ArrowsLeftRight size={20} weight="bold" />}
         title="Rebalance"
-        description={`Swap toward ${split}. Legs under ${usd(data.rebalance.minLegUsd)} are left alone; legs that could cost over ${data.rebalance.maxCostBps} bps are skipped.`}
+        description={`Swap toward ${split}. Swaps below ${usd(data.rebalance.minLegUsd)} or above the ${data.rebalance.maxCostBps / 100}% cost limit are skipped.`}
       />
 
       <div className="flex min-h-40 flex-1 flex-col gap-3">
         {!plan && preview.state === "idle" && (
           <Empty icon={<ArrowsLeftRight size={24} />}>
-            Preview plans the legs, quotes each one and saves the plan. Executing runs exactly that plan.
+            Preview the swaps and their estimated costs. Execute only after reviewing the saved plan.
           </Empty>
         )}
-        {!plan && preview.state === "running" && <Empty icon={<Spinner />}>Reading the book…</Empty>}
+        {!plan && preview.state === "running" && <Empty icon={<Spinner />}>Checking balances…</Empty>}
         {plan && plan.legs.length === 0 && (
           <Empty icon={<CheckCircle size={24} className="text-success" />}>
-            The book is within tolerance. Nothing to do.
+            No swaps are needed at the current targets and minimum swap size.
           </Empty>
         )}
         {plan?.legs.map((leg, i) => {
@@ -71,11 +73,12 @@ function Rebalance() {
                 {quote?.type === "quote" && (
                   <>
                     <span className="text-muted-foreground">
-                      Quote {amount(quote.amountOut, leg.to)} · floor {amount(quote.minAmountOut, leg.to)}
+                      Estimated received {amount(quote.amountOut, leg.to)} · Minimum received {amount(quote.minAmountOut, leg.to)}
                     </span>
-                    <Badge tone={quote.skipped ? "warning" : "neutral"}>
-                      {quote.costBps} bps · at worst {quote.worstCostBps}{quote.skipped ? " · skipped" : ""}
-                    </Badge>
+                    <span className="text-muted-foreground">
+                      Estimated cost {quote.costBps / 100}% · Maximum cost {quote.worstCostBps / 100}%
+                    </span>
+                    {quote.skipped && <Badge tone="warning">Skipped: cost limit exceeded</Badge>}
                   </>
                 )}
                 {done?.type === "action" && done.shield && (
@@ -86,6 +89,9 @@ function Rebalance() {
                     Swap{" "}
                   </StatusBadge>
                 )}
+                {done?.type === "action" && done.correlationId && (
+                  <Link to="/activity" hash={`operation-${done.correlationId}`} className="underline">Follow this swap</Link>
+                )}
                 {step !== undefined && !done && execution.state === "running" && <Spinner />}
               </div>
             </div>
@@ -93,6 +99,7 @@ function Rebalance() {
         })}
         {rejected?.type === "rejected" && <NotExecuted problems={rejected.problems} again="Preview" />}
         <ErrorBox error={preview.error ?? execution.error} />
+        {disabledReason && <p className="text-sm text-muted-foreground">{disabledReason}</p>}
         {(executed || execution.error) && <Link to="/activity" className="text-sm underline">Review operation outcomes before another preview</Link>}
       </div>
 
@@ -101,21 +108,28 @@ function Rebalance() {
           {saved
             ? `Valid until ${new Date(saved.plan.expiresAt).toLocaleTimeString()} · budget remaining ${usd(plan?.budget)}`
             : plan && plan.legs.length > 0 && preview.state === "done"
-              ? "Every leg costs more than it is worth: nothing to execute."
+              ? "No swaps meet the cost limit. Nothing to execute."
               : plan && `Budget remaining ${usd(plan.budget)}`}
         </span>
         <div className="flex gap-3">
-          <Button variant="outline" disabled={busy || !operator || !executor || !hasGrant} onClick={() => preview.run(undefined)}>
+          <Button variant="outline" disabled={busy || blocked || !canPreview} onClick={() => { if (!busy && !blocked && canPreview) void preview.run(undefined); }}>
             {preview.state === "running" ? <Spinner /> : null}
             Preview
           </Button>
           <ConfirmButton
+            path="executePlan"
             label={execution.state === "running" ? <><Spinner /> Executing</> : "Execute"}
-            disabled={busy || !saved || executed || !executor || !hasGrant}
+            disabled={busy || !saved || executed || blocked}
             title="Execute the previewed rebalance on mainnet?"
-            description="Runs the previewed swaps exactly as shown, under the agent's grant, each held to its previewed floor. Actions run in sequence. Checks run before execution and before later actions; if execution stops, earlier completed actions remain."
+            description="Runs the previewed swaps under the agent's grant, each requiring at least the minimum received shown. Swaps run in sequence with checks before each action. If execution stops, earlier completed actions remain."
             confirm="Execute swaps"
-            onConfirm={() => saved && execution.run({ planId: saved.plan.id })}
+            onConfirm={() => {
+              if (saved && !busy && !executed && !blocked && canExecute) {
+                // Selection follows explicit confirmation; it never establishes an operation outcome.
+                onExecute?.(saved.plan.id);
+                void execution.run({ planId: saved.plan.id });
+              }
+            }}
           />
         </div>
       </div>
@@ -125,7 +139,7 @@ function Rebalance() {
 
 /** Existing Payables schedules can be stopped without offering Treasury configuration. */
 export function PayablesSchedule() {
-  const operator = useIsOperator();
+  const canStop = useCanCall("autopilot/stop");
   const executor = useAgent().setup.executor !== false;
   const status = useQuery({ ...queries.autopilot, retry: false });
   const { busy, error, message, attempt } = useAttempt();
@@ -134,7 +148,7 @@ export function PayablesSchedule() {
   if (!status.data.on && !message) return null;
   return <Card>
     {status.data.on && <><p>An existing schedule is on. Portfolio strategy configuration is not available for Payables.</p><p>{SCHEDULE_STOP_SCOPE}</p>
-      <Button variant="outline" disabled={busy || !operator || !executor} onClick={() => attempt(async () => {
+      <Button variant="outline" disabled={busy || !canStop || !executor} onClick={() => attempt(async () => {
         await client.autopilot.stop();
         return SCHEDULE_STOPPED;
       })}>Turn off</Button></>}
@@ -145,26 +159,22 @@ export function PayablesSchedule() {
 
 /** The fixed strategies, each run on demand, and the autopilot that runs them unattended. */
 export function Automations() {
-  const operator = useIsOperator();
   const executor = useAgent().setup.executor !== false;
   const hasGrant = Boolean(useAgent().setup.grant);
   const { data } = useAgent();
   const treasury = kindOf(data) === "treasury";
+  const hash = useLocation({ select: location => location.hash });
   return (
     <Section title={treasury ? "Strategy" : "Shield public funds"} description={treasury ? "Configure, authorize and schedule the strategy, or preview a manual rebalance." : "Preview a sweep to shield public balances."}>
       {treasury && <TaskEvidence task="strategy" />}
-      <nav className="flex flex-wrap gap-4 text-sm" aria-label="Automation actions">
-        {swaps(data) && <a href="#rebalance" className="underline">Preview a rebalance</a>}
-        <Link to="/funding" hash="sweep" className="underline">Preview a sweep</Link>
-        {!treasury && <Link to="/policy" hash="grants" className="underline">Review or renew the grant</Link>}
-      </nav>
-      {(!operator || !executor) && <Note>Operators on the executor can preview, execute, and change automation settings. Members can review recorded runs.</Note>}
+      {!treasury && <Link to="/policy" hash="grants" className="self-start text-sm underline">Review or renew the grant</Link>}
+      {!executor && <Note>Preview, execution and automation settings are available on the executor with the corresponding account permissions.</Note>}
       {!hasGrant && <Note>A grant is required for new automation actions. <Link to="/policy" hash="grants" className="underline">Review grants and permissions</Link>.</Note>}
       {treasury ? <StrategyWorkflow /> : <PayablesSchedule />}
       {treasury && !swaps(data) && <Note>The current policy does not allow swaps. Rebalance previews are unavailable; recorded runs and strategy settings remain accessible.</Note>}
       {treasury && <Link to="/follow/run" className="self-start text-sm font-medium underline">Run autopilot once or review recorded runs →</Link>}
       <Section title="Manual actions" description="Preview a saved rebalance before choosing whether to execute it.">
-        {swaps(data) && <div id="rebalance" className="scroll-mt-48 lg:col-span-2"><Rebalance /></div>}
+        {swaps(data) && <div id="rebalance" className="scroll-mt-48 lg:col-span-2"><Details summary="Preview a rebalance" open={hash === "rebalance"}><Rebalance /></Details></div>}
         <div id="sweep" className="scroll-mt-48 text-sm"><Link to="/funding" hash="sweep" className="underline">Shield public funds in Balances &amp; funding</Link></div>
       </Section>
     </Section>

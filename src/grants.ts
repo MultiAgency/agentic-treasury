@@ -4,6 +4,7 @@ import { api } from "./api.js";
 import { agentId, saveEnv } from "./env.js";
 import { loadStrategy } from "./strategy.js";
 import { strategyDigest, strategyLabelSuffix } from "./strategy-digest.js";
+import { currentWorkOrder, workOrderInvoice } from "./work-order-store.js";
 
 /**
  * What a grant's label says it is for: the agent's own strategies, its payouts, or invoices (the
@@ -46,6 +47,11 @@ async function agentGrantLabel(): Promise<GrantLabel> {
  */
 export async function grantRequest({ label, suffix, expectedStrategyDigest, requireStrategyReview = false }: { label?: GrantLabel; suffix?: string; expectedStrategyDigest?: string; requireStrategyReview?: boolean } = {}) {
   const chosen = label ?? (await agentGrantLabel());
+  const order = currentWorkOrder();
+  if (order) {
+    workOrderInvoice(order, order.payee);
+    if (chosen !== "invoices" || suffix !== undefined) throw new Error("A work order requires its invoices grant.");
+  }
   const strategy = chosen === "treasury" ? loadStrategy() : null;
   if (strategy && (requireStrategyReview || expectedStrategyDigest !== undefined)) {
     if (requireStrategyReview && process.env.AUTOPILOT === "on") throw new Error("Turn the schedule off before authorizing a Treasury strategy.");
@@ -62,7 +68,7 @@ export async function grantRequest({ label, suffix, expectedStrategyDigest, requ
       agent_id: agentId(),
       label: full,
       credential: commitment,
-      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      expires_at: order?.until ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
     } as const,
   };
 }

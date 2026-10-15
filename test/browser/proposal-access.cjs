@@ -26,7 +26,7 @@ const root = path.resolve(process.argv[2] || 'web/dist');
         if (denied) { waitingGateway.push(route); return; }
         return route.fulfill({ json: { agents: ['payables', 'healthy'].map(name => ({ name, owner: 'owner.near', dao: true, area: 'payables' })),
           invoices: null, viewer: { account: 'owner.near', access: Object.fromEntries(['payables', 'healthy'].map(name => [name,
-            { role: 'operator', canPropose: false, canVote: false }])) } } });
+            { canSign: false, canPropose: false, canVote: false, canExecute: true, canManage: true }])) } } });
       }
       if (p === '/gw/proposals') {
         if (holdProposals) { waitingProposals.push(route); return; }
@@ -45,7 +45,7 @@ const root = path.resolve(process.argv[2] || 'web/dist');
               destinations: { mode: 'only', list: [{ action: 'transfer', address: payee, confidential: true }] } } } },
           'treasury/get': null, 'autopilot/get': { on: false, everyMin: 60, maxUsd: 0 },
           held: [{ correlationId: `${agent}-payment`, at: new Date().toISOString(), request: { recipient: payee, asset: 'usdc', amount: '1000000' } }],
-          unresolved: [], 'inbox/list': [], 'agreements/list': [], 'owner/actions': [], 'owner/pending': [], policyHistory: [],
+          unresolved: [], 'inbox/list': [], 'workOrders/list': [], 'agreements/list': [], 'owner/actions': [], 'owner/pending': [], policyHistory: [],
         };
         return route.fulfill({ json: { json: rpcValue(values, method) } });
       }

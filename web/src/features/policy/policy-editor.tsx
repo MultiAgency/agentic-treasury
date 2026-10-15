@@ -1,7 +1,7 @@
 import type { Policy as AgentPolicy } from "@near-intents-agent-api/sdk";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Overview } from "../../shared/lib";
-import { ownerSigner, type Setup, useOwnerAction } from "../owner/owner";
+import { ownerSigner, type Setup, useOwnerAction, useSigner } from "../owner/owner";
 import { allowsAsset, BUDGET, changesOf, type Draft, differences, draftOf, WINDOWS } from "./policy-draft";
 import { focusInvalid } from "../../shared/form";
 import { useDirtyDraft, confirmDiscard } from "../../shared/dirty-draft";
@@ -26,6 +26,8 @@ export function Editor({ policy, data, setup, onDone }: { policy: AgentPolicy; d
   const [reviewing, setReviewing] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const action = useOwnerAction(setup);
+  const { canSign } = useSigner(setup);
+  useEffect(() => { if (!canSign) setReviewing(false); }, [canSign]);
   const result = changesOf(draft, data.book, policy);
   const lines = differences(baseline.draft, draft, data.book);
   const currentPolicy = reviewedPolicyOf(data);
@@ -47,7 +49,7 @@ export function Editor({ policy, data, setup, onDone }: { policy: AgentPolicy; d
         e.preventDefault();
         setSubmitted(true);
         if ("invalid" in result) { focusInvalid(e.currentTarget); return; }
-        if (dirty && !stale && !action.busy) setReviewing(true);
+        if (dirty && !stale && !action.busy && canSign) setReviewing(true);
       }}>
       <div className="flex flex-col gap-3">
         <h3 className="text-lg font-medium">What the agent may do</h3>
@@ -169,16 +171,16 @@ export function Editor({ policy, data, setup, onDone }: { policy: AgentPolicy; d
         <div className="flex flex-wrap items-center gap-3">
           {reviewing && !stale && "changes" in result ? (
             <Button
-              disabled={action.busy}
+              disabled={action.busy || !canSign}
               onClick={async () => {
-                if (stale || !baseline.policy) return;
+                if (stale || !baseline.policy || !canSign) return;
                 if (await action.run({ type: "policy_update", changes: result.changes, expectedPolicy: baseline.policy })) onDone();
               }}
             >
               {action.busy && <Spinner />} {viaDao ? "Propose in Trezu" : "Sign update"}
             </Button>
           ) : (
-            <Button type="submit" disabled={action.busy || !dirty || stale}>
+            <Button type="submit" disabled={action.busy || !dirty || stale || !canSign}>
               Review changes
             </Button>
           )}

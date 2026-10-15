@@ -18,6 +18,7 @@ import { isTerminal, settle } from "./ops.js";
 import { checkPaymentApproval, type PaymentApproval } from "./payment-approval.js";
 import { acquireMoneyLock, assertMoneyLock } from "./lock.js";
 import { ownerSignatureProblem } from "./owner-signature.js";
+import { checkHostedCreation } from "./hosted-binding.js";
 
 /**
  * Owner actions, signed by the owner's browser wallet or by a DAO. The server prepares each with
@@ -264,8 +265,12 @@ export function prepare(action: OwnerAction, signer: Signer = "wallet") {
 }
 
 async function prepareLocked(action: OwnerAction, signer: Signer) {
+  if (process.env.HOSTED_OWNER && action.type === "agent_create" && [...pending.values()].some(p => p.type === "agent_create" && p.stage !== "settled"))
+    throw new Error("Agent creation already has an open owner action. Follow its existing record before preparing another.");
   const paymentApproval = action.type === "approval_vote" ? (await checkPaymentApproval(action)).binding : undefined;
   const owner = signer === "dao" ? await treasuryOwner() : undefined;
+  if (action.type === "agent_create" && (owner ?? action.owner))
+    checkHostedCreation((owner ?? action.owner)!, signer, action.role);
   const { request, grantToken, releases } = await build(action.type === "agent_create" && owner ? { ...action, owner } : action);
   const generated = await api.generateIntent(request, { idempotencyKey: crypto.randomUUID() });
   if (generated.type !== request.type) throw new Error("Provider generated a different owner intent type");

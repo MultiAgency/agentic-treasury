@@ -2,7 +2,6 @@ import { ArrowRight, ChartPieSlice, HandCoins, Receipt } from "@phosphor-icons/r
 import type { ReactNode } from "react";
 import { type Brief, type Kind, type Known, knownLabel, REQUIREMENTS_CONTEXT, PROTOTYPES, AREA_NAMES, type Requirement, STOPPER_LABEL, summarizeRequirements } from "./beats";
 import { Card, Details } from "../../shared/ui";
-import { PublicDemo } from "../../public/public-demo";
 
 /** How a requirement is known, as one mark: full when seen on mainnet, half when tested offline, empty when deployed behavior is unverified. */
 export function KnownMark({ known, size = 14 }: { known: Known; size?: number }) {
@@ -198,7 +197,11 @@ export function PublicWorkflows({ invoices }: { invoices: string | null }) {
                 <h3 className="flex items-center gap-3 text-3xl font-semibold tracking-tight"><Icon size={28} className="shrink-0 text-brand-strong" aria-hidden="true" />{title}</h3>
                 <p className="min-h-18 leading-relaxed text-muted-foreground">{description}</p>
               </div>
-              <PublicDemo kind={kind} overview={steps} />
+              <ol className="flex flex-col gap-4">{steps.map(([step, detail], i) => <li key={step} className="grid grid-cols-[2rem_1fr] gap-3">
+                <span aria-hidden="true" className="flex size-8 items-center justify-center rounded-full bg-brand-muted text-sm font-semibold text-brand-strong">{i + 1}</span>
+                <div><p className="font-medium">{step}</p><p className="mt-1 text-sm text-muted-foreground">{detail}</p></div>
+              </li>)}</ol>
+              <a href={`#${kind}-requirements`} className="inline-flex min-h-11 items-center justify-center self-start rounded-full border border-border-strong px-4 py-2 text-sm font-medium hover:bg-accent">{title} requirement stages</a>
               <div className="mt-auto flex flex-wrap gap-3 pt-2">
                 {kind === "facilitator" && invoices && <a href={invoices} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-primary px-5 py-2 font-medium text-primary-foreground hover:bg-primary/90"><Receipt size={18} aria-hidden="true" />Request a payment (opens invoice service)</a>}
               </div>

@@ -2,7 +2,7 @@ import { TaskEvidence } from "../evidence/task-evidence";
 import { SCHEDULE_STOP_SCOPE } from "../../shared/schedule-copy";
 import { PencilSimple } from "@phosphor-icons/react";
 import { useState } from "react";
-import { Link, useLocation } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { PolicyObservations } from "./policy-observations";
 import { Grants } from "./grants";
 import { PolicyEvidence } from "./policy-evidence";
@@ -18,7 +18,6 @@ export function Policy() {
   const { data, setup } = useAgent();
   const { canSign } = useSigner(setup);
   const [editing, setEditing] = useState(false);
-  const hash = useLocation({ select: location => location.hash });
   const { policy } = data.policy;
   if (!policy) return <><PolicyObservations /><p className="text-sm text-muted-foreground">No policy available to review.</p></>;
   const caps = (window: Window) =>
@@ -97,10 +96,10 @@ export function Policy() {
           </div>
           <OwnerControls setup={setup} frozen={policy.frozen} />
         </div>
-        <Details summary="Grant controls and history" open={!setup.grant || hash === "grants"}>
+        <div id="grants" className="scroll-mt-48">
           <p className="mb-4 text-sm">Revocation removes that grant’s permission for new actions. Other grants and operations already committed by the provider need separate review.</p>
           <Grants data={data} setup={setup} />
-        </Details>
+        </div>
       </Section>
       <PolicyEvidence digest={data.digest} />
     </>

@@ -1,7 +1,7 @@
 import { queries } from "../../shared/queries";
 import { ConfirmButton } from "../owner/confirm-button";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
 import { ago, kindOf, type Overview } from "../../shared/lib";
 import { ownerName, type Setup, useOwnerAction, useSigner, WalletButton } from "../owner/owner";
@@ -13,6 +13,7 @@ import { connect, useWallet } from "../owner/wallet";
  * revoking stops it at once, short of a freeze, which stops every grant.
  */
 export function Grants({ data, setup }: { data: Overview; setup: Setup }) {
+  const hash = useLocation({ select: location => location.hash });
   const wallet = useWallet();
   const action = useOwnerAction(setup);
   const { viaDao, canSign, needsWallet, connectedNotOwner } = useSigner(setup);
@@ -20,18 +21,17 @@ export function Grants({ data, setup }: { data: Overview; setup: Setup }) {
   const [issuing, setIssuing] = useState(false);
   const now = Date.now();
   const live = data.grants.filter((g) => !g.revoked_at && Date.parse(g.expires_at) > now);
+  const ended = data.grants.filter((g) => g.revoked_at || Date.parse(g.expires_at) <= now);
   const history = <ul className="flex flex-col divide-y">
-    {data.grants.map((g) => {
-      const active = !g.revoked_at && Date.parse(g.expires_at) > now;
+    {ended.map((g) => {
       return <li key={g.grant_id} className="flex flex-col gap-1 py-3 text-sm first:pt-0 last:pb-0">
         <span className="flex flex-wrap items-center gap-2">
           <span className="break-all">{g.label}</span>
-          <Badge tone={active ? "info" : "neutral"}>{g.revoked_at ? "Revoked" : active ? "Live" : "Expired"}</Badge>
-          {active && g.grant_id === setup.grant?.id && <Badge tone="info">Current</Badge>}
+          <Badge>{g.revoked_at ? "Revoked" : "Expired"}</Badge>
         </span>
         <span className="text-muted-foreground">
           issued {ago(g.issued_at)} · {g.revoked_at ? <>revoked <time dateTime={g.revoked_at}>{g.revoked_at}</time></>
-            : active ? <>expires {ago(g.expires_at)}</> : <>expired <time dateTime={g.expires_at}>{g.expires_at}</time></>}
+            : <>expired <time dateTime={g.expires_at}>{g.expires_at}</time></>}
         </span>
       </li>;
     })}
@@ -48,8 +48,8 @@ export function Grants({ data, setup }: { data: Overview; setup: Setup }) {
     setIssuing(false);
   };
 
-  const issueButton = kindOf(data) === "treasury" ? <Link id="grants" to="/automations" className="text-sm underline">Review and authorize the Portfolio strategy</Link> : (
-    <div className="scroll-mt-48 flex flex-wrap items-center gap-2" id="grants">
+  const issueButton = kindOf(data) === "treasury" ? <Link to="/automations" className="text-sm underline">Review and authorize the Portfolio strategy</Link> : (
+    <div className="flex flex-wrap items-center gap-2">
       {(needsWallet || connectedNotOwner) && <><WalletButton /><span className="text-sm">Connect {ownerName(setup)} to issue a grant.</span></>}
       <Button size="sm" variant="outline" disabled={action.busy || !canSign || needsWallet} onClick={issue}>
         {issuing && action.busy ? <Spinner /> : viaDao ? "Propose a new grant" : "Issue a new grant"}
@@ -61,8 +61,8 @@ export function Grants({ data, setup }: { data: Overview; setup: Setup }) {
     return (
       <Section title="Grants" description="No live grant: the agent can't send until the owner issues one.">
         <Card>
-          {history}
           {issueButton}
+          {ended.length > 0 && <Details summary={`Ended grants (${ended.length})`}>{history}</Details>}
           {action.label && <p className="text-sm text-muted-foreground">{action.label}</p>}
           <ErrorBox error={action.error} />
         </Card>
@@ -80,7 +80,7 @@ export function Grants({ data, setup }: { data: Overview; setup: Setup }) {
       <ConfirmButton
         label={label}
         disabled={action.busy || !canSign}
-        ownerAction
+        path="owner/prepare"
         title="Revoke the current grant?"
         description="The agent stops: nothing moves until the owner issues a new grant. Operations it already committed still finish."
         confirm="Revoke"
@@ -96,18 +96,18 @@ export function Grants({ data, setup }: { data: Overview; setup: Setup }) {
   return (
     <Section title="Grants" description="Live grants allow actions inside the policy. Expired and revoked grants remain here as history.">
       <Card>
-        {history}
-        {issueButton}
-        <Details summary="Revoke a grant" className="border-t pt-3">
           <p className="text-muted-foreground">
             Revoking a grant stops it at once; operations it already committed still finish.{viaDao ? " Each revocation is one DAO proposal." : ""} A
             new grant replaces the current one once the owner signs it. A treasury grant's label carries the strategy in force, so signing it
             approves that strategy for the autopilot.
           </p>
-          <ul className="flex flex-col divide-y">
+          <ul aria-label="Live grants" className="flex flex-col divide-y">
             {live.map((g) => (
               <li key={g.grant_id} className="flex flex-wrap items-center justify-between gap-3 py-2">
-                <span>{g.label}</span>
+                <div className="flex min-w-0 flex-col gap-1">
+                  <span className="flex flex-wrap items-center gap-2"><span className="break-all">{g.label}</span><Badge tone="info">Live</Badge>{g.grant_id === setup.grant?.id && <Badge tone="info">Current</Badge>}</span>
+                  <span className="text-muted-foreground">Expires {ago(g.expires_at)}</span>
+                </div>
                 <div className="flex items-center gap-2">
                   {revokeButton(g)}
                 </div>
@@ -116,7 +116,8 @@ export function Grants({ data, setup }: { data: Overview; setup: Setup }) {
           </ul>
 
           {connectedNotOwner && <p className="text-xs text-muted-foreground">Only {ownerName(setup)} can revoke or issue grants. Connect that account.</p>}
-        </Details>
+        <Details summary="Issue or renew a grant" open={hash === "grants"} className="border-t pt-3">{issueButton}</Details>
+        {ended.length > 0 && <Details summary={`Ended grants (${ended.length})`}>{history}</Details>}
         {action.label && <p className="text-sm text-muted-foreground">{action.label}</p>}
           <ErrorBox error={action.error} />
       </Card>

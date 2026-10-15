@@ -4,6 +4,9 @@ import type { Tick } from "../src/evidence.js";
 import { tickLog, parseRecording, serializeRecording } from "../src/agui.js";
 import { parseJournalHistory } from "../src/journal-history.js";
 import { EventSchemas } from "@ag-ui/core/schemas";
+import { PROTOCOL_VERSION } from "@ag-ui/core";
+import type { ProgressEvent } from "../src/run-progress-schema.js";
+import type { RunLogEvent } from "../src/run-log-schema.js";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
@@ -28,6 +31,42 @@ const history = (rows: unknown[] = [...lines(), ...lines("op-1")], agent = "agen
   parseJournalHistory(agent, rows.map((r) => JSON.stringify(r)).join("\n"));
 const display = { asOf: at(6), assets: ["usdc", "near", "eth"].map((asset) => ({ asset, symbol: asset.toUpperCase(), decimals: 6 })) };
 const log = (tick = fixture(), h = history()) => tickLog(tick, h, { exportedAt: at(6), display });
+const withProgress = (tick: Tick, events: ProgressEvent[]) => tickLog(tick, history(), {
+  exportedAt: at(6), display, progress: events.map((event, i) => ({
+    version: 1, agentId: tick.agentId, tickId: tick.id, sequence: i + 1, at: at(i + 1), event,
+  })),
+});
+
+// Independent consumer of the emitted lifecycle subset: unlike per-event SDK validation,
+// this checks the AG-UI 1.0 sequence contract. An error closes open spans without a return.
+function consume(events: RunLogEvent[]) {
+  let state: "unstarted" | "running" | "finished" | "failed" = "unstarted";
+  const active = new Set<string>();
+  for (const event of events) {
+    assert.ok(EventSchemas.safeParse(event).success);
+    if (event.type === "RUN_STARTED") {
+      assert.notEqual(state, "running", "nested run start");
+      active.clear();
+      state = "running";
+    } else if (event.type === "RUN_ERROR") {
+      assert.notEqual(state, "failed", "event after run error");
+      active.clear();
+      state = "failed";
+    } else {
+      assert.equal(state, "running", "event outside an open run");
+      if (event.type === "STEP_STARTED") {
+        assert.equal(active.has(event.stepName), false, "step is already open");
+        active.add(event.stepName);
+      } else if (event.type === "STEP_FINISHED") {
+        assert.ok(active.delete(event.stepName), "step was not open");
+      } else if (event.type === "RUN_FINISHED") {
+        assert.equal(active.size, 0, "run finished with open steps");
+        state = "finished";
+      }
+    }
+  }
+  return { state, open: [...active] };
+}
 
 test("two swaps produce deterministic, schema-valid observations and a private round trip", () => {
   const value = log();
@@ -35,6 +74,7 @@ test("two swaps produce deterministic, schema-valid observations and a private r
   assert.deepEqual(parseRecording(serializeRecording(value)), value);
   assert.equal(value.events[0]?.type, "RUN_STARTED");
   assert.equal(value.events.at(-1)?.type, "RUN_FINISHED");
+  assert.deepEqual(consume(value.events), { state: "finished", open: [] });
   assert.equal(value.completion, "recorded-end");
   for (const event of value.events) assert.ok(EventSchemas.safeParse(event).success);
   assert.doesNotMatch(JSON.stringify(value), /never-export|STEP_STARTED|STEP_FINISHED/);
@@ -70,6 +110,110 @@ test("no-plan and refusal ticks finish normally, without claiming every send set
   const last = log(tick).events.at(-1)!;
   assert.equal(last.type, "RUN_FINISHED");
   if (last.type === "RUN_FINISHED") assert.equal(last.result.refusal, "policy_denied");
+});
+
+test("a recorded end with an unfinished stage closes with an error, never an invented return", () => {
+  const tick = fixture();
+  tick.progressVersion = 1;
+  const value = tickLog(tick, history(), { exportedAt: at(6), display, progress: [{
+    version: 1, agentId: tick.agentId, tickId: tick.id, sequence: 1, at: at(1),
+    event: { type: "STEP_STARTED", stepName: "execution" },
+  }] });
+  assert.equal(value.events.at(-1)?.type, "RUN_ERROR");
+  assert.equal(value.events.some(event => event.type === "STEP_FINISHED"), false);
+  assert.equal(value.completion, "recorded-end", "the source tick still has its original end");
+  assert.deepEqual(consume(value.events), { state: "failed", open: [] });
+  const end = value.events.at(-1)!;
+  assert.ok(end.type === "RUN_ERROR");
+  assert.equal(end.code, "progress_incomplete");
+  assert.deepEqual(end.metadata.tickResult, { outcome: tick.end!.outcome, refusal: null, rejected: [] });
+  assert.equal(end.metadata.recordedAt, tick.end!.endedAt);
+  assert.equal(end.metadata.recordRef, "tick-1/end");
+  assert.ok(value.gaps.some(gap => gap.code === "progress_incomplete"));
+  assert.deepEqual(parseRecording(serializeRecording(value)), value);
+});
+
+test("a recorded execution failure cannot be exported as protocol success", () => {
+  const tick = fixture();
+  tick.end!.outcome = "Failed: provider read unavailable";
+  const value = log(tick);
+  assert.equal(value.events.at(-1)?.type, "RUN_ERROR");
+  assert.equal(value.events.some(event => event.type === "RUN_FINISHED"), false);
+  const end = value.events.at(-1)!;
+  assert.ok(end.type === "RUN_ERROR");
+  assert.equal(end.code, "tick_failed");
+  assert.equal(end.message, tick.end!.outcome);
+  assert.deepEqual(end.metadata.tickResult, { outcome: tick.end!.outcome, refusal: null, rejected: [] });
+  assert.deepEqual(consume(value.events), { state: "failed", open: [] });
+});
+
+test("closed overlapping stages and proven refusals complete without guessing from error-looking prose", () => {
+  const tick = fixture();
+  const progress: ProgressEvent[] = [
+    { type: "STEP_STARTED", stepName: "planning" },
+    { type: "STEP_STARTED", stepName: "execution" },
+    { type: "STEP_FINISHED", stepName: "planning" },
+    { type: "STEP_FINISHED", stepName: "execution" },
+  ];
+  for (const outcome of ["failed status read", "status unavailable", "step 1: FAILED", "Outcome unknown after submission"]) {
+    tick.end!.outcome = outcome;
+    assert.deepEqual(consume(withProgress(tick, progress).events), { state: "finished", open: [] });
+  }
+  Object.assign(tick.end!, { outcome: "Failed: policy denied", refusal: "policy_denied" });
+  const refused = withProgress(tick, progress);
+  assert.deepEqual(consume(refused.events), { state: "finished", open: [] });
+  const unclosed = withProgress(tick, progress.slice(0, 2));
+  assert.deepEqual(consume(unclosed.events), { state: "failed", open: [] });
+  const end = unclosed.events.at(-1)!;
+  assert.ok(end.type === "RUN_ERROR");
+  assert.equal(end.code, "progress_incomplete");
+  assert.equal(end.metadata.tickResult.refusal, "policy_denied");
+});
+
+test("version 3 rejects successful ends with open steps, failed results, or events after an error", () => {
+  const open = withProgress(fixture(), [{ type: "STEP_STARTED", stepName: "execution" }]);
+  const successfulEnd = log().events.at(-1)!;
+  assert.throws(() => parseRecording(JSON.stringify({ ...open, events: [...open.events.slice(0, -1), successfulEnd] })), /open stages/);
+  const failed = log();
+  const end = failed.events.at(-1)!;
+  assert.ok(end.type === "RUN_FINISHED");
+  end.result.outcome = "Failed: provider read unavailable";
+  assert.throws(() => parseRecording(JSON.stringify(failed)), /requires run error/);
+  const afterError = { ...open, events: [...open.events, successfulEnd] };
+  assert.throws(() => parseRecording(JSON.stringify(afterError)), /Unexpected run end/);
+  assert.throws(() => consume(afterError.events), /event outside an open run/);
+  const wrongReason = structuredClone(open);
+  const error = wrongReason.events.at(-1)!;
+  assert.ok(error.type === "RUN_ERROR");
+  error.code = "tick_failed";
+  assert.throws(() => parseRecording(JSON.stringify(wrongReason)), /lacks recorded failure/);
+});
+
+test("legacy v1/v2 archives retain their original ends without claiming current lifecycle conformance", () => {
+  const v1 = log();
+  v1.schemaVersion = 1;
+  const start = v1.events[0]!;
+  assert.ok(start.type === "RUN_STARTED");
+  delete start.protocolVersion;
+  const end = v1.events.at(-1)!;
+  assert.ok(end.type === "RUN_FINISHED");
+  end.result.outcome = "Failed: legacy provider error";
+  assert.deepEqual(parseRecording(serializeRecording(v1)), v1);
+
+  const v2 = withProgress(fixture(), [{ type: "STEP_STARTED", stepName: "execution" }]);
+  v2.schemaVersion = 2;
+  const v2Start = v2.events[0]!;
+  assert.ok(v2Start.type === "RUN_STARTED");
+  delete v2Start.protocolVersion;
+  const oldEnd = v2.events.pop()!;
+  assert.ok(oldEnd.type === "RUN_ERROR");
+  const { tickResult, ...metadata } = oldEnd.metadata;
+  v2.events.push({ type: "RUN_FINISHED", threadId: v2Start.threadId, runId: v2Start.runId,
+    timestamp: oldEnd.timestamp, result: tickResult, metadata });
+  assert.deepEqual(parseRecording(serializeRecording(v2)), v2);
+  assert.throws(() => consume(v2.events), /open steps/);
+  assert.throws(() => parseRecording(JSON.stringify({ ...v2, schemaVersion: 3 })), /Missing protocol version/);
+  assert.throws(() => parseRecording(JSON.stringify({ ...withProgress(fixture(), [{ type: "STEP_STARTED", stepName: "execution" }]), schemaVersion: 2 })), /version 3/);
 });
 
 test("late reconciliation never replaces the status recorded at tick end", () => {
@@ -127,7 +271,15 @@ test("export still bounds the complete expanded recording in UTF-8 bytes", () =>
 test("the pinned package and recording schema agree", () => {
   const require = createRequire(import.meta.url);
   const pkg = JSON.parse(readFileSync(require.resolve("@ag-ui/core/package.json"), "utf8"));
-  assert.equal(log().aguiVersion, pkg.version);
+  const value = log();
+  assert.equal(value.schemaVersion, 3);
+  assert.equal(value.aguiVersion, pkg.version);
+  const start = value.events[0]!;
+  assert.ok(start.type === "RUN_STARTED");
+  assert.equal(start.protocolVersion, PROTOCOL_VERSION);
+  assert.equal(start.protocolVersion, "1.0", "wire protocol version is separate from the SDK package version");
+  delete start.protocolVersion;
+  assert.throws(() => parseRecording(JSON.stringify(value)), /Missing protocol version/);
 });
 
 test("unknown timings cannot be replaced by fabricated timestamps on import", () => {
@@ -160,6 +312,7 @@ test("provider FAILED is preserved without converting it into proof of nonpaymen
   const event = value.events.find((e) => e.type === "CUSTOM" && e.value.stage === "send");
   if (event?.type === "CUSTOM" && event.value.stage === "send") assert.equal(event.value.status, "FAILED");
   else assert.fail("missing send");
+  assert.deepEqual(consume(value.events), { state: "finished", open: [] }, "an operation outcome is not a run execution failure");
   assert.doesNotMatch(JSON.stringify(value), /Not paid|safe to retry/);
 });
 
@@ -194,9 +347,10 @@ test("recorded intermediate events survive an interrupted run without an invente
     { version: 1 as const, agentId: tick.agentId, tickId: tick.id, sequence: 2, at: at(2), event: { type: "CUSTOM" as const, name: "treasury.observation" as const, value: { stage: "submission" as const, method: "swap" as const, correlationId: "accepted-op" } } },
   ];
   const value = tickLog(tick, history([]), { exportedAt: at(6), display, progress });
-  assert.equal(value.schemaVersion, 2);
+  assert.equal(value.schemaVersion, 3);
   assert.equal(value.completion, "no-recorded-end");
   assert.deepEqual(value.events.map(e => e.type), ["RUN_STARTED", "STEP_STARTED", "CUSTOM"]);
+  assert.deepEqual(consume(value.events), { state: "running", open: ["execution"] });
   for (const event of value.events) assert.ok(EventSchemas.safeParse(event).success);
   assert.deepEqual(parseRecording(serializeRecording(value)), value);
   assert.throws(() => parseRecording(JSON.stringify({ ...value, schemaVersion: 1 })), /version 2/);

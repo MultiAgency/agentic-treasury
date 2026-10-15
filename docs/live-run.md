@@ -1,15 +1,16 @@
 # Integrated run updates — local implementation
 
 Treasury's run timeline automatically follows recent runs, including after **Run now**. There is
-no separate Watch live mode. The existing summary, receipt and operation links stay in place.
-Validated AG-UI snapshots supplement them with later operation outcomes and explicit read failures.
-The run update panel names later observations by their recorded swap or shield and links directly
+no separate Watch live mode. One **Run timeline** leads with the original outcome, shows recorded
+stages directly and retains the receipt under **Run details**. Validated AG-UI snapshots supplement
+it with later operation outcomes and explicit read failures. The timeline names later observations
+by their recorded swap or shield and links directly
 to the operation in Activity. It flags incomplete evidence beside the updates. Historical runs
 retain on-request inspection and download; **Refresh outcomes** also reads their latest snapshot.
 
 For ten minutes after a run starts, the executor's private `autopilot.log` endpoint is checked every
 three seconds until an end is recorded, then every fifteen seconds. Background tabs do not poll.
-Pause/resume controls are secondary under **Automatic update details**; they pause only these
+Pause/resume controls are secondary under **Run details**; they pause only these
 supplementary reads, never the executor. The existing timeline continues its own evidence refresh.
 At ten minutes, automatic following ends even while paused or disconnected; the panel and its
 last-read time remain visible, with a manual refresh action. A manual refresh performs a read
@@ -25,10 +26,16 @@ New ticks record stage starts and returns for balance reads, recovery, the sweep
 plan execution. The private recording maps these to AG-UI `STEP_STARTED` and `STEP_FINISHED`.
 After the provider supplies an operation ID and the journal records `SENT`, a custom submission
 observation links to Activity. Acceptance does not prove settlement. The panel announces the last
-recorded observation without moving focus; **Recorded run stages** exposes its recorded times.
+recorded observation without moving focus; the visible stage list includes its recorded times.
 Full balance snapshots, quoted amounts and final operation results still arrive at tick end.
 Older runs retain only their original observations; no intermediate history is inferred.
 This is snapshot polling, not SSE or timed replay. Updates do not move focus or auto-scroll.
+
+New exports use envelope version 3 and declare AG-UI protocol 1.0. A recorded end closes with
+`RUN_FINISHED` only after all observed stages have returned and no explicit run failure was recorded.
+Otherwise it emits `RUN_ERROR`, preserving the recorded tick result in metadata. A missing tick end
+stays open. This does not turn an operation's failed status into proof of nonpayment. Versions 1/2
+remain readable with their original events; legacy readability does not establish lifecycle conformance.
 
 Next actions use existing flow state: an agreed payee still listed in policy prompts sharing the
 invoice page; a ready, enabled strategy offers **Follow treasury runs**; recorded or interrupted
@@ -36,11 +43,14 @@ runs emphasize **Check operation outcomes in Activity**. Existing held-payout ap
 review/enable controls remain permission checked and retain their confirmations. Missing reads
 never advance the flow or automatically trigger a money action.
 
-`test/browser/live-run.cjs` exercises automatic updates, start/end transitions, later outcomes,
+`test/browser/run-history.cjs` exercises automatic updates, start/end transitions, later outcomes,
 read failure/retry, identity rejection, pause, expiry while paused, manual refresh after expiry,
-run changes, navigation cleanup and no writes at
-320, 390 and 1280px using synthetic responses. These checks do not establish hosted behavior,
+run changes, navigation cleanup and no writes using synthetic responses at 390px. The loaded view
+also receives layout checks at 320px and 1280px. These checks do not establish hosted behavior,
 actual screen-reader speech, or provider latency.
+`test/browser/run-receipt.cjs` checks a terminal v3 recording while the receipt is delayed or fails
+to refresh: the known run end stays visible, a missing stage return stays missing, and the original
+outcome appears when its receipt becomes readable. No money action is triggered by those reads.
 
 The associated FastNear read correction in `src/chain.ts` distinguishes access failures, rate limits,
 transport/HTTP failures and invalid JSON. It does not forward upstream error bodies to the UI.

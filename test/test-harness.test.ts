@@ -8,6 +8,30 @@ import { offlineEnvironment, offlineFiles, requireLiveConfiguration, liveFiles }
 import { readOnlyProviderFetch } from "./fixtures/live-network.cjs";
 import { rpcValue } from "./browser/fixtures/rpc.cjs";
 import { timedPrices } from "./fixtures/authority.js";
+import { validateBaseline } from "./e2e/challenge.mjs";
+
+test("fault challenges accept a growing complete baseline and reject incomplete or unproven passes", () => {
+  const titles = ["invoice, owner approval, and settlement stay distinct across the real stack",
+    "accepted transfer with lost response stays unresolved after restart and blocks another send",
+    "owner recovery", "navigation", "wallet isolation", "strategy"];
+  const specs = titles.map((title, index) => ({ id: String(index), title, tests: [{ projectId: "",
+    expectedStatus: "passed", status: "expected", results: [{ status: "passed", retry: 0 }] }] }));
+  const baseline = { suites: [{ specs }], errors: [], stats: { expected: 6, unexpected: 0, skipped: 0, flaky: 0 } };
+  const discovered = { suites: [{ specs: specs.map(spec => ({ ...spec, tests: [{ projectId: "" }] })) }] };
+  assert.doesNotThrow(() => validateBaseline(baseline, discovered));
+  for (const change of [
+    (report: typeof baseline) => { report.suites[0]!.specs.pop(); report.stats.expected--; },
+    (report: typeof baseline) => { report.suites[0]!.specs[5] = structuredClone(report.suites[0]!.specs[0]!); },
+    (report: typeof baseline) => { report.suites[0]!.specs[5]!.tests[0]!.results = []; },
+    (report: typeof baseline) => { report.suites[0]!.specs[5]!.tests[0]!.results[0]!.status = "skipped"; },
+    (report: typeof baseline) => { report.suites[0]!.specs[5]!.tests[0]!.results[0]!.status = "failed"; },
+    (report: typeof baseline) => { report.suites[0]!.specs[5]!.tests[0]!.results[0]!.retry = 1; },
+    (report: typeof baseline) => { report.suites[0]!.specs[5]!.tests[0]!.results.push({ status: "passed", retry: 1 }); },
+  ]) {
+    const changed = structuredClone(baseline); change(changed);
+    assert.throws(() => validateBaseline(changed, discovered), /every discovered baseline/);
+  }
+});
 
 test("offline launcher removes inherited credentials, instance settings and preloads", () => {
   const env = offlineEnvironment({ PATH: process.env.PATH, HOME: process.env.HOME,

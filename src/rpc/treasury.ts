@@ -16,6 +16,7 @@ import { readStrategyStatus } from "../strategy-status.js";
 import { rebalance, sweep } from "../treasury.js";
 import { os } from "./base.js";
 import { run, account, units } from "./inputs.js";
+import { checkHostedTreasury } from "../hosted-binding.js";
 
 export const treasuryRoutes = {
   /** Readiness observations do not authorize or start an operation. */
@@ -38,10 +39,11 @@ export const treasuryRoutes = {
       return { ...treasury, confidential, payees: treasury.dao && !confidential ? await daoPayees(id) : [] };
     }),
     link: os.input(z.object({ accountId: account })).handler(async ({ input }) => {
+      checkHostedTreasury(input.accountId);
       if (!(await accountExists(input.accountId))) throw new Error(`${input.accountId} is not a NEAR account`);
       saveEnv({ TREASURY_ACCOUNT: input.accountId, TREASURY_CONFIDENTIAL: "" });
     }),
-    unlink: os.handler(() => saveEnv({ TREASURY_ACCOUNT: "", TREASURY_CONFIDENTIAL: "" })),
+    unlink: os.handler(() => { checkHostedTreasury(""); saveEnv({ TREASURY_ACCOUNT: "", TREASURY_CONFIDENTIAL: "" }); }),
     setConfidential: os
       .input(z.object({ confidential: z.boolean() }))
       .handler(({ input }) => saveEnv({ TREASURY_CONFIDENTIAL: input.confidential ? "true" : "" })),

@@ -1,5 +1,5 @@
 import { usePayments } from "./use-payments";
-import { accessDenied } from "../../shared/read-failure";
+import { accessDenied, ReadFailure } from "../../shared/read-failure";
 import { usePayment } from "./use-payment";
 import { PaymentOutcome } from "./payment-outcome";
 import { ConfirmButton } from "../owner/confirm-button";
@@ -8,15 +8,23 @@ import { Link, useSearch } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { type PaymentRecord as Known } from "./payment-records";
 import { PaymentEvidence } from "./payment-evidence";
-import { type ReactNode } from "react";
+import { InvoiceReview, invoiceStatus } from "./invoice-review";
+import { useCanCall } from "../../app/viewer";
+import { useId, useState, type ReactNode } from "react";
+import { Field, FieldGroup } from "../../shared/form";
+import { Field as FieldPrimitive, FieldLabel } from "@/components/ui/field";
+import { Empty, EmptyContent } from "@/components/ui/empty";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { buildPaymentQueue, filterPaymentQueue } from "./payment-queue";
 
-import { ago, client, exactPayment, fromUnits, kindOf, minutesSeconds, queries } from "../../shared/lib";
+import { ago, client, exactPayment, fromUnits, kindOf, minutesSeconds, queries, short } from "../../shared/lib";
 
 import { useAgent } from "../../app/agent-context";
-import { Badge, Button, Card, Details, ErrorBox, Loading, QueryError, Section, Spinner } from "../../shared/ui";
+import { Badge, Button, Card, CopyButton, Details, ErrorBox, Loading, LoadingRecords, QueryError, Section, Spinner } from "../../shared/ui";
 import { refusalText } from "../../shared/words";
 
 import { paymentOwnerState } from "./payment-owner-state";
+import { WorkOrders } from "./work-orders";
 
 /**
  * Payments held for the owner, each as a timeline that doubles as its receipt, approved or rejected in
@@ -111,20 +119,20 @@ function PaymentCard({ id, payment: knownPayment, agreements, historyOpen = fals
           <span className="text-sm text-muted-foreground">
             Requested {payment.at ? ago(payment.at) : "at an unknown time"}{isHeld && expiresAt && ` · approval deadline ${new Date(expiresAt).toLocaleString()}${status.data?.expiresAt ? "" : " (estimated)"}`}
           </span>
-          {payment.request && <div className="mt-3 flex flex-col gap-2">
-            <h3 className="text-sm font-medium">Current agreement terms</h3>
-            {agreements ? <TermsCheck request={payment.request} agreements={agreements} /> : <p>Agreement terms unavailable. Check again before deciding.</p>}
-            {!isHeld && <p className="text-sm text-muted-foreground">Current terms do not establish which terms applied to this payment.</p>}
-          </div>}
         </div>
       </div>
       <PaymentOutcome progress={progress} statusError={Boolean(status.error)} paid={paid} failed={failed} />
+      {payment.request && <div className="flex flex-col gap-2">
+        <h3 className="text-sm font-medium">Current agreement terms</h3>
+        {agreements ? <TermsCheck request={payment.request} agreements={agreements} /> : <p>Agreement terms unavailable. Check again before deciding.</p>}
+        {!isHeld && <p className="text-sm text-muted-foreground">Current terms do not establish which terms applied to this payment.</p>}
+      </div>}
       {status.error && <QueryError error={status.error} retry={() => status.refetch()} />}
       {pending.error && <QueryError error={pending.error} retry={() => pending.refetch()} />}
       {vote.error && <QueryError error={vote.error} retry={() => vote.refetch()} />}
       {proposals.error && <QueryError error={proposals.error} retry={() => proposals.refetch()} />}
       {status.data?.detailError && <><ErrorBox error={status.data.detailError} /><Button variant="outline" onClick={() => status.refetch()}>Check payment details again</Button></>}
-      {failed && <p className="text-sm">This provider status alone does not establish that a replacement payment is safe. Ask an operator to review the existing operation.</p>}
+      {failed && <p className="text-sm">This provider status alone does not establish that a replacement payment is safe. Review the existing operation before preparing another payment.</p>}
       {!payment.request && <p className="text-sm">Payment details are unavailable on this instance. The status below identifies this operation; it is not a complete payment receipt.</p>}
       {ownerActions.error && <QueryError error={ownerActions.error} retry={() => ownerActions.refetch()} />}
       {recovering && !final && <p role="status" className="text-sm">{recovering.stage === "submitted" ? "Submission attempted—checking the existing owner action’s outcome. Do not sign again." : "An owner action is already prepared. Review it or wait for its signing window to close before starting another."} <Link to="/activity" hash={`owner-${recovering.correlationId}`} className="underline">Review the existing owner action</Link></p>}
@@ -144,9 +152,9 @@ function PaymentCard({ id, payment: knownPayment, agreements, historyOpen = fals
                 {!canSign && <span className="text-muted-foreground">Only an account that can sign for the owner can approve or reject.</span>}
                 <p>Approval releases this held payout for processing. It does not prove payment completed. A held payout does not block new sends.</p>
                 <p>{dao ? "The payout deadline and the shorter owner-signature window are separate. A proposal and your vote do not prove the DAO threshold passed." : "Your wallet signs the approval directly."}</p>
-                <ConfirmButton ownerAction disabled={!canSign} label={dao ? "Propose rejection" : "Sign rejection"} title="Reject this held payout?" description={`Reject ${what}. Rejection releases no payment.`} confirm={dao ? "Continue to DAO rejection" : "Continue to wallet"} onConfirm={() => decide("reject")} />
-                <ConfirmButton ownerAction disabled={!canSign || !payment.request || Boolean(status.data?.detailError) || !agreements}
-                  label={dao ? viewer?.canPropose && viewer.canVote ? "File proposal and vote" : "File approval proposal" : "Sign approval"}
+                <ConfirmButton path="owner/prepare" disabled={!canSign} label={dao ? "Propose rejection" : "Sign rejection"} title="Reject this held payout?" description={`Reject ${what}. Rejection releases no payment.`} confirm={dao ? "Continue to DAO rejection" : "Continue to wallet"} onConfirm={() => decide("reject")} />
+                <ConfirmButton path="owner/prepare" disabled={!canSign || !payment.request || Boolean(status.data?.detailError) || !agreements}
+                  label={dao ? viewer?.access?.canPropose && viewer.access.canVote ? "File proposal and vote" : "File approval proposal" : "Sign approval"}
                   title="Approve this held payout?" description={`${what}. This approval releases the payout for processing; follow its payment status separately.`}
                   confirm={dao ? "Continue to proposal" : "Continue to wallet"} onConfirm={() => decide("approve")} />
               </div>
@@ -199,61 +207,123 @@ function PaymentCard({ id, payment: knownPayment, agreements, historyOpen = fals
       <Details summary="Provider evidence">
         <PaymentEvidence evidence={status.data?.evidence} loading={status.isPending} readFailed={status.isError} />
       </Details>
-      <p className="text-xs text-muted-foreground">
-        Operation <span className="font-mono break-all">{id}</span> · <Link to="/follow/payment" search={{ payment: id }} className="underline">Link to this payment</Link>
-        {approval && <> · approval hash <span className="font-mono">{approval.hash.slice(0, 16)}…</span></>}
-      </p>
+      <Details summary="Payment reference">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Operation</span>
+          <span className="break-all font-mono text-xs">{id}</span>
+          <CopyButton text={id} />
+        </div>
+        {approval && <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Approval hash</span>
+          <span className="break-all font-mono text-xs">{approval.hash}</span>
+          <CopyButton text={approval.hash} />
+        </div>}
+      </Details>
+      <Link to="/follow/payment" search={{ payment: id }} className="self-start text-sm underline">Link to this payment</Link>
     </Card>
   );
 }
 
 /** Compact discovery or one selected payment. Missing history never hides a saved payment link. */
-export function Payments({ title = "Payments", historyOpen = false, compact = false }: { title?: string; historyOpen?: boolean; compact?: boolean }) {
+export function Payments({ title = "Payments", historyOpen = false, compact = false, selection }: {
+  title?: string; historyOpen?: boolean; compact?: boolean; selection?: { payment?: string; invoice?: string };
+}) {
   const { data } = useAgent();
-  const { list, held, pending, activity, history, ownerActions } = usePayments(5_000);
-  const selected = useSearch({ strict: false }).payment;
+  const canReadInvoices = useCanCall("invoices");
+  const { list, held, pending, activity, history, ownerActions, invoices, invoiceRecords, invoicesEnabled } = usePayments(5_000);
+  const [view, setView] = useState<"review" | "all">("review");
+  const [query, setQuery] = useState("");
+  const filterId = useId();
+  const routeSearch = useSearch({ strict: false });
+  const search = selection ?? routeSearch;
+  const invoice = invoiceRecords.find(invoice => search.invoice ? invoice.id === search.invoice : invoice.operation.correlationId === search.payment);
+  const mismatched = Boolean(search.invoice && search.payment && invoice && invoice.operation.correlationId !== search.payment);
+  // A local invoice/key never becomes a provider reference. Wait for an explicit recorded link.
+  const selected = search.invoice ? mismatched ? undefined : invoice?.operation.correlationId : search.payment;
   if (selected && !list.some(([id]) => id === selected)) list.unshift([selected, { at: "" }]);
   const agreementQuery = useQuery(queries.agreements);
   const agreements = agreementQuery.isSuccess ? [...agreementQuery.data].reverse() : undefined;
   const heldIds = new Set((held.data ?? []).map((h) => h.correlationId));
-  const showQueue = compact || !selected;
+  const showQueue = compact || (!search.payment && !search.invoice);
   const shown = showQueue ? [] : list.filter(([id]) => id === selected);
+  const queue = buildPaymentQueue({ payments: list, invoices: invoiceRecords, activity: activity.data, heldIds,
+    pendingIds: new Set((pending.data ?? []).flatMap(action => action.state === "waiting" && action.payment ? [action.payment.correlationId] : [])),
+    ownerActions: ownerActions.data });
+  const reviewCount = queue.filter(record => record.needsReview).length;
+  const visibleQueue = filterPaymentQueue(queue, view, query);
+  const sources = [held, pending, history, ownerActions, activity, agreementQuery];
+  const checking = sources.some(source => source.isPending) || (invoicesEnabled && invoices.isPending);
+  const initialRead = checking && queue.length === 0;
+  const complete = sources.every(source => source.isSuccess) && history.data?.complete && (!invoicesEnabled || invoices.isSuccess);
+  const needsReview = invoiceRecords.filter(invoice => invoice.review).length;
   const denied = [held, pending, activity, history, ownerActions, agreementQuery].find(query => accessDenied(query.error));
   if (denied?.error) return <Section title={title}><QueryError error={denied.error} retry={() => denied.refetch()} /></Section>;
   return (
-    <Section
+    <><Section
       title={title}
-      description="Review held payouts and retained payment outcomes. Owner approval and payment completion are shown separately; missing evidence is marked unverified."
+      description={showQueue ? "Review held payouts, invoice changes and unconfirmed outcomes. Open a record to check its current status." : "Owner approval and payment completion are separate. Missing evidence remains unverified."}
     >
+      {showQueue && <>
+        <FieldGroup className="sm:flex-row sm:items-end">
+          <FieldPrimitive className="sm:w-auto sm:shrink-0">
+            <FieldLabel id={filterId}>Show payments</FieldLabel>
+            <ToggleGroup type="single" variant="outline" value={view} aria-labelledby={filterId} className="max-w-full flex-wrap"
+              onValueChange={value => { if (value === "review" || value === "all") setView(value); }}>
+              <ToggleGroupItem value="review" className="h-auto max-w-full whitespace-normal py-3">Needs review{!initialRead && ` (${reviewCount})`}</ToggleGroupItem>
+              <ToggleGroupItem value="all" className="h-auto max-w-full whitespace-normal py-3">All records{!initialRead && ` (${queue.length})`}</ToggleGroupItem>
+            </ToggleGroup>
+          </FieldPrimitive>
+          <Field label="Search recipient or reference" type="search" value={query} onChange={event => setQuery(event.target.value)} autoComplete="off" spellCheck={false} />
+        </FieldGroup>
+      </>}
+      {kindOf(data) === "facilitator" && <div className="flex flex-col gap-2 text-sm">
+        {!canReadInvoices && <p>Your account cannot read invoice records on this instance.</p>}
+        {invoicesEnabled && invoices.isPending && (!showQueue || !initialRead) && <Loading label="Loading invoice records…" />}
+        {invoicesEnabled && invoices.error && <ReadFailure label="Invoice records" error={invoices.error} retry={() => invoices.refetch()} retained={invoices.data !== undefined} updatedAt={invoices.dataUpdatedAt} />}
+        {invoicesEnabled && invoices.isSuccess && !invoiceRecords.length && !showQueue && <p className="text-muted-foreground">No invoices are recorded on this instance. Held payouts may originate on another executor.</p>}
+        {needsReview > 0 && showQueue && <p className="text-warning-muted-foreground">{needsReview} invoice{needsReview === 1 ? " has" : "s have"} changes needing review. Original payments are unchanged.</p>}
+      </div>}
       {history.error && <QueryError error={history.error} retry={() => history.refetch()} />}
       {ownerActions.error && <QueryError error={ownerActions.error} retry={() => ownerActions.refetch()} />}
-      {history.data && !history.data.complete && <p className="text-sm">Recent payment history is incomplete. Use a saved payment link or ask an operator to review older records.</p>}
+      {history.data && !history.data.complete && <p className="text-sm">Recent payment history is incomplete. Use a saved payment link to review older records.</p>}
       {held.error && <QueryError error={held.error} retry={() => held.refetch()} />}
       {pending.error && <QueryError error={pending.error} retry={() => pending.refetch()} />}
       {activity.error && <QueryError error={activity.error} retry={() => activity.refetch()} />}
       {agreementQuery.error && <QueryError error={agreementQuery.error} retry={() => agreementQuery.refetch()} />}
-      {held.isPending || pending.isPending || history.isPending || ownerActions.isPending ? <Loading label="Checking payments and owner actions…" /> : !held.error && !pending.error && !history.error && history.data?.complete && !ownerActions.error && list.length === 0 && (
-        <Card><p className="text-sm text-muted-foreground">Nothing waits for a vote. A payment appears here when a payee files an invoice. <Link to="/payees" className="underline">Review Agreements</Link>.</p></Card>
-      )}
+      {checking && (showQueue && initialRead ? <LoadingRecords label="Checking payments and owner actions…" /> : <Loading label="Checking payments and owner actions…" />)}
+      {showQueue && !initialRead && <p role="status" aria-live="polite" className="text-sm text-muted-foreground">Showing {visibleQueue.length} of {queue.length} retained records{!complete ? " · checks incomplete" : ""}.</p>}
+      {showQueue && !checking && !visibleQueue.length && <Empty className="items-start py-4"><EmptyContent className="items-start text-left">
+        {query.trim() ? <><p>No matching records.</p><p className="text-muted-foreground">Try another recipient or reference, or search All records. Source warnings still apply.</p><Button variant="outline" onClick={() => setQuery("")}>Clear search</Button></>
+          : complete && !queue.length ? <><p>No payment records found in the sources checked.</p>{kindOf(data) === "facilitator" ? <Link to="/payees" className="inline-flex min-h-11 items-center underline">Review Agreements</Link> : <Link to="/" className="inline-flex min-h-11 items-center underline">Review portfolio</Link>}</>
+          : complete ? <><p>No records need review.</p><p className="text-muted-foreground">No open items were found in the retained records checked.</p><Button variant="outline" onClick={() => setView("all")}>View all records</Button></>
+          : <><p>The available records show no matching items. Some checks are incomplete; review the notices above.</p><Button variant="outline" onClick={() => { for (const source of sources) void source.refetch(); if (invoicesEnabled) void invoices.refetch(); }}>Check records again</Button></>}
+      </EmptyContent></Empty>}
       {showQueue && <ul className="divide-y" aria-label="Payment records">
-        {list.map(([id, payment]) => {
-          const owner = paymentOwnerState(ownerActions.data ?? [], id);
-          const heldAtLastCheck = heldIds.has(id);
-          const label = owner.recovering ? `Owner action ${owner.recovering.stage}` : owner.approved ? "Approval recorded" : owner.rejected ? "Rejection recorded" : heldAtLastCheck ? "Held at last check" : "Recorded payment";
-          return <li key={id}>
-            <Link to="/follow/payment" search={{ payment: id }} className="flex min-h-11 flex-col items-start gap-3 rounded-lg px-2 py-4 hover:bg-muted sm:flex-row sm:items-center sm:justify-between">
+        {visibleQueue.map(({ id, at, payment, invoice, needsReview, reason }) => {
+          const owner = id ? paymentOwnerState(ownerActions.data ?? [], id) : undefined;
+          const heldAtLastCheck = Boolean(id && heldIds.has(id));
+          const label = owner?.recovering ? `Owner action ${owner.recovering.stage}` : owner?.approved ? "Approval recorded" : owner?.rejected ? "Rejection recorded" : heldAtLastCheck ? "Held at last check" : invoice ? invoiceStatus(invoice) : "Recorded payment";
+          return <li key={id ? `payment-${id}` : `invoice-${invoice!.id}`}>
+            <Link to="/follow/payment" search={id ? { payment: id } : { invoice: invoice!.id }} className="flex min-h-11 flex-col items-start gap-3 rounded-lg px-2 py-4 hover:bg-muted sm:flex-row sm:items-center sm:justify-between">
               <span className="min-w-0 w-full break-words sm:flex-1">
-                <span className="block font-medium">{payment.request ? exactPayment(payment.request, data.book) : "Review retained payment details"}</span>
-                <span className="block break-all text-xs text-muted-foreground">{id}</span>
-                <span className="text-sm text-muted-foreground">{payment.at ? `Recorded ${ago(payment.at)}` : "Recorded time unavailable"}</span>
+                <span className="block font-medium">{payment?.request ? exactPayment(payment.request, data.book) : invoice ? `${fromUnits(invoice.amount, 6)} USDC to ${invoice.payee}` : "Review retained payment details"}</span>
+                <span className="block text-xs text-muted-foreground">{invoice ? "Invoice" : "Reference"} {short(invoice?.id ?? id!)}</span>
+                <span className="text-sm text-muted-foreground">{at ? `Recorded ${ago(at)}` : "Recorded time unavailable"}</span>
               </span>
-              <span className="flex flex-wrap items-center gap-2"><Badge tone={heldAtLastCheck ? "warning" : "neutral"}>{label}</Badge><span className="text-sm underline">Review payment</span></span>
+              <span className="flex min-w-0 max-w-full flex-col items-start gap-2 sm:items-end">
+                <span className="flex max-w-full flex-wrap gap-2 [&>span]:h-auto [&>span]:min-h-6 [&>span]:max-w-full [&>span]:whitespace-normal [&>span]:py-1"><Badge tone={needsReview ? "warning" : "neutral"}>{label}</Badge>{invoice?.review && <Badge tone="warning">Invoice changes need review</Badge>}</span>
+                {reason && !invoice?.review && !heldAtLastCheck && !owner?.recovering && <span className="text-sm text-muted-foreground">{reason}</span>}
+                <span className="text-sm underline">{id ? "Review payment" : "Review invoice"}</span>
+              </span>
             </Link>
           </li>;
         })}
       </ul>}
+      {!showQueue && search.invoice && invoicesEnabled && invoices.isSuccess && !invoice && <p className="text-sm">This invoice is not recorded on this instance. Check the executor retaining its records; no payment reference is assumed.</p>}
+      {!showQueue && mismatched && <p role="alert" className="text-sm">The invoice and payment references do not match. Open the invoice from Payments to review its recorded payment.</p>}
+      {!showQueue && invoice && !mismatched && <InvoiceReview invoice={invoice} readFailed={Boolean(invoices.error)} />}
       {shown.map(([id, payment]) => <PaymentCard key={id} id={id} payment={payment} agreements={agreements} historyOpen={historyOpen} />)}
-    </Section>
+    </Section>{showQueue && <WorkOrders payments />}</>
   );
 }
 

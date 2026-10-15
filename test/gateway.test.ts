@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { generateKey, Near, type PrivateKey } from "near-kit";
 import { mayCall } from "../src/gateway/allowlist.js";
 import { childEnv, hostOf, loadConfig } from "../src/gateway/config.js";
@@ -112,18 +115,56 @@ const policy = {
   default_vote_policy: { threshold: [1, 2] },
 };
 
-test("an agent owned by a plain account is operated by that account, and by the operators named for it", () => {
+const walletAccess = { canSign: true, canPropose: false, canVote: false, canExecute: true, canManage: true };
+const readerAccess = { canSign: false, canPropose: false, canVote: false, canExecute: false, canManage: false };
+
+test("an agent owned by a plain account is accessible only to that owner", () => {
   const owner = { account: "james.near", policy: null, signer: "james.near" };
-  assert.deepEqual(accessOf("james.near", owner, []), { role: "operator", canPropose: false, canVote: false });
-  assert.deepEqual(accessOf("ops.near", owner, ["ops.near"]), { role: "operator", canPropose: false, canVote: false });
-  assert.equal(accessOf("alice.near", owner, []), null);
+  assert.deepEqual(accessOf("james.near", owner), walletAccess);
+  assert.equal(accessOf("ops.near", owner), null);
+  assert.equal(accessOf("alice.near", owner), null);
 });
 
-test("members come from the DAO's groups, operators from the configuration, everyone else is refused", () => {
-  assert.deepEqual(accessOf("alice.near", { account: "x.sputnik-dao.near", policy: policy, signer: "s" }, []), { role: "member", canPropose: true, canVote: true });
-  assert.deepEqual(accessOf("dave.near", { account: "x.sputnik-dao.near", policy: policy, signer: "s" }, []), { role: "member", canPropose: true, canVote: false });
-  assert.deepEqual(accessOf("ops.near", { account: "x.sputnik-dao.near", policy: policy, signer: "s" }, ["ops.near"]), { role: "operator", canPropose: false, canVote: false });
-  assert.equal(accessOf("mallory.near", { account: "x.sputnik-dao.near", policy: policy, signer: "s" }, []), null);
+test("DAO members' capabilities come from their on-chain permissions, without wallet signing authority", () => {
+  const owner = { account: "x.sputnik-dao.near", policy, signer: "s" };
+  assert.deepEqual(accessOf("alice.near", owner), { ...readerAccess, canPropose: true, canVote: true, canExecute: true, canManage: true });
+  assert.deepEqual(accessOf("dave.near", owner), { ...readerAccess, canPropose: true });
+  assert.equal(accessOf("mallory.near", owner), null);
+});
+
+test("an account outside the DAO's groups has no private agent access", () => {
+  const owner = { account: "x.sputnik-dao.near", policy, signer: "s" };
+  assert.equal(accessOf("ops.near", owner), null);
+});
+
+test("Everyone proposal permissions apply to admitted group members without admitting outsiders", () => {
+  const dao = { ...policy, roles: [
+    { name: "viewers", kind: { Group: ["viewer.near"] }, permissions: [], vote_policy: {} },
+    { name: "all", kind: "Everyone", permissions: ["*:AddProposal"], vote_policy: {} },
+  ] };
+  const owner = { account: "x.sputnik-dao.near", policy: dao, signer: "s" };
+  assert.deepEqual(accessOf("viewer.near", owner), { ...readerAccess, canPropose: true });
+  assert.equal(accessOf("outsider.near", owner), null);
+});
+
+test("direct app execution and management require both relevant proposal and approval permissions", () => {
+  for (const [permissions, execute, manage] of [
+    [["call:AddProposal"], false, false],
+    [["call:VoteApprove"], false, false],
+    [["call:AddProposal", "call:VoteApprove"], true, false],
+    [["policy:AddProposal"], false, false],
+    [["policy:VoteApprove"], false, false],
+    [["policy:AddProposal", "policy:VoteApprove"], false, true],
+    [["call:*"], true, false],
+    [["policy:*"], false, true],
+    [["*:*"], true, true],
+  ] as const) {
+    const dao = { ...policy, roles: [{ name: "members", kind: { Group: ["m.near"] }, permissions: [...permissions], vote_policy: {} }] };
+    const access = accessOf("m.near", { account: "x.sputnik-dao.near", policy: dao, signer: "s" })!;
+    assert.equal(access.canExecute, execute, permissions.join(","));
+    assert.equal(access.canManage, manage, permissions.join(","));
+    assert.equal(access.canSign, false, "DAO members never gain the owner's wallet signature");
+  }
 });
 
 /**
@@ -135,34 +176,37 @@ test("a FunctionCall vote is read the way the DAO contract grants it, in the gat
   for (const [permission, votes] of [["call:VoteApprove", true], ["call:*", true], ["*:VoteApprove", true], ["*:*", true],
     ["transfer:VoteApprove", false], ["call:VoteReject", false]] as const) {
     const dao = { ...policy, roles: [{ name: "voters", kind: { Group: ["v.near"] }, permissions: [permission], vote_policy: {} }] };
-    assert.equal(accessOf("v.near", { account: "x.sputnik-dao.near", policy: dao, signer: "s" }, [])?.canVote, votes, permission);
+    assert.equal(accessOf("v.near", { account: "x.sputnik-dao.near", policy: dao, signer: "s" })?.canVote, votes, permission);
     assert.deepEqual(council(dao).approvers.map((a) => a.role), votes ? ["voters"] : [], permission);
   }
 });
 
 test("a token-weighted role names no accounts: sign-in and the council read past it", () => {
   const dao = { ...policy, roles: [{ name: "holders", kind: { Member: "1" }, permissions: ["*:*"], vote_policy: {} }, ...policy.roles] };
-  assert.deepEqual(accessOf("alice.near", { account: "x.sputnik-dao.near", policy: dao, signer: "s" }, []), { role: "member", canPropose: true, canVote: true });
-  assert.equal(accessOf("mallory.near", { account: "x.sputnik-dao.near", policy: dao, signer: "s" }, []), null);
+  assert.deepEqual(accessOf("alice.near", { account: "x.sputnik-dao.near", policy: dao, signer: "s" }), { ...readerAccess, canPropose: true, canVote: true, canExecute: true, canManage: true });
+  assert.equal(accessOf("mallory.near", { account: "x.sputnik-dao.near", policy: dao, signer: "s" }), null);
   assert.deepEqual(council(dao).members, ["alice.near", "carol.near", "dave.near"]);
 });
 
-test("members read and file proposals; money and settings are for operators", () => {
-  for (const path of ["overview", "activity", "held", "ledgerCsv", "owner/pending", "owner/prepare"]) assert.ok(mayCall("member", path), path);
-  for (const path of ["pay", "sweep", "steward/propose", "executePlan", "autopilot/set", "autopilot/tick", "recover", "treasury/link", "owner/submit", "someFutureProcedure"])
-    assert.ok(!mayCall("member", path), path);
-  assert.ok(mayCall("operator", "pay"));
+test("private reads need membership; preparing and submitting owner actions need their own capabilities", () => {
+  for (const path of ["overview", "activity", "held", "ledgerCsv", "owner/pending", "invoices"]) assert.ok(mayCall(readerAccess, path), path);
+  for (const path of ["owner/prepare", "agreements/offer", "pay", "sweep", "steward/propose", "executePlan", "autopilot/set", "autopilot/tick", "recover", "treasury/link", "owner/submit"])
+    assert.ok(!mayCall(readerAccess, path), path);
+  assert.ok(mayCall({ ...readerAccess, canPropose: true }, "owner/prepare"));
+  assert.ok(!mayCall({ ...readerAccess, canPropose: true, canVote: true, canExecute: true, canManage: true }, "owner/submit"));
+  assert.ok(mayCall(walletAccess, "owner/submit"));
+  for (const path of ["someFutureProcedure", "ownerIdentity"]) assert.equal(mayCall(walletAccess, path), false, path);
 });
 
 test("an approve-only agent server starts with EXECUTOR=off; gateway secrets never reach agent servers", () => {
   const parent = { SESSION_SECRET: "s".repeat(40), DASHBOARD_HOST: "x.test", DASHBOARD_FILE: "d.json", EXECUTOR: "off", NEAR_INTENTS_AGENT_API_KEY: "naa_k" };
-  const executor = childEnv({ name: "treasury", owner: "dao.near", operators: [], envFile: ".env.dao", port: 8789, executor: true }, parent);
+  const executor = childEnv({ name: "treasury", owner: "dao.near", envFile: ".env.dao", port: 8789, executor: true }, parent);
   assert.deepEqual(
     { ...executor },
     { NEAR_INTENTS_AGENT_API_KEY: "naa_k", ENV_FILE: ".env.dao", PORT: "8789" },
     "the executor: shared keys, its own file and port, no EXECUTOR=off inherited",
   );
-  const approver = childEnv({ name: "payout", owner: "dao.near", operators: [], envFile: ".env.payout", port: 8790, executor: false }, parent);
+  const approver = childEnv({ name: "payout", owner: "dao.near", envFile: ".env.payout", port: 8790, executor: false }, parent);
   assert.equal(approver.EXECUTOR, "off");
   assert.equal(approver.SESSION_SECRET, undefined);
 });
@@ -171,12 +215,23 @@ test("the deployed configuration: both agents owned by the DAO, the treasury age
   const config = loadConfig("deploy/dashboard.json");
   assert.equal(config.host, "proto.multiagency.ai");
   assert.deepEqual(
-    config.agents.map((a) => [a.name, a.owner, a.operators, a.envFile, a.executor]),
+    config.agents.map((a) => [a.name, a.owner, a.envFile, a.executor]),
     [
-      ["treasury", "agentic.sputnik-dao.near", ["multiagentic.near"], ".env.dao", true],
-      ["payout", "agentic.sputnik-dao.near", ["multiagentic.near"], ".env.payout", false],
+      ["treasury", "agentic.sputnik-dao.near", ".env.dao", true],
+      ["payout", "agentic.sputnik-dao.near", ".env.payout", false],
     ],
   );
+});
+
+test("legacy operators in dashboard configuration are ignored and cannot grant access", () => {
+  const dir = mkdtempSync(join(tmpdir(), "legacy-dashboard-"));
+  try {
+    const file = join(dir, "dashboard.json");
+    writeFileSync(file, JSON.stringify({ host: HOST, agents: [{ name: "treasury", owner: "x.sputnik-dao.near", operators: ["ops.near"], port: 8789 }] }));
+    const [agent] = loadConfig(file).agents;
+    assert.equal("operators" in agent!, false);
+    assert.equal(accessOf("ops.near", { account: agent!.owner, policy, signer: "s" }), null);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("a sign-in host may be given bare or as a URL", () => {

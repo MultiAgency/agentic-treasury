@@ -3,12 +3,12 @@ import type { StrategyStatus } from "../../../../src/strategy-status.js";
 
 type Read<T> = { data?: T; error: unknown };
 /** Current observations and UI permissions only; server controls still authorize every change. */
-export function strategyPresentation({ status, schedule, actions, review, executor, operator, busy, canSign }: {
+export function strategyPresentation({ status, schedule, actions, review, executor, canSave, canStop, canSchedule, busy, canSign }: {
   status: Read<StrategyStatus>;
   schedule: Read<{ on: boolean }>;
   actions: Read<{ type: string; stage: string }[]> & { isSuccess: boolean };
   review?: StrategyStatus;
-  executor: boolean; operator: boolean; busy: boolean; canSign: boolean;
+  executor: boolean; canSave: boolean; canStop: boolean; canSchedule: boolean; busy: boolean; canSign: boolean;
 }) {
   const value = status.data?.readiness && status.data?.strategy ? status.data : undefined;
   const pendingGrant = Boolean(ownerActionState((actions.data ?? []).filter(a => a.type === "grant_issue")).recovering);
@@ -23,10 +23,10 @@ export function strategyPresentation({ status, schedule, actions, review, execut
     readinessLabel: !current ? "Readiness unknown" : !executor ? "Approve-only host"
       : value!.readiness.state === "blocked" ? "Blocked"
         : value!.grantMatches ? schedule.data!.on ? "Ready for scheduled runs" : "Off · strategy authorized" : "Needs owner authorization",
-    showStop: operator && executor && Boolean(schedule.data?.on || schedule.error || status.error),
-    canEdit: operator && executor && !busy && !pendingGrant,
+    showStop: canStop && executor && Boolean(schedule.data?.on || schedule.error || status.error),
+    canEdit: canSave && executor && !busy && !pendingGrant,
     canReview: executor && off && Boolean(ownerRead) && !busy,
     canAuthorize: executor && off && currentReview && Boolean(ownerRead) && canSign && !busy,
-    canEnable: operator && executor && ready && !busy,
+    canEnable: canSchedule && executor && ready && !busy,
   };
 }

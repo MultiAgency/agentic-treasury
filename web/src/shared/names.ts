@@ -12,8 +12,8 @@ import { deniedAt, useAccessState } from "./access";
  */
 export function useSiblings() {
   const authorization = useAccessState();
-  // Agents and wallets rarely change: read once a minute at most, however many components ask.
-  const gateway = useQuery({ ...gatewayQueries.metadata });
+  // Share the shell's session so sibling permissions change with the workspace permissions.
+  const gateway = useQuery(gatewayQueries.session);
   const agents = (gateway.data?.agents ?? []).filter(agent => !deniedAt(authorization, `/a/${agent.name}`));
   const names = agents.filter((a) => `/a/${a.name}` !== BASE).map((a) => a.name);
   const results = useQueries({

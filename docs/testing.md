@@ -4,6 +4,30 @@
 browser suites, the offline application E2E suites, then generated-evidence drift checks. It does not run live verification. Live checks
 remain explicit and owner-authorized; passing fixtures does not establish deployed behavior.
 
+## What earns a test
+
+Each case must identify an important regression and assert its observable consequence. A failure
+fixture must establish that the failing request or fault boundary was reached. Assertions over a
+collection must establish that the intended controls or records exist; an empty selection is not a pass.
+
+Keep exhaustive input and state combinations in the lowest layer that can prove them. Browser cases
+own interaction, focus, rendering and query/cache wiring; E2E cases own real service, storage and
+signing integration. Repeating a rule at another layer is justified only when it checks that layer's
+distinct wiring or boundary. Preserve real-process crash, locking and restart cases.
+
+Before adding a case, check its task suite for an existing stronger scenario. Extend that scenario
+when it owns the same regression. Do not keep an extra browser journey for an assertion already made
+there, or multiply behavior by viewport when resizing the resulting state proves the layout requirement.
+Close scenario contexts and fail on unexpected browser errors. Test counts and file counts are not
+coverage targets; the failure each case detects is the reason to keep it.
+
+Wait for an observable state or response instead of sleeping to guess when it is ready. Use deferred
+responses for pending-state checks and the browser clock for timer-driven behavior. A real-time wait
+must exercise a timing requirement, not compensate for an unknown loading sequence. The shared browser
+harness fails on uncaught page errors and route-fixture exceptions, including those in popups.
+Checks that polling stopped must advance beyond the longest applicable interval. Checks that a
+refresh preserves a draft or focus must first prove the refresh happened; elapsed time alone is not evidence.
+
 ## Offline Node tests
 
 `pnpm test` uses `scripts/test.mjs offline`. Discovery excludes the two registered live suites rather
@@ -20,6 +44,9 @@ network clients or subprocesses that discard the guard without adding isolation 
 provider mocks remain necessary to state exactly which observations and submissions are expected.
 
 `freshDirectory` gives suites isolated state and removes the directories it owns after the suite.
+Suites that leave their working directory unchanged use `temporaryDirectories` and register its
+cleanup after child-process and server teardown. Fixture subprocesses need bounded execution and
+exit diagnostics; intentional crash cases must assert their expected crash status.
 Fixture builders provide valid starting evidence; scenario overrides must remain visible. Do not
 repair missing identity, synchronization, freshness or authorization evidence behind a test's back.
 
@@ -33,7 +60,31 @@ counters, journals and real crash/restart fixtures.
 
 Install the pinned Chromium with `pnpm exec playwright install chromium`, then run
 `pnpm test:browser`. To repeat selected suites against an existing build, use
-`node test/browser/run.cjs payment-detail.cjs` (substitute the desired suite names).
+`node test/browser/run.cjs payments.cjs` (substitute the desired suite names).
+
+The task suites group navigation, payment review, agreement terms, funding, invoice filing,
+strategy authorization, setup and run-history checks. For example, `payments.cjs` owns queue,
+invoice-detail, payment-recovery and owner-decision scenarios; `invoices.cjs` owns the payee's
+filing, draft, refresh and session-expiry journey. Access-boundary and harness suites remain separate.
+
+Use these existing owners when extending cross-cutting interaction checks:
+
+| Behavior | Browser owner | Primary assertion |
+| --- | --- | --- |
+| Stop with an unfinished draft or missing grant | `strategy.cjs` | One stop request; saved settings stay unchanged; no save or signing request |
+| Payment refusal guidance and treasury top-up routing | `funding.cjs` | Correct next-task link and exactly one request to the intended agent |
+| Copy recovery references, including clipboard failure and retry | `failure-states.cjs` | Accessible failure, available retry and exact copied references |
+| Unavailable held-payout amounts and stale balances | `funding.cjs` | Explicit unavailable/stale evidence, no empty-state or spendability claim |
+
+A new test belongs beside its task even when the regression concerns feedback or presentation.
+A separate catch-all suite would repeat these fixtures and journeys.
+
+Merged suites share one browser and close all contexts between scenario groups. Workspace routing
+and invoice-page rendering are shared fixtures; each scenario retains its explicit response evidence.
+Payment, setup, history-filter and run-recording scenarios run at one width. The layout helper
+resizes an already loaded state at 320, 390 and 1280 pixels; navigation journeys retain mobile and desktop modes, and the wallet-header checks retain
+long account names and enlarged text. New coverage belongs with its task, with extra viewports only
+when the interaction or layout depends on width.
 
 The shared browser fixture blocks service workers, unhandled requests and WebSockets. Scenario routes
 provide explicit responses; the shared RPC dispatcher rejects undeclared procedures, including writes.
@@ -131,7 +182,9 @@ separately owner-run.
 
 ### Challenging the E2E assertions
 
-`pnpm test:e2e:challenge` first requires all five baseline cases to pass without skips or retries.
+`pnpm test:e2e:challenge` first discovers the complete baseline from its isolated source and requires
+every discovered case to pass once without skips or retries. The retained `baseline-list.json` is
+matched against the results by case and project identity, so added cases cannot silently be omitted.
 It then creates three separate disposable copies of that tested snapshot and deliberately introduces
 one fault into each: duplicate transfer submission, a premature Paid invoice label, or removal of the
 approve-only dispatch guard. It rebuilds each copy and runs the relevant journey. Working application
@@ -191,7 +244,7 @@ the owner deploys. A passing snapshot whose working tree differs is not a releas
 
 The workspace E2E cases use a separate Portfolio executor, provider identity and store alongside the
 Payables executor and approve-only server. They cover full-document cross-agent navigation and back,
-per-agent wallet/operator access, forbidden direct reads and settings writes, strategy save with the
+wallet ownership per agent despite ignored legacy operator configuration, forbidden direct reads and settings writes, strategy save with the
 schedule off, stale save/authorization/enable refusal, actual local grant signing, explicit enablement,
 and stopping after a declared provider outage. Database/provider records and persisted settings support
 browser assertions. They do not establish DAO role coverage or scheduled money execution end to end.

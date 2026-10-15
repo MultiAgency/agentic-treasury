@@ -1,9 +1,9 @@
+import { temporaryDirectories } from "./fixtures/harness.js";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, mock, test } from "node:test";
+import { after, afterEach, beforeEach, mock, test } from "node:test";
 import { dispatch } from "../src/agent.js";
 import { api } from "../src/api.js";
 import { prepareInvoice } from "../src/invoice-store.js";
@@ -17,6 +17,8 @@ import { recover } from "../src/recover.js";
 import { prepare, submit } from "../src/owner-intents.js";
 import { authorityFixture, fixtureGrant, policyView } from "./fixtures/authority.js";
 import { walletIntent, walletSignature, walletSigner } from "./fixtures/wallet-signature.js";
+
+const scratch = temporaryDirectories();
 
 /**
  * The deployed shape: the executor (Railway) files and holds a payout from its own data directory;
@@ -36,8 +38,8 @@ function onDashboard() {
 }
 
 beforeEach(() => {
-  executor = mkdtempSync(join(tmpdir(), "executor-"));
-  dashboard = mkdtempSync(join(tmpdir(), "dashboard-"));
+  executor = scratch.create("executor");
+  dashboard = scratch.create("dashboard");
   process.env.AGENT_ID = "a".repeat(64);
   process.env.AGENT_GRANT_TOKEN = "ngt_test";
   sends = signatures = 0;
@@ -89,16 +91,18 @@ test("an approval whose terms don't hash to the provider's request is refused", 
   await assert.rejects(checkPaymentApproval(vote), /request hash/);
 });
 
-for (const [name, terms] of Object.entries({
-  "a payee outside the policy": { to: "stranger.near", token: ASSETS.USDC, amount: "1000000" },
-  "an amount over the per-transaction limit": { to: invoice.payee, token: ASSETS.USDC, amount: "26000000" },
-  "an asset outside the policy": { to: invoice.payee, token: ASSETS.wNEAR, amount: "1000000" },
-})) test(`approving ${name} is refused, even when the provider's hash matches`, async () => {
+for (const [name, terms, reason] of [
+  ["a payee outside the policy", { to: "stranger.near", token: ASSETS.USDC, amount: "1000000" }, /payee_not_agreed/],
+  ["an amount over the per-transaction limit", { to: invoice.payee, token: ASSETS.USDC, amount: "26000000" }, /per_transaction_exceeded/],
+  ["an asset outside the policy", { to: invoice.payee, token: ASSETS.wNEAR, amount: "1000000" }, /transfer_not_allowed/],
+] as const) test(`approving ${name} is refused, even when the provider's hash matches`, async () => {
   onDashboard();
   const hash = createHash("sha256").update(canonical({ ...terms, chain: "near", flow: "transfer", kind: "confidential" })).digest("hex");
   mock.method(api, "getApproval", async () => ({ approval_id: "approval", wallet_id: "wallet-fixture", status: "PENDING",
     expires_at: new Date(Date.now() + 60_000).toISOString(), request_type: "confidential", request_data: terms, request_hash: hash }));
-  await assert.rejects(checkPaymentApproval(vote), /payee_not_agreed|per_transaction_exceeded|transfer_not_allowed/);
+  await assert.rejects(checkPaymentApproval(vote), reason);
+  assert.equal(sends, 0, "invalid approval terms cannot send a payment");
+  assert.equal(signatures, 0, "invalid approval terms cannot submit an owner signature");
 });
 
 test("approval terms the provider doesn't fully expose are refused, not trusted", async () => {
@@ -246,3 +250,6 @@ for (const verdict of ["approve", "reject"] as const) test(`${verdict} refuses a
   await assert.rejects(checkPaymentApproval({ ...vote, verdict }), /another operation|identify/);
   assert.equal(signatures, 0);
 });
+
+// Remove state only after this suite has released its locks and stopped its processes.
+after(scratch.cleanup);

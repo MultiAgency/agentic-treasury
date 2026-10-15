@@ -4,6 +4,22 @@ Two areas, Payables and Treasury, share one core. Each agent runs in its own ins
 with its own wallet, grant, money lock and logs; the hosted gateway signs members in and forwards
 their calls to those instances. Files are listed under `src/` unless a path says otherwise.
 
+Work orders add private subprocesses on the invoice executor host, one per order. They expose no
+network listener and inherit infrastructure credentials but no parent grant or owner signing key.
+They share the host's filesystem permissions; this is not an OS security sandbox.
+`work-orders.ts` and `rpc/work-orders.ts` bind owner requests to the configured payout agent;
+the approve-only dashboard uses the secret-protected `/internal/work-orders` bridge. Payee routes
+authenticate the payee before selecting an order and never accept an agent, amount or recipient
+override. `work-order-runtime.ts` reuses owner intents, invoice storage and reconciliation.
+
+`work-order-binding.ts` checks the fixed invoice identity, terms, deadline, grant expiry and policy
+digest after dispatch's final provider observations, synchronously before submission. The existing
+`authorize.ts` rules are unchanged by this feature. A refused binding is recorded as
+`work_order_binding`; an unknown outcome retains the original invoice and blocks new sends.
+These are local application restrictions. The provider separately enforces its policy and grant.
+Offline tests cover the binding, authenticated HTTP routes, private processes and restart identity;
+no work-order lifecycle has been observed on mainnet.
+
 ## The one rule
 
 **One send site.** Every money action, whichever area starts it, goes through `dispatch` in
@@ -181,7 +197,7 @@ Retries of the same form retain the same payment identity. Changed amount/note c
 as revisions requiring review; they never modify an existing payment or create a second attempt.
 The browser retains its pending form ID across reloads. A genuinely new form is a new business
 occurrence; there is no semantic duplicate-invoice detector. Payments shows invoice revisions, operation IDs
-and reserved amounts. Operators may cancel a payment only when its durable state proves submission
+and reserved amounts. Accounts with execution or settings permission may cancel a payment only when its durable state proves submission
 never began. A held/unknown payment retains its reservation until a proven terminal outcome. These
 reservations are records of encumbrances, not yet a full available-cash or liquidity-control engine.
 
@@ -191,6 +207,47 @@ Before upgrading an existing payout executor, follow the
 SQLite provides local atomicity, not exactly-once remote payment execution. These paths are covered
 by offline concurrency, HTTP authorization and process-crash tests, and the flow ran on mainnet on
 2026-10-12 ([mainnet log](mainnet-log.md)).
+
+## Dashboard access (offline-tested)
+
+The gateway verifies the connected account and the requested agent's owner. Wallet-owned agents admit
+only that owner. DAO-owned agents admit accounts explicitly named in a Group role; `Everyone` and
+token-weighted Member roles do not establish private workspace membership. After admission, applicable
+Group and Everyone permissions combine, independent of role names. Exact kind/action permissions and
+Sputnik's four wildcard forms are interpreted per
+[contract source at 5434a59](https://github.com/near-daos/sputnik-dao-contract/blob/5434a59dec23ee0c49df8c8c4350c208a7e75b0b/sputnikdao2/src/policy.rs).
+This is a source comparison, not verification of the deployed DAO contract version.
+
+`src/gateway/roles.ts` derives five per-agent capabilities. The gateway and frontend use the same pure
+`mayCall` table in `src/gateway/allowlist.ts`; an unknown procedure is refused even to a wallet owner.
+No configured account or role name can override ownership or membership.
+
+| Capability | Wallet owner | DAO group member |
+| --- | --- | --- |
+| Sign owner intent | Yes | No; the DAO supplies its signature after approval |
+| Propose FunctionCall | Not applicable | `call:AddProposal` |
+| Vote to approve FunctionCall | Not applicable | `call:VoteApprove` |
+| Trigger execution | Yes | Both FunctionCall proposal and approval permissions |
+| Change local settings | Yes | Both `policy:AddProposal` and `policy:VoteApprove` |
+
+Execution and settings capabilities are conservative application mappings from those permissions,
+not contract actions or evidence that a voting threshold was met. Proposal-only and vote-only members
+cannot trigger direct execution. Existing policy, grant, reviewed-plan, executor and dispatch checks
+still apply to every money action. Owner policy/grant changes and held-payout decisions still require
+verified owner signatures; a member's vote alone cannot satisfy that requirement.
+
+Members may read private records. Preparing an owner action, agreement terms, funding transaction or
+plan requires the wallet owner or FunctionCall proposal permission. Saving a strategy requires settings
+permission; it stops the schedule and does not authorize the new strategy. Enabling a saved, authorized
+strategy requires execution permission. Stopping scheduling and reconciling existing operations allow
+either execution or settings permission. The legacy combined schedule route requires both. Wallet
+signature submission is available only to the owner wallet; DAO signatures follow the existing server
+observation path. `ownerIdentity` is an internal gateway read, unavailable through browser RPC.
+
+Permissions remain per agent. Shared pages have no combined workspace authority. Permission loss
+disables action controls; a strategy confirmation stays invalid until reviewed again. Session and
+agent-access denials hide private data. The existing intervention
+classification and JSONL format remain readable; changing permissions creates no state migration.
 
 ## Frontend responsibilities (offline-tested)
 
@@ -205,15 +262,23 @@ badge requires only its own observations; failed attention sources remain explic
 recovery views while setup or overview is loading or has failed. Treasury-link reads are limited to pages using them and
 do not gate the shell. The private `instance` read returns configured identity and executor mode
 without provider calls. Combined with gateway permissions, it exposes schedule stopping during
-provider failures; the server still refuses members and approve-only instances. Offline fixtures in
+provider failures; the gateway requires execution or settings permission, and approve-only instances
+still refuse the control. Offline fixtures in
 `test/browser/task-loading.cjs` reproduce failed and indefinitely pending setup, overview and treasury-link reads.
 
 `read-failure.tsx` distinguishes failed initial reads from failed refreshes. Activity and shared
 workspace history retain previously loaded records with their read time; empty cached lists never
 establish a current absence during failure. The payment recovery view labels cached outcomes as
 last reported, and unavailable unresolved-operation reads retain references without recovery controls.
-Schedule recovery explains operator and executor restrictions. `test/browser/failure-states.cjs`
+Schedule recovery explains permission and executor restrictions. `test/browser/failure-states.cjs`
 checks retained records, open evidence, explicit retries and permission explanations offline.
+
+Scoped Activity presents operation checks as **Operation status**, with a next step for each
+reported outcome. A provider `FAILED` result does not establish that a replacement payment is safe.
+Owner-action records remain visible after an ordinary read failure, marked with their last successful
+read time, and are hidden on access denial. Explicit refreshes preserve keyboard focus and open record
+details. `test/browser/recovery-clarity.cjs` checks these behaviors at mobile and desktop widths using
+intercepted requests; the controls only read existing records or invoke status reconciliation.
 
 The Policy page separates policy and current-grant observations from allowed actions, owner controls
 and revision evidence. `policy-observations.tsx` presents the server's policy check without combining
@@ -226,7 +291,7 @@ creation, a succeeded creation awaiting setup readback, or unavailable records k
 disabled. Its refresh reads setup and owner records without signing or submitting. Returning owners
 without a reported grant first see unfinished setup actions, then a policy, Payables grant or Strategy
 destination based on available observations. Records cover this instance only; funding requests made
-through wallets or Trezu still need review there. `test/browser/onboarding-clarity.cjs` checks these
+through wallets or Trezu still need review there. `test/browser/setup.cjs` checks these
 paths on mobile and desktop with offline fixtures.
 
 Owner action preparation exposes its correlation ID and a durable Activity link. Component-owned
@@ -234,34 +299,97 @@ status observation in `owner-observation.ts` stops on unmount; server recovery r
 Returning to Activity reads durable records. Approval success is displayed separately from payment
 settlement, and missing evidence retains existing retry restrictions.
 
-`main.tsx` lazy-loads the authenticated application and fictional example workspace at their entry
-decisions. Public illustrations use the canonical summaries without mounting authenticated reads.
+`main.tsx` lazy-loads the authenticated application after gateway admission. The public entry is
+sign-in only; legacy example hashes no longer mount the overview explorer.
 The production build places these applications in asynchronous chunks; this is a bundle-boundary
 check, not a measured startup improvement or deployed observation.
 
 
-The hosted signed-in frontend shares one desktop navigation rail and a mobile navigation drawer across Home, Payables,
-Treasury and Activity (`web/src/app/workspace.tsx`). The gateway's accessible-agent list determines
+On hosts without `walkthroughs: true`, the signed-in frontend shares a flat desktop navigation rail and mobile navigation drawer
+with Home, Payables, Portfolio and Activity (`web/src/app/workspace.tsx`). The gateway's accessible-agent list determines
 which areas appear; permissions remain agent-scoped. Area navigation loads the existing `/a/<agent>/`
 URL as a new document, preserving the existing client/cache isolation and draft unload warnings.
-The shared Home shows independent attention checks, agreement requests and compact status;
-Activity groups recent money and owner records by agent with an area filter. Neither view aggregates
-balances or authorizes actions. Failed reads remain explicit and one failed agent does not hide another.
-Area task names come from `web/src/app/navigation.ts`: Payments for Payables, Portfolio, Strategy and Runs
-for Treasury, plus funding, policy/grants and Activity. URLs remain unchanged. Compact payment rows
+The shell, sibling controls and invoice links share one cached `/gw/me` session response. A refreshed
+permission applies to every consumer together. Shared pages display the connected identity without
+combining permissions from different agents into a workspace-wide role; an agent page uses only that
+agent's access. Explicit denials still hide private observations immediately, including late responses.
+Scoped RPC requests verify access to their target agent only; an unrelated agent's ownership lookup
+cannot block them. Fleet discovery still resolves all configured agents. The gateway verifies the
+reported owner through `ownerIdentity`, which reads provider ownership without the grant adoption
+or funding observations performed by setup. Cold ownership failures deny access. A transport failure
+can retain the last verified owner; a malformed successful response clears that evidence and denies
+access. `test/gateway-access.test.ts` and `test/setup-gateway.test.ts` cover these boundaries offline.
+The shared Home shows independent attention checks, agreement requests, open proposals and compact status;
+its real-funds guide is inside a Guided walkthrough disclosure. Activity groups all returned money,
+owner-action and Treasury run records by agent, plus DAO-wide proposals. `features/workspace/history.tsx`
+provides local search, area, record-type, namespaced status and inclusive local-date filters over the
+returned records. Owner actions have no recorded timestamp; undated records remain included. The
+unresolved query, failed reads and incomplete-run warnings remain above all filters, including area.
+No filter derives dispatch blockers or equates owner/run/proposal outcomes with payment settlement.
+Neither view aggregates balances or authorizes money actions. Failed reads remain explicit and one failed
+agent does not hide another. `features/workspace/activity.tsx` uses per-agent clients and query keys;
+run summaries link to scoped `/follow/run` details without repeating operation lists. Missing-end and
+unreadable-record warnings remain visible outside the run-history disclosure. Books and ledger exports
+are requested only by their own controls. Recovery links retain the existing
+agent-scoped routes and permissions, labeled Operation status, with a return to shared Activity.
+`test/activity-filters.test.ts` covers date and status distinctions; `test/browser/workspace-activity.cjs`
+checks filtering with retained warnings, agent isolation, deep links and access revocation.
+Pending workspace ledger exports abort on access denial or unmount, and check cancellation again
+before creating a download. `test/browser/workspace-activity.cjs` covers full returned histories,
+agent isolation, retained read failures and delayed exports after denial with offline fixtures.
+Area task names come from `web/src/app/navigation.ts`: Payments and Agreements for Payables, Overview
+and Strategy for Portfolio. These appear in content navigation, separate from the workspace rail.
+Funding and policy/grants are content-area utilities; Guided walkthrough is under Help. Run details and Run now
+remain reachable from Overview and Strategy, while returned run history is in shared Activity.
+Existing URLs remain unchanged. Compact payment rows
 link to the existing detail route; only the selected record mounts live payment-status reads and
 approval controls. Home attention items link to that same identity.
+`features/payables/payment-queue.ts` filters already-read summaries into Needs review and All records,
+with local recipient/reference search. Review includes held payouts, changed/prepared invoices, owner
+recovery and missing or conflicting outcomes; owner approval alone never removes a record from review.
+The projection keeps local invoice and operation identities separate from provider payment references.
+Read failures and incomplete coverage remain visible outside the filtered list. It does not authorize
+an action or add per-row status reads.
 The standalone local-agent layout and signed-out example routes remain separate.
 `test/browser/workspace.cjs` checks navigation, recovery access, filtering and absence of mutation
 calls at 320px, 390px and 1280px with intercepted requests. This is local, offline-tested behavior;
 the shared workspace has not been verified on a deployed host.
 
+The run view and recording inspector share a read-only projection of the existing, validated AG-UI
+events (`features/evidence/recording-model.ts` and `recorded-progress.tsx`). Each observed stage has
+one row with its recorded start and optional return. Submissions stay independent because the source
+does not associate them with a stage; overlapping stages do not create an inferred association.
+A recorded run end never supplies a missing return or proves settlement. Older recordings have no
+reconstructed stages. The inspector keeps individual observations behind a disclosure, with source
+gaps and later journal observations retained separately. The run page groups outcome, stages and later
+observations in one timeline, with its receipt, inspector and polling controls under Run details.
+Unit and offline browser fixtures cover these presentation rules. New exports use envelope version 3
+and declare AG-UI protocol 1.0; lifecycle validation rejects a finished run with open stages.
+An observed run failure or a recorded end with missing stage returns emits RUN_ERROR without
+inventing returns. Legacy versions 1/2 remain readable. This adds no event transport or authorization rule.
+
+`features/demo/live-demo.tsx` composes a guided live walkthrough at `/a/<agent>/demo`, reached from
+Home's Guided walkthrough disclosure or Help → Guided walkthrough in the area. It reads the current agent's observations and reuses the
+existing rebalance preview/execution, manual payment review, configured invoice link and payment
+discovery components. Prerequisite observations do not authorize actions; failed observations keep
+the guide's local submission controls unavailable while recorded outcomes remain reachable. Approve-only payout instances
+direct invoice submission to the configured service. Explicit confirmations and required owner approval
+remain in the existing controls; no mutation runs on entry or reload. A confirmed execution selects its
+exact plan identifier and polls its retained operations, including unresolved records. A non-refused
+payment response selects its returned identity using the existing payment detail component. The guide
+never selects the newest record as a substitute; reload clears these local selections. Earlier records
+remain discoverable through Payments and Activity. The guide creates no server records, RPC procedures or state formats of
+its own. `test/browser/live-demo.cjs` checks these paths with intercepted requests; no deployed or
+mainnet behavior is inferred from those fixtures.
+
 The workspace attention summary owns fleet reads once; incomplete checks and retry controls appear
 there without repeating them in the compact status section. Treasury grant warnings link directly to
 Strategy; an unknown area retains the Policy destination. Activity describes recorded operations,
-including refusals, without implying every record was submitted. Invoice administration is on Payments;
-Activity retains a link to it and loads Books only when “Compare balances with records” is opened.
-When setup confirms an executor operator, an unrelated overview failure leaves the existing schedule
+including refusals, without implying every record was submitted. Local invoices join payment discovery
+on Payments; invoice-only records never turn invoice IDs or idempotency keys into provider correlation
+IDs. Full references remain available in disclosures. Activity loads Books only when “Compare balances
+with records” is opened.
+When setup confirms an executor and the account may stop scheduling, an unrelated overview failure leaves the existing schedule
 stop control accessible alongside Activity recovery. These presentation boundaries are checked with
 intercepted requests in `test/browser/decision-clarity.cjs`; no deployed behavior is inferred.
 
@@ -271,11 +399,10 @@ module owns drafts, refresh ordering and DOM updates; TypeScript checks its JSDo
 loads the complete page renderer and module with mocked API and wallet responses; the HTTP test
 checks that the listener serves both resources. Neither test extracts functions from source comments.
 Sign-out and an explicit session-access denial clear private rows, invalidate outstanding status reads,
-stop polling, and restore keyboard focus to sign-in (`test/browser/invoice-focus.cjs` and
-`test/browser/invoice-expiry.cjs`, offline). The account-scoped draft keeps its submission identity for
+stop polling, and restore keyboard focus to sign-in (`test/browser/invoices.cjs`, offline). The account-scoped draft keeps its submission identity for
 reauthentication. The synthetic payee journey
 checks request, agreement, invoice and outcome presentation at mobile and desktop widths
-(`test/browser/invoice-journey.cjs`); owner decisions there are fixture transitions, not real signatures.
+(`test/browser/invoices.cjs`); owner decisions there are fixture transitions, not real signatures.
 
 The Treasury strategy UI derives labels and control permissions in `web/src/features/portfolio/strategy-presentation.ts`.
 This is presentation only; server controls and dispatch still recheck authorization. Query refreshes
@@ -296,7 +423,7 @@ role checks still govern actions. Standalone or externally started agent servers
 `DASHBOARD_AREA` explicitly. Legacy instances without it keep policy-based area inference. The
 workspace labels configured areas without fetching their balances. Disabling swaps leaves the
 Treasury area's navigation and recorded runs accessible, while swap previews remain unavailable.
-This is offline-tested in `test/area-config.test.ts` and `test/browser/area-identity.cjs`.
+This is offline-tested in `test/area-config.test.ts` and `test/browser/workspace-navigation.cjs`.
 
 `web/src/features/payables/payment-records.ts` joins retained local transfers, provider history, held observations and
 owner records for display. A failed or incomplete provider history read cannot hide a transfer already
@@ -341,21 +468,63 @@ factories compose through `shared/queries.ts`, preserving the existing agent and
 Home skips agreement-request reads for known Treasury areas; it retains held, unresolved, inbox and
 schedule observations because Treasury can transfer and Payables may retain a legacy schedule.
 
-The desktop rail nests task destinations in the current area. Mobile uses a native modal navigation
-drawer with Escape, focus restoration and a visible current-page label. Same-agent task links use the
-router; switching agents loads a new document. Existing payment/run URLs and legacy anchors remain.
-Payments contains secondary manual payment creation and invoice administration. Agreements concerns
-terms and policy inclusion. Strategy separates saved configuration, owner authorization, schedule and
-manual rebalance; sweep belongs to Balances & funding, with a link from the old automation anchor.
-Activity links to invoice administration and retains operation, owner-action, recovery and books views.
+The desktop rail and mobile drawer contain only Home, Payables, Portfolio and Activity. Mobile uses a
+native modal with Escape, focus restoration and a visible current-page label. Area task tabs and named
+Funding and Policy utilities appear in the content; Help contains Guided walkthrough. Same-agent task links use
+the router; switching agents loads a new document. Existing payment/run URLs and legacy anchors remain.
+Payments combines local invoice and payment discovery, with secondary manual payment creation. An
+invoice joins a payment only through its recorded correlation ID; an invoice-only detail reads no
+provider payment status. Missing invoice access and remote executor records remain explicit.
+Agreements groups all open terms by recipient and displays policy inclusion independently; closed
+records, offers and direct policy changes have named disclosures. Strategy separates saved
+configuration, owner authorization, schedule and manual rebalance. The editor saves directly with
+the schedule off and opens authorization for that saved digest; one strategy summary remains
+visible during review. Saving never signs or enables scheduling. Stale or unavailable observations
+still prevent authorization. Manual previews use percentages and estimated/minimum received amounts.
+Completed setup and manual
+previews start collapsed; the rebalance anchor opens its preview. Sweep belongs to Balances & funding
+under “Shield public funds”, opened by its existing anchor. A selected run leads with its original
+recorded outcome and per-operation results, followed by later observations. Technical observations,
+receipt metadata and recording inspection are under Run details; the new-run control follows the
+selected record. A run ending still does not establish settlement. Policy shows live grant revocation directly and
+keeps ended grants in history. Shared Activity retains operation, owner-action and run histories plus
+lazy books views, with links to scoped recovery controls and individual run details. Run history starts
+collapsed; read failures, incomplete records and missing ends stay explicit. Overview retains known
+limitations and the requirement-evidence disclosure, including its `#evidence` anchor, without repeating
+the Recent activity list or the “What this demonstrates” introduction.
 
 Payment discovery and selected-payment observations are separate hooks. Normal review and recovery
 share status polling and a display that distinguishes owner decision from payment outcome. Only a
 selected payment polls its provider status. Pure stage derivation never reconstructs approval evidence
 from settlement. Confirmation controls live with owner actions, separate from generic UI primitives.
-Public examples share only data-free task vocabulary with the workspace. They retain fictional state
-and cannot import authenticated observation or action modules.
+The public entry imports only sign-in UI. It exposes no walkthrough, requirement cards or private
+records. Earlier example hashes use the same entry. The old static explorer remains unused source;
+`main.tsx` no longer routes to it.
 
 These changes require no RPC or state-format migration. They are local frontend changes, not a new
 mainnet observation or provider-enforcement claim. Offline validation includes feature-boundary and
 payment-stage tests plus the workspace, payment, recovery, strategy and public browser fixtures.
+
+
+### Hosted walkthrough setup (offline-tested)
+
+`gateway/hosted-agents.ts` reserves one agent instance per owner and area under `.hosted/`.
+The gateway admits verified wallets without agent access only when `selfService` is enabled.
+`POST /gw/agents` verifies the requested owner type, wallet ownership or DAO group membership and
+proposal permission before reserving anything. An atomic, locked registry precedes child startup;
+retries reuse it. Corrupt, missing or conflicting state refuses instead of replacing settings.
+The registry caps new reservations at 32 and allocates loopback ports 9000–9999. This is bounded
+single-host provisioning, not a horizontally scalable or abuse-resistant hosting service.
+
+Children receive unique settings files and immutable owner/area bindings, without inherited owner
+private keys, grants, agent IDs, notification destinations or invoice listeners. `hosted-binding.ts` checks creation and DAO
+relinking before provider intent generation. Existing open creation intents block a second hosted
+creation. The existing owner-intent lifecycle, lease activation, authorization and single send site
+remain responsible for signatures and money actions. No rule was added to `authorize.ts`.
+
+`walkthrough-home.tsx` selects an existing guide or reserves setup, waits for gateway ownership
+access, then opens onboarding. `walkthroughs: true` replaces the workspace navigation with the
+agent chooser, guided walkthrough and Activity/recovery links. Funding, grants, strategy and
+agreements are supporting routes linked from the guide. New Payables agents expose no inherited
+invoice-service link. Configuration defaults preserve existing hosts; `deploy/dashboard.json`
+selects both options for the prepared proto deployment. Nothing here establishes a mainnet observation.

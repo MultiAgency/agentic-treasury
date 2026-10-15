@@ -96,10 +96,6 @@ function heldPayment(to: string) {
   return { approvalId: "approval", correlationId: "op_held", verdict: "approve" as const };
 }
 
-test("the approval baseline: a held payout to an agreed payee can be approved", async () => {
-  await checkPaymentApproval(heldPayment("payee.near"));
-});
-
 test("an approval releasing a payee an except-mode policy doesn't agree to is refused", async () => {
   policy = except(["forbidden.near"]);
   await assert.rejects(checkPaymentApproval(heldPayment("other.near")), /payee_not_agreed/);

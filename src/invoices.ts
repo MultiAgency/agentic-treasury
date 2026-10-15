@@ -6,6 +6,7 @@ import { agreedPayees } from "./authorize.js";
 import { acquireMoneyLock, MoneyLockBusy, UnresolvedOperations } from "./lock.js";
 import { ASSETS } from "./policy.js";
 import { isResolved, record } from "./ops.js";
+import { currentWorkOrder } from "./work-order-store.js";
 import { getInvoice, invoiceId, legacyInvoices, listInvoices, markInvoiceUnknown, noteRevision, prepareInvoice,
   type InvoiceInput, type StoredInvoice } from "./invoice-store.js";
 
@@ -69,6 +70,9 @@ type Filing = { id: string; status: Status; revisionConflict?: boolean };
 /** A changed revision never changes the original payment or authorizes another attempt. */
 export const file = (invoice: InvoiceInput, authenticatedPayee: string): Promise<Filing> => serially(async () => {
   if (invoice.payee !== authenticatedPayee) throw new Error("Cannot file an invoice for another account");
+  const order = currentWorkOrder();
+  if (order && (invoice.payee !== order.payee || invoice.amount !== order.amount || invoice.note !== order.note || invoice.submission !== order.id))
+    throw new Error("Invoice terms do not match this work order.");
   // Revalidate the internal raw-unit input as well as the HTTP form. No arbitrary action payload.
   if (!/^[0-9]{1,18}$/.test(invoice.amount) || BigInt(invoice.amount) <= 0n ||
       !/^[0-9a-f-]{16,64}$/.test(invoice.submission) || !ACCOUNT.test(invoice.payee) ||

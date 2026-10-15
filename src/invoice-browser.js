@@ -5,7 +5,7 @@
  * @typedef {Awaited<ReturnType<typeof import("./invoices.js").mine>>[number]} Invoice
  * @typedef {Omit<import("./agreements.js").Agreement, "payee" | "status"> & {status: Exclude<import("./agreements.js").AgreementStatus, "filed">}} Agreement
  * @typedef {{invoices: Invoice[], agreements: Agreement[], agreed: boolean}} InvoiceList
- * @typedef {{amount: HTMLInputElement, note: HTMLInputElement, submit: HTMLButtonElement, signin: HTMLButtonElement, signout: HTMLButtonElement, refresh: HTMLButtonElement, account: HTMLElement, error: HTMLElement, "step-signin": HTMLElement, "step-invoice": HTMLElement, list: HTMLElement, "not-agreed": HTMLElement, "agreed-chip": HTMLElement, "agreements-card": HTMLElement, agreements: HTMLElement, invoices: HTMLElement, none: HTMLElement, "refresh-error": HTMLElement, "refresh-status": HTMLElement}} Elements
+ * @typedef {{"work-orders-card": HTMLElement, "work-orders-list": HTMLElement, "work-orders-check": HTMLButtonElement, "work-order-detail": HTMLElement, "work-order-note": HTMLElement, "work-order-terms": HTMLElement, "work-order-status": HTMLElement, "work-order-error": HTMLElement, "work-order-file": HTMLButtonElement, amount: HTMLInputElement, note: HTMLInputElement, submit: HTMLButtonElement, signin: HTMLButtonElement, signout: HTMLButtonElement, refresh: HTMLButtonElement, account: HTMLElement, error: HTMLElement, "step-signin": HTMLElement, "step-invoice": HTMLElement, list: HTMLElement, "not-agreed": HTMLElement, "agreed-chip": HTMLElement, "agreements-card": HTMLElement, agreements: HTMLElement, invoices: HTMLElement, none: HTMLElement, "refresh-error": HTMLElement, "refresh-status": HTMLElement}} Elements
  */
 
 /**
@@ -32,7 +32,7 @@ export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
     const session = sessionVersion;
     $("error").hidden = true;
     const res = await fetch(path, { method, headers: { "content-type": "application/json" }, body: payload === undefined ? undefined : JSON.stringify(payload) });
-    if ((res.status === 401 || res.status === 403) && path.startsWith("/api/invoices")) {
+    if ((res.status === 401 || res.status === 403) && (path.startsWith("/api/invoices") || path.startsWith("/api/work-orders"))) {
       if (session === sessionVersion) expireSession();
       throw new Error("Sign in again to review the existing invoice.");
     }
@@ -73,6 +73,7 @@ export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
     $("submit").disabled = false;
     $("step-signin").hidden = !!account; $("step-invoice").hidden = !account; $("list").hidden = !account;
     $("account").textContent = account || "";
+    resetWorkOrders(account);
     eligibility(agreed);
     if (!account) $("signin").focus();
     if (account) {
@@ -290,6 +291,82 @@ export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
         $("submit").disabled = false;
         $("submit").textContent = $("not-agreed").hidden ? "Submit invoice" : "Send request";
       }
+    }
+  };
+  /** @type {import("./work-order-protocol.js").PublicWorkOrder | null} */
+  let selectedOrder = null;
+  let workOrderVersion = 0;
+  let workOrderFiling = false;
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let workOrderTimer;
+  /** @param {string | null} account */
+  function resetWorkOrders(account) {
+    workOrderVersion++; clearTimeout(workOrderTimer); selectedOrder = null;
+    $("work-orders-card").hidden = !account;
+    $("work-orders-list").replaceChildren(); $("work-order-detail").hidden = true;
+    $("work-order-note").textContent = ""; $("work-order-terms").textContent = ""; $("work-order-status").textContent = "";
+    $("work-order-error").textContent = ""; $("work-order-file").disabled = true;
+    const id = new URL(location.href).searchParams.get("workOrder");
+    if (account && id && /^[0-9a-f-]{36}$/.test(id)) void refreshWorkOrder(id);
+  }
+  /** @param {string} id */
+  async function refreshWorkOrder(id) {
+    const session = sessionVersion, version = ++workOrderVersion;
+    clearTimeout(workOrderTimer); $("work-order-file").disabled = true;
+    try {
+      const order = /** @type {import("./work-order-protocol.js").PublicWorkOrder} */ (await call("GET", "/api/work-orders/" + id));
+      if (session !== sessionVersion || version !== workOrderVersion) return;
+      selectedOrder = order;
+      const ordinaryTitle = document.getElementById("ordinary-invoice-title");
+      if (ordinaryTitle) ordinaryTitle.textContent = "Invoices outside this work order";
+      $("work-order-detail").hidden = false;
+      $("work-order-note").textContent = order.note;
+      $("work-order-terms").textContent = usdc(order.amount) + " · " + $("account").textContent + " · deadline " + when(order.until);
+      $("work-order-status").textContent = order.unavailable ? "Status unavailable. Refresh this work order before acting."
+        : order.invoice ? (wordsFor(order.invoice.status)?.[0] || order.invoice.status)
+        : Date.parse(order.until) <= Date.now() ? "The work order deadline has passed."
+        : order.ready ? "Ready to file. The payment will be held for owner approval." : "Waiting for owner authorization or funding.";
+      $("work-order-file").disabled = !order.ready || workOrderFiling;
+      $("work-order-file").textContent = order.invoice?.status === "prepared" ? "Continue work order invoice" : "File work order invoice";
+      $("work-order-error").textContent = "";
+    } catch (e) {
+      if (session !== sessionVersion || version !== workOrderVersion) return;
+      $("work-order-error").textContent = e instanceof Error ? e.message : "Work order status unavailable.";
+    }
+    if (session === sessionVersion && version === workOrderVersion)
+      workOrderTimer = setTimeout(() => refreshWorkOrder(id), 15000);
+  }
+  $("work-orders-check").onclick = async () => {
+    const session = sessionVersion;
+    try {
+      const { orders } = /** @type {{orders: Pick<import("./work-order-protocol.js").PublicWorkOrder, "id" | "note" | "amount" | "until" | "createdAt">[]}} */ (await call("GET", "/api/work-orders"));
+      if (session !== sessionVersion) return;
+      syncRows($("work-orders-list"), orders, order => {
+        const item = row(order.note, usdc(order.amount), "", order.until);
+        const button = document.createElement("button"); button.textContent = "Review work order";
+        button.onclick = () => { if (workOrderFiling) return; selectedOrder = null; $("work-order-detail").hidden = true; void refreshWorkOrder(order.id); };
+        item.append(button); return item;
+      });
+      $("work-order-error").textContent = orders.length ? "" : "No work orders for this signed-in account.";
+      if (selectedOrder) await refreshWorkOrder(selectedOrder.id);
+    } catch (e) { if (session === sessionVersion) $("work-order-error").textContent = e instanceof Error ? e.message : "Work orders unavailable."; }
+  };
+  $("work-order-file").onclick = async () => {
+    const order = selectedOrder, session = sessionVersion;
+    if (!order?.ready || workOrderFiling || $("work-order-file").disabled) return;
+    if (!confirm("File " + usdc(order.amount) + " for " + order.note + "? This uses the work order's fixed terms and requires owner approval.")) return;
+    workOrderFiling = true; $("work-order-file").disabled = true;
+    $("work-order-file").textContent = "Filing work order invoice…";
+    $("work-order-status").textContent = "Waiting for the provider. Keep this work order open to follow its existing payment.";
+    try {
+      const result = await call("POST", "/api/work-orders/" + order.id + "/file", {});
+      if (session !== sessionVersion) return;
+      $("work-order-status").textContent = wordsFor(result.status)?.[0] || result.status;
+    } catch (e) {
+      if (session === sessionVersion) $("work-order-error").textContent = e instanceof Error ? e.message : "Outcome unavailable. Follow this same work order.";
+    } finally {
+      workOrderFiling = false;
+      if (session === sessionVersion) await refreshWorkOrder(order.id);
     }
   };
   const { account, agreed } = await call("GET", "/api/session");

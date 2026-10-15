@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { setTimeout } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { decodeSignedDelegateAction, generateKey } from "near-kit";
-import { TSX } from "./fixtures/harness.js";
+import { temporaryDirectories, TSX } from "./fixtures/harness.js";
+
+const scratch = temporaryDirectories();
 
 const fixture = fileURLToPath(new URL("./fixtures/dao-delegate-race.ts", import.meta.url));
 const key = "ed25519:11111111111111111111111111111111";
@@ -35,7 +36,7 @@ function saved(dir: string, id: string) {
 }
 
 test("simultaneous instances cannot persist competing delegates for one owner", { timeout: 20_000 }, async () => {
-  const dir = mkdtempSync(join(tmpdir(), "dao-delegate-race-"));
+  const dir = scratch.create("dao-delegate-race");
   const writers = [start(dir, "one")];
   try {
     const deadline = Date.now() + 10_000;
@@ -62,7 +63,7 @@ test("simultaneous instances cannot persist competing delegates for one owner", 
 });
 
 test("lost owner-key lock refuses persistence and a later process can retry", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "dao-delegate-lock-loss-"));
+  const dir = scratch.create("dao-delegate-lock-loss");
   const result = await start(dir, "one", key, "lose-lock").done;
   assert.match(result.refused ?? "", /delegate preparation lock lost/);
   assert.equal(existsSync(join(dir, ".owner-intents", ".env.one.json")), false);
@@ -70,7 +71,7 @@ test("lost owner-key lock refuses persistence and a later process can retry", as
 });
 
 for (const outcome of ["success", "failed", "payout", "unknown"]) test(`peer recovery controls delegate admission: ${outcome}`, async () => {
-  const dir = mkdtempSync(join(tmpdir(), "dao-delegate-recovery-"));
+  const dir = scratch.create("dao-delegate-recovery");
   assert.deepEqual(await start(dir, "one", key, "none").done, { prepared: "one" });
   const file = join(dir, ".owner-intents", ".env.one.json");
   const records = JSON.parse(readFileSync(file, "utf8"));
@@ -93,7 +94,7 @@ for (const outcome of ["success", "failed", "payout", "unknown"]) test(`peer rec
 });
 
 test("a later instance refuses once the first owner's delegate is durably prepared", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "dao-delegate-serial-"));
+  const dir = scratch.create("dao-delegate-serial");
   assert.deepEqual(await start(dir, "one", key, "none").done, { prepared: "one" });
   const second = await start(dir, "two", key, "none").done;
   assert.match(second.refused ?? "", /Another owner action.*waiting/);
@@ -101,14 +102,14 @@ test("a later instance refuses once the first owner's delegate is durably prepar
 });
 
 test("another owner key can prepare independently of the first owner's pending delegate", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "dao-delegate-other-owner-"));
+  const dir = scratch.create("dao-delegate-other-owner");
   assert.deepEqual(await start(dir, "one", key, "none").done, { prepared: "one" });
   assert.deepEqual(await start(dir, "two", generateKey().publicKey.toString(), "none").done, { prepared: "two" });
   assert.notEqual(saved(dir, "one").action.senderId, saved(dir, "two").action.senderId);
 });
 
 for (const chainNonce of [41, 42]) test(`unresolved submitted peer blocks new preparation (observed chain nonce ${chainNonce})`, async () => {
-  const dir = mkdtempSync(join(tmpdir(), "dao-delegate-submitted-"));
+  const dir = scratch.create("dao-delegate-submitted");
   assert.deepEqual(await start(dir, "one", key, "none").done, { prepared: "one" });
   const file = join(dir, ".owner-intents", ".env.one.json");
   const first = JSON.parse(readFileSync(file, "utf8"));
@@ -123,3 +124,6 @@ for (const chainNonce of [41, 42]) test(`unresolved submitted peer blocks new pr
   assert.equal(saved(dir, "one").action.nonce, 42n);
   assert.equal(existsSync(join(dir, "two.checked")), false);
 });
+
+// Remove state only after this suite has released its locks and stopped its processes.
+after(scratch.cleanup);

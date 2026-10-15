@@ -42,7 +42,7 @@ const pay = (recipient = "payee.near", amount = USDC(1), asset: string = ASSETS.
 function facts(purpose: Purpose, change: Record<string, unknown> = {}): never {
   const base = {
     treasury: { ...common(treasury, "treasury:anything"), plan: null, strategy, tokens },
-    autopilot: { ...common(treasury, `treasury:${strategyLabelSuffix(strategy)}`), plan: null, strategy, tokens, submittedSwapUsd: 0 },
+    autopilot: { ...common(treasury, `treasury:${strategyLabelSuffix(strategy)}`), plan: null, strategy, tokens, submittedSwapValues: [] },
     payout: { ...common(payout, "payout"), available: USDC(100), heldPayouts: [] },
     invoice: { ...common(payout, "invoices"), available: USDC(100) },
     approval: common(payout, null),
@@ -194,12 +194,14 @@ test("automatic swaps require known cumulative plan value, while manual swaps an
   const planned = { plan, leg };
   const shield: Action = { method: "shield", request: { asset: ASSETS.wNEAR, amount: NEAR(1) } };
   for (const action of [swap(), shield]) {
-    assert.equal(code("autopilot", action, { plan: planned, submittedSwapUsd: 8 }), "ok");
-    assert.equal(code("autopilot", action, { plan: planned, submittedSwapUsd: 8.01 }), "autopilot_limit_exceeded");
+    assert.equal(code("autopilot", action, { plan: planned, submittedSwapValues: [8] }), "ok");
+    assert.equal(code("autopilot", action, { plan: planned, submittedSwapValues: [8.01] }), "autopilot_limit_exceeded");
     for (const value of [null, undefined, NaN, Infinity, -1])
-      assert.equal(code("autopilot", action, { plan: planned, submittedSwapUsd: value }), "valuation_unavailable");
-    assert.equal(code("treasury", action, { plan: planned, submittedSwapUsd: 100 }), "ok");
+      assert.equal(code("autopilot", action, { plan: planned, submittedSwapValues: [value] }), "valuation_unavailable");
+    for (const unavailable of [null, undefined])
+      assert.equal(code("autopilot", action, { plan: planned, submittedSwapValues: unavailable }), "valuation_unavailable");
+    assert.equal(code("treasury", action, { plan: planned, submittedSwapValues: [100] }), "ok");
   }
   assert.equal(code("autopilot", swap()), "valuation_unavailable", "no plan cannot imply an unused ceiling");
-  assert.equal(code("autopilot", shield, { submittedSwapUsd: null }), "ok", "a sweep does not consume the swap ceiling");
+  assert.equal(code("autopilot", shield, { submittedSwapValues: null }), "ok", "a sweep does not consume the swap ceiling");
 });

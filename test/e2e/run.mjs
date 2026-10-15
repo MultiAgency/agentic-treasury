@@ -38,6 +38,13 @@ writeFileSync(join(artifacts, 'manifest.json'), JSON.stringify({ node: process.v
 const exploring = process.argv[2] === '--explore';
 const challenging = process.argv[2] === '--challenge';
 if (challenging && process.argv.length !== 3) throw new Error('Challenge runs require the complete baseline; no filters allowed.');
+if (challenging) {
+  const listed = spawnSync(process.execPath, [join(root, 'node_modules/@playwright/test/cli.js'), 'test', '-c',
+    'test/e2e/playwright.config.mjs', '--list', '--reporter=json'], { cwd: snapshot, env, encoding: 'utf8' });
+  if (listed.status !== 0) throw new Error(`Cannot discover the challenge baseline: ${listed.stderr}`);
+  // Discovery comes from the same isolated source/configuration, before executing any cases.
+  writeFileSync(join(artifacts, 'baseline-list.json'), listed.stdout);
+}
 const result = run(process.execPath, exploring ? ['test/e2e/explore.mjs', ...process.argv.slice(3)] : [join(root, 'node_modules/@playwright/test/cli.js'), 'test', '-c', 'test/e2e/playwright.config.mjs', ...(challenging ? [] : process.argv.slice(2))]);
 process.exitCode = result.status ?? 1;
 if (challenging && result.status === 0) process.exitCode = runChallenges({ snapshot, artifacts, env, root }) ? 0 : 1;

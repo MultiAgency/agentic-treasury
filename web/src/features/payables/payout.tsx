@@ -2,9 +2,9 @@ import { Link, type LinkProps } from "@tanstack/react-router";
 import { useEffect, useId, useRef, useState } from "react";
 import { client, fromUnits, toUnits, type Overview, useAttempt } from "../../shared/lib";
 import { type Destination, type Setup, useOwnerAction, useSigner } from "../owner/owner";
-import { Badge, Button, Details, input, StatusBadge } from "../../shared/ui";
+import { Badge, Button, Details, input, reviewDialog, StatusBadge } from "../../shared/ui";
 import { Field } from "../../shared/form";
-import { useIsOperator } from "../../app/viewer";
+import { useCanCall } from "../../app/viewer";
 import { refusalText } from "../../shared/words";
 import type { ReviewedPolicy } from "../../../../src/mandate";
 import { reviewedPolicyOf, sameReviewedPolicy } from "../policy/policy-review";
@@ -29,13 +29,13 @@ function cooldownLeft(data: Overview) {
 /** Owner-signed edits to the destination list, shared by returns and payees. */
 export function useDestinations(data: Overview, setup: Setup) {
   const action = useOwnerAction(setup);
-  const { canSign: isOwner, needsWallet, connectedNotOwner } = useSigner(setup);
+  const { canSign: isOwner, viaDao, needsWallet, connectedNotOwner } = useSigner(setup);
   const ownerAccount = setup.owner?.type === "near" ? ` (${setup.owner.account_id})` : "";
   const signerHelp = needsWallet
     ? `Connect the owner’s wallet${ownerAccount} to change agreed payees.`
     : connectedNotOwner
       ? `Switch to the owner’s wallet${ownerAccount} to change agreed payees.`
-      : "Only the owner can change the agreed payees.";
+      : viaDao ? "Your account cannot propose a change to the agreed payees." : "Only the owner can change the agreed payees.";
   const current = destinationsOf(data);
   const cooldown = cooldownLeft(data);
   const expectedPolicy = reviewedPolicyOf(data);
@@ -119,7 +119,7 @@ export type PaymentReviewData = {
 export function PaymentReview({ payment, currentPolicy, permitted, onClose, onConfirm }: {
   payment: PaymentReviewData;
   currentPolicy: ReviewedPolicy | undefined;
-  /** Cross-agent funding uses the target agent's operator permission. */
+  /** Cross-agent funding uses the target agent's payment permission. */
   permitted?: boolean;
   onClose: () => void;
   onConfirm: (request: Parameters<typeof client.pay>[0]) => void;
@@ -127,8 +127,8 @@ export function PaymentReview({ payment, currentPolicy, permitted, onClose, onCo
   const id = useId();
   const dialog = useRef<HTMLDialogElement>(null);
   const submitted = useRef(false);
-  const operator = useIsOperator();
-  const allowed = permitted ?? operator;
+  const canPay = useCanCall("pay");
+  const allowed = permitted ?? canPay;
   const stale = !sameReviewedPolicy(payment.expectedPolicy, currentPolicy);
   useEffect(() => {
     const trigger = document.activeElement as HTMLElement | null;
@@ -140,8 +140,8 @@ export function PaymentReview({ payment, currentPolicy, permitted, onClose, onCo
   const { request } = payment;
   return <dialog ref={dialog} aria-labelledby={`${id}-title`} aria-describedby={`${id}-description`}
     onCancel={(e) => { e.preventDefault(); onClose(); }}
-    className="m-auto max-h-[90dvh] overflow-y-auto overscroll-contain w-[calc(100%-2rem)] max-w-md rounded-3xl border bg-card p-6 text-foreground shadow-xl backdrop:bg-black/40">
-    <div className="flex min-w-0 flex-col gap-5">
+    className={reviewDialog}>
+    <div className="flex min-w-0 flex-col gap-6">
       <h2 id={`${id}-title`} className="text-xl font-semibold">Review payment</h2>
       <p id={`${id}-description`} className="text-sm text-muted-foreground">Confirming submits this payment on mainnet under the agent's grant. The server and provider re-check authorization.</p>
       <dl className="flex flex-col gap-3 text-sm">

@@ -1,12 +1,14 @@
+import { temporaryDirectories } from "./fixtures/harness.js";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, mock, test } from "node:test";
+import { after, afterEach, beforeEach, mock, test } from "node:test";
 import { generateKey } from "near-kit";
 import { api } from "../src/api.js";
 import { signingRequest } from "../src/dao-owner.js";
 import { followDaoVotes, status, submit } from "../src/owner-intents.js";
+
+const scratch = temporaryDirectories();
 
 /**
  * A DAO's owner signature is found on chain once its vote passes, verified against the prepared hash,
@@ -35,7 +37,7 @@ function chainWith(signature: Uint8Array) {
 }
 
 beforeEach(async () => {
-  process.chdir(mkdtempSync(join(tmpdir(), "dao-signature-")));
+  process.chdir(scratch.create("dao-signature"));
   mkdirSync(".owner-intents");
   process.env.TREASURY_ACCOUNT = "fixture.sputnik-dao.near";
   submitted = [];
@@ -68,3 +70,6 @@ test("a DAO's intent can't be submitted from the browser with a signature of its
   await assert.rejects(submit(id, { signature: "x" }), /wasn't prepared for a wallet's signature/);
   assert.deepEqual(submitted, []);
 });
+
+// Remove state only after this suite has released its locks and stopped its processes.
+after(scratch.cleanup);

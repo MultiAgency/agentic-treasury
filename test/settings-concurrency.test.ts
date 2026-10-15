@@ -1,21 +1,22 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { setTimeout } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
-import { TSX } from "./fixtures/harness.js";
+import { temporaryDirectories, TSX } from "./fixtures/harness.js";
+
+const scratch = temporaryDirectories();
 
 const fixture = fileURLToPath(new URL("./fixtures/settings-writer.ts", import.meta.url));
 for (const alias of [false, true]) test(`competing settings updates preserve a schedule stop and grant (symlink: ${alias})`, async () => {
-  const dir = mkdtempSync(join(tmpdir(), "settings-race-"));
+  const dir = scratch.create("settings-race");
   writeFileSync(join(dir, ".env"), "AUTOPILOT=on\nAGENT_GRANT_TOKEN=old-fixture\n");
   if (alias) symlinkSync(".env", join(dir, ".env.alias"));
   const env = { ...process.env, ENV_FILE: ".env" };
-  const writer = spawn(TSX, [fixture, JSON.stringify({ AGENT_GRANT_TOKEN: "new-fixture" }), "pause"], { cwd: dir, env, stdio: "pipe" });
+  const writer = spawn(TSX, [fixture, JSON.stringify({ AGENT_GRANT_TOKEN: "new-fixture" }), "pause"], { cwd: dir, env, stdio: "pipe", timeout: 15_000 });
   let errors = "";
   writer.stderr.on("data", data => { errors += data; });
   const exited = new Promise<number | null>((resolve, reject) => { writer.on("exit", resolve); writer.on("error", reject); });
@@ -40,3 +41,6 @@ for (const alias of [false, true]) test(`competing settings updates preserve a s
   assert.equal(retried.status, 0, retried.stderr);
   assert.deepEqual({ ...parseEnv(readFileSync(join(dir, ".env"), "utf8")) }, { AUTOPILOT: "", AGENT_GRANT_TOKEN: "new-fixture" });
 });
+
+// Remove state only after this suite has released its locks and stopped its processes.
+after(scratch.cleanup);

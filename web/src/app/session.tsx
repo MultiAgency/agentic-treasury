@@ -7,8 +7,8 @@ import { type GatewayViewer, useViewer } from "./viewer";
 import { signChallenge, signOutMember } from "../features/owner/wallet";
 
 /** An agent behind the gateway and the account it answers to; `dao` when that account is a DAO, signing by proposal. */
-export type GatewayAgent = { name: string; owner: string; dao: boolean; area?: Area };
-export type Gateway = { agents: GatewayAgent[]; invoices: string | null; viewer: GatewayViewer | null };
+export type GatewayAgent = { name: string; owner: string; dao: boolean; area?: Area; invoices?: string | null };
+export type Gateway = { agents: GatewayAgent[]; invoices: string | null; viewer: GatewayViewer | null; walkthroughs?: boolean; selfService?: boolean };
 
 /** The agents' owners, each once, in order. Signed out, the gateway lists only DAOs' agents, so these are DAOs. */
 export const ownersOf = (agents: GatewayAgent[]) => [...new Set(agents.map((a) => a.owner))];
@@ -16,7 +16,7 @@ export const ownersOf = (agents: GatewayAgent[]) => [...new Set(agents.map((a) =
 /**
  * The gateway's view of this visitor, or null when the page is served by a local agent server, which
  * answers /gw/me with the page itself. An error from a gateway, or from the proxy in front of it,
- * throws: a hosted page must never fall back to the local view, which assumes the operator on loopback.
+ * throws: a hosted page must never fall back to the trusted local view on loopback.
  */
 export async function loadGateway(): Promise<Gateway | null> {
   const response = await fetch("/gw/me");
@@ -36,7 +36,7 @@ export async function signOut() {
   location.assign("/");
 }
 
-export function SignIn({ daos, compact = false }: { daos: string[]; compact?: boolean }) {
+export function SignIn({ daos, compact = false, selfService = false }: { daos: string[]; compact?: boolean; selfService?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const signIn = async () => {
@@ -68,10 +68,9 @@ export function SignIn({ daos, compact = false }: { daos: string[]; compact?: bo
   return (
     <Card>
       <div className="flex flex-col gap-2">
-        <h2 className="text-xl font-semibold">Members</h2>
+        <h2 className="text-xl font-semibold">{selfService ? "Sign in to get started" : "Members"}</h2>
         <p className="text-sm text-muted-foreground">
-          Sign in with the NEAR wallet that owns an agent here{daos.length > 0 && `, or as a member of ${daos.join(" or ")}`}. You sign
-          a message, not a transaction: nothing is sent on chain.
+          {selfService ? "Sign in with your regular NEAR wallet. You can then create an agent owned by that wallet, or select a DAO through Trezu using your member account." : <>Sign in with the NEAR wallet that owns an agent here{daos.length > 0 && `, or as a member of ${daos.join(" or ")}`}.</>} Signing in sends nothing on chain.
         </p>
       </div>
       {action}
@@ -88,7 +87,7 @@ export function ViewerBadge() {
         <span className="truncate" title={viewer.account}>
           {viewer.account}
         </span>
-        <span className="text-muted-foreground">{viewer.role === "operator" ? "Operator" : "Member · read and propose"}</span>
+        <span className="text-muted-foreground">Signed in</span>
       </div>
       <Button variant="ghost" size="sm" onClick={signOut} aria-label="Sign out">
         <SignOut size={16} />

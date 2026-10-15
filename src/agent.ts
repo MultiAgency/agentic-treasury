@@ -3,7 +3,7 @@ import { api, waitForStatus } from "./api.js";
 import { agentId, executes } from "./env.js";
 import { assertCanDispatch, assertMoneyLock, type MoneyLock, withMoneyLock } from "./lock.js";
 import { mandateDigest, type ReviewedPolicy } from "./mandate.js";
-import { AuthorizationHeld, claimSubmission, isHeld, provenRefusal, readOps, record, submittedSwapUsd } from "./ops.js";
+import { AuthorizationHeld, claimSubmission, isHeld, provenRefusal, readOps, record, submittedSwapValues } from "./ops.js";
 import { authorize, type Case, type Purpose } from "./authorize.js";
 import type { Plan, PlannedAction } from "./plans.js";
 import { loadStrategy } from "./strategy.js";
@@ -12,6 +12,7 @@ import { liveGrant } from "./grants.js";
 import { rawBalance } from "./holdings.js";
 import { tokenUsd } from "./valuation.js";
 import { refusalDetails } from "./provider-display.js";
+import { workOrderDispatchProblem } from "./work-order-binding.js";
 
 /** Every money action runs under the agent's grant, never the owner's key. */
 export function agent() {
@@ -116,6 +117,11 @@ export async function dispatch(lock: MoneyLock, kind: string, action: Action, se
   // The provider enforces most of the policy itself; `authorize` refuses what it can't tell apart or
   // doesn't check (what a swap buys, a grant's purpose, a public or duplicate payout, a changed plan).
   const grant = liveGrant(grants, process.env.AGENT_GRANT_TOKEN);
+  const orderProblem = workOrderDispatchProblem(action, preparedKey, policy, grant, now);
+  if (orderProblem) {
+    record({ idempotencyKey, refused: "work_order_binding" });
+    throw new LocalRefusal("work_order_binding", orderProblem);
+  }
   // A payout or invoices grant only transfers: anything else it sends is judged, and refused, as treasury work.
   const payoutGrant = grant?.label === "payout" || grant?.label === "invoices";
   const purpose: Purpose = preparedKey ? "invoice"
@@ -128,7 +134,7 @@ export async function dispatch(lock: MoneyLock, kind: string, action: Action, se
   const available = ((shielded ? rawBalance(shielded, asset) : 0n) - reserved).toString();
   const judged: Case = purpose === "autopilot"
     ? { purpose, facts: { ...common, plan: sending?.planned ?? null, strategy: loadStrategy(), tokens,
-      submittedSwapUsd: sending?.planned ? submittedSwapUsd(priorOps, sending.planned.plan.id) : null } }
+      submittedSwapValues: sending?.planned ? submittedSwapValues(priorOps, sending.planned.plan.id) : null } }
     : purpose === "treasury"
       ? { purpose, facts: { ...common, plan: sending?.planned ?? null, strategy: loadStrategy(), tokens } }
       : purpose === "payout"

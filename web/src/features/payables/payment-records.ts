@@ -7,6 +7,7 @@ type Sources = {
   held?: (Identity & { request: Record<string, unknown>; approvalId: string })[];
   ownerActions?: { payment: { correlationId: string } | null }[];
   pending?: { payment: { correlationId: string } | null; expiresAt: string }[];
+  invoices?: { at: string; operation: { correlationId?: string; request: Record<string, unknown> } }[];
 };
 
 /** Independent sources may be absent. Never replace known terms with an identity-only observation. */
@@ -20,6 +21,11 @@ export function paymentRecords(sources: Sources, remembered: ReadonlyMap<string,
   for (const action of sources.ownerActions ?? []) if (action.payment) merge(action.payment.correlationId, { at: "" });
   for (const pending of sources.pending ?? []) {
     if (pending.payment && Date.parse(pending.expiresAt) >= since) merge(pending.payment.correlationId, { at: "" });
+  }
+  // An invoice's local identity and idempotency key are never provider payment references.
+  for (const invoice of sources.invoices ?? []) {
+    if (invoice.operation.correlationId)
+      merge(invoice.operation.correlationId, { at: invoice.at, request: invoice.operation.request });
   }
   // Activity includes swaps and shields too. A transfer's recorded request identifies its payee.
   for (const operation of sources.activity ?? []) {

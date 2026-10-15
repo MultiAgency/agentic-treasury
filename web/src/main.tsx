@@ -1,4 +1,4 @@
-import { gatewayQueries, redactProposalCaches } from "./app/queries";
+import { clearAgentCapabilities, gatewayQueries, redactProposalCaches } from "./app/queries";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { StrictMode, Suspense, lazy, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
@@ -10,7 +10,6 @@ import { deniedAt, onAccessDenial, recheckAccess, useAccessState } from "./share
 import "./styles.css";
 
 const AuthenticatedApp = lazy(() => import("./app/authenticated-app").then(module => ({ default: module.AuthenticatedApp })));
-const PrototypeExplorer = lazy(() => import("./public/prototype-explorer").then(module => ({ default: module.PrototypeExplorer })));
 
 // Follow the system theme.
 const dark = matchMedia("(prefers-color-scheme: dark)");
@@ -20,7 +19,8 @@ dark.addEventListener("change", applyTheme);
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false } } });
 onAccessDenial(denial => {
-  if (denial.scope !== "procedure") {
+  if (denial.scope === "procedure") clearAgentCapabilities(queryClient, denial.base);
+  else {
     redactProposalCaches(queryClient);
     const name = denial.base.slice("/a/".length);
     const affected = (query: { queryKey: readonly unknown[] }) => {
@@ -33,9 +33,7 @@ onAccessDenial(denial => {
     // Discard late reads as well as cached observations; unrelated agents keep their records.
     void queryClient.cancelQueries({ predicate: affected }).then(() => queryClient.removeQueries({ predicate: affected }));
   }
-  // Infinity permits explicit invalidation; static staleTime would ignore it.
-  void queryClient.invalidateQueries({ queryKey: ["gateway"], exact: true });
-  void queryClient.invalidateQueries({ queryKey: ["gw", "me"], exact: true });
+  void queryClient.invalidateQueries({ queryKey: gatewayQueries.session.queryKey, exact: true });
 });
 
 /**
@@ -45,7 +43,7 @@ onAccessDenial(denial => {
  */
 function GatewayPage({ activity }: { activity: boolean }) {
   const access = useAccessState();
-  const query = useQuery({ ...gatewayQueries.entry });
+  const query = useQuery(gatewayQueries.session);
   if (query.isPending) return <main className="mx-auto max-w-xl p-8"><Loading label="Loading dashboard…" /></main>;
   if (query.isError && query.data === undefined) return <main className="mx-auto flex max-w-xl flex-col items-start gap-4 p-8">
     <h1 className="text-xl font-semibold">Dashboard unavailable</h1>
@@ -68,13 +66,13 @@ function GatewayPage({ activity }: { activity: boolean }) {
       .filter(([name]) => !deniedAt(access, `/a/${name}`))) },
   } : gateway;
   const content = gateway && !gateway.viewer ? (
-    <PublicHome daos={ownersOf(gateway.agents)} invoices={gateway.invoices} />
+    <PublicHome daos={ownersOf(gateway.agents)} selfService={gateway.selfService} />
   ) : (
     <AuthenticatedApp gateway={visibleGateway} activity={activity} />
   );
   return <>
     {query.error && <div role="alert" className="flex flex-wrap items-center gap-3 border-b p-4 text-sm">
-      <p>Workspace permissions could not be refreshed. Records for denied agents remain hidden.</p>
+      <p>Workspace permissions could not be refreshed. Denied actions wait for refreshed permissions. Records for denied agents remain hidden.</p>
       <Button variant="outline" disabled={query.isFetching} onClick={() => query.refetch()}>Retry permissions</Button>
     </div>}
     {hiddenAgents && !query.error && <div role="status" className="flex flex-wrap items-center gap-3 border-b p-4 text-sm">
@@ -91,8 +89,6 @@ const subscribeHash = (notify: () => void) => {
 };
 function App() {
   const hash = useSyncExternalStore(subscribeHash, () => location.hash);
-  const example = hash.match(/^#\/explore\/(payables|treasury)(?:\/([^/?#]+))?\/?$/);
-  if (example) return <PrototypeExplorer key={example[1]} area={example[1] as "payables" | "treasury"} page={example[2] || "overview"} />;
   return <GatewayPage activity={hash === "#activity"} />;
 }
 

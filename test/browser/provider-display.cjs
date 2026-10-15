@@ -21,7 +21,7 @@ const root = require('node:path').resolve(process.argv[2] || 'web/dist');
         const u = new URL(route.request().url()), p = u.pathname;
         if (u.hostname !== 'frontend.test') return route.abort();
         if (p === '/gw/me') return route.fulfill({ json: { agents: [{ name: 'fixture', owner: 'owner.near', dao: false }], invoices: null,
-          viewer: { account: 'owner.near', access: { fixture: { role: 'operator', canPropose: true, canVote: true } } } } });
+          viewer: { account: 'owner.near', access: { fixture: { canSign: true, canPropose: true, canVote: true, canExecute: true, canManage: true } } } } });
         if (p.includes('/rpc/')) {
           const method = p.split('/rpc/')[1];
           if (['pay', 'owner/prepare', 'owner/submit'].includes(method)) writes.push(method);
@@ -31,7 +31,7 @@ const root = require('node:path').resolve(process.argv[2] || 'web/dist');
             overview: { agentId: 'fixture', digest: 'sha256:' + 'a'.repeat(64), notInForce: null, agreed: ['payee.near'], grants: [], unmanaged: [], target: { [USDC]: 1 }, rebalance: { minLegUsd: 1, maxCostBps: 100 },
               book: [...(budget ? [{ asset: 'nep141:wrap.near', symbol: 'wNEAR', decimals: 24, public: '0', confidential: '0', price: 1, usd: 0 }] : []), { asset: USDC, symbol: 'USDC', decimals: 6, public: '0', confidential: '10000000', price: scenario === 'no-price' ? null : 1, usd: scenario === 'no-price' ? null : 10, priceUpdatedAt: at, priceExpiresAt: expires }],
               policy: { status: 'APPLIED', revision: 1, policy: { actions: payment ? ['transfer'] : ['swap', 'transfer'], owner_approval: true, frozen: false, destinations: { mode: 'only', list: [{ action: 'transfer', address: 'payee.near', confidential: true }] }, assets: [USDC], budget: {}, limits: {} }, usage: { budget: {} }, cooldowns: {} } },
-            'treasury/get': null, held: [], unresolved: [], 'inbox/list': [], 'agreements/list': [], activity: [], 'owner/pending': [], 'owner/actions': [],
+            'treasury/get': null, held: [], unresolved: [], 'inbox/list': [], 'workOrders/list': [], 'agreements/list': [], activity: [], 'owner/pending': [], 'owner/actions': [],
             paymentHistory: { items: payment ? [{ correlationId: 'payment', at }] : [], complete: true },
             paymentStatus: { status: 'REFUNDED', failureCode: null, createdAt: at, updatedAt: at, request: { asset: USDC, recipient: 'payee.near', amount: '1000000', confidential: true }, approvalId: null, expiresAt: null, detailError: null,
               evidence: scenario === 'evidence' ? evidence : { txHash: null, destinationTxHash: null, refundTxHash: null, refundTo: null, refundedAmount: null } },

@@ -4,7 +4,7 @@ import { BASE } from "../shared/client";
 import { kindOf } from "../shared/format";
 import { queries } from "../shared/queries";
 import { Button } from "../shared/ui";
-import { AREA_NAV, areaPageTitle } from "./navigation";
+import { AreaNavigation, type TaskLink } from "./area-navigation";
 import { type Gateway, type GatewayAgent, ownersOf, ViewerBadge } from "./session";
 
 const WorkspaceContext = createContext(false);
@@ -16,9 +16,6 @@ export function areaName(agent: GatewayAgent) {
 const desktopQuery = matchMedia("(min-width: 1024px)");
 const subscribeDesktop = (notify: () => void) => { desktopQuery.addEventListener("change", notify); return () => desktopQuery.removeEventListener("change", notify); };
 
-type Task = (typeof AREA_NAV)["treasury"][number];
-type TaskLink = (task: Task, className: string, close: () => void) => ReactNode;
-
 /** One hierarchy; cross-agent anchors deliberately keep client/cache isolation at document boundaries. */
 export function Workspace({ gateway, activity = false, pathname = location.pathname, taskLink, children }: {
   gateway: Gateway; activity?: boolean; pathname?: string; taskLink?: TaskLink; children: ReactNode;
@@ -29,10 +26,13 @@ export function Workspace({ gateway, activity = false, pathname = location.pathn
   const trigger = useRef<HTMLButtonElement>(null);
   const observed = useQuery({ ...queries.overview, enabled: false });
   const current = gateway.agents.find(agent => BASE === `/a/${agent.name}`);
+  // The router supplies an area-relative pathname; gateway callers use the full URL path.
+  const path = (BASE && (pathname === BASE || pathname.startsWith(`${BASE}/`))
+    ? pathname.slice(BASE.length) : pathname).replace(/\/$/, "") || "/";
   const currentKind = current?.area ? current.area === "payables" ? "facilitator" : "treasury"
     : observed.data ? kindOf(observed.data) : current && areaName(current) === "Payables" ? "facilitator"
       : current && areaName(current) === "Portfolio" ? "treasury" : undefined;
-  const title = current ? `${areaName(current)} · ${currentKind ? areaPageTitle(currentKind, pathname) : "Agent"}` : activity ? "Activity" : "Home";
+  const title = current ? areaName(current) : "Agentic Treasury";
   const close = () => drawer.current?.close();
   const leave = () => { restoreFocus.current = false; close(); };
   useEffect(() => { if (drawer.current?.open) leave(); }, [pathname, activity]);
@@ -51,22 +51,27 @@ export function Workspace({ gateway, activity = false, pathname = location.pathn
       const selected = agent.name === current?.name;
       const label = areaName(agent);
       const duplicate = areas.filter(a => areaName(a) === label).length > 1;
-      const kind = selected ? currentKind : agent.area ? agent.area === "payables" ? "facilitator" : "treasury" : undefined;
       return <div key={agent.name}>
-        {anchor(`/a/${agent.name}/`, duplicate ? `${label} (${agent.name} · ${agent.owner})` : label, selected)}
-        {selected && <nav aria-label="Area" className="ml-3 flex flex-col border-l pl-2">
-          {(kind ? AREA_NAV[kind] : AREA_NAV.treasury.filter(t => t.to === "/" || t.to === "/activity")).map(task => {
-            const path = pathname.slice(BASE.length).replace(/\/$/, "") || "/";
-            const active = path === task.to || task.to === "/" && path === "/follow/payment";
-            const className = `${style(active)} ${task.to === "/funding" ? "mt-3 border-t pt-3" : ""}`;
-            return <div key={task.to}>{taskLink ? taskLink(task, className, leave) : anchor(`${BASE}${task.to}`, task.label, active)}</div>;
-          })}
-        </nav>}
+        {anchor(`/a/${agent.name}/`, duplicate ? `${label} (${agent.name} · ${agent.owner})` : label, selected && path !== "/activity" && path !== "/follow/run")}
       </div>;
     })}
-    {anchor("/#activity", "Activity", !BASE && activity)}
+    {anchor("/#activity", "Activity", !BASE && activity || Boolean(BASE) && (path === "/activity" || path === "/follow/run"))}
   </nav>;
   const identity = <div className="min-w-0"><a href="/" className="font-heading text-lg font-semibold">Agentic Treasury</a><p className="mt-2 break-all text-xs text-muted-foreground">{current?.owner ?? (ownersOf(gateway.agents).join(" · ") || "Workspace")}</p></div>;
+  if (gateway.walkthroughs) return <WorkspaceContext.Provider value={true}>
+    <div className="min-h-dvh">
+      <a href={BASE ? "#agent-main" : "#workspace-main"} className="sr-only focus:not-sr-only">Skip to main content</a>
+      <header className="border-b px-4 py-4 sm:px-8"><div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-4">
+        <a href="/" className="font-heading text-lg font-semibold">Agentic Treasury</a><ViewerBadge />
+      </div></header>
+      <nav aria-label="Walkthrough navigation" className="mx-auto flex max-w-5xl flex-wrap gap-x-6 gap-y-2 px-4 pt-4 text-sm sm:px-8">
+        <a href="/" className="inline-flex min-h-11 items-center underline">Your agents</a>
+        {current && <a href={`${BASE}/demo`} className="inline-flex min-h-11 items-center underline">Guided walkthrough</a>}
+        <a href={current ? `${BASE}/activity` : "/#activity"} className="inline-flex min-h-11 items-center underline">Activity and recovery</a>
+      </nav>
+      {children}
+    </div>
+  </WorkspaceContext.Provider>;
   return <WorkspaceContext.Provider value={true}>
     <div className="min-h-dvh lg:grid lg:grid-cols-[16rem_minmax(0,1fr)]">
       <a href={BASE ? "#agent-main" : "#workspace-main"} className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:bg-background focus:p-3">Skip to main content</a>
@@ -83,7 +88,10 @@ export function Workspace({ gateway, activity = false, pathname = location.pathn
         <div className="mb-6 flex items-start justify-between gap-3">{identity}<Button autoFocus variant="ghost" onClick={close}>Close</Button></div>
         {navigation}<div className="mt-6 border-t pt-4"><ViewerBadge /></div>
       </dialog>}
-      <div className="min-w-0">{children}</div>
+      <div className="min-w-0">
+        {current && <div className="mx-auto max-w-5xl px-4 pt-5 sm:px-8"><AreaNavigation kind={currentKind} path={path} taskLink={taskLink} /></div>}
+        {children}
+      </div>
     </div>
   </WorkspaceContext.Provider>;
 }

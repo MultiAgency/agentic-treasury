@@ -3,12 +3,12 @@ import { ConfirmButton } from "../owner/confirm-button";
 import { LockKey } from "@phosphor-icons/react";
 
 import { amount, client, useRun } from "../../shared/lib";
-import { useIsOperator } from "../../app/viewer";
+import { useCanCall } from "../../app/viewer";
 import { useAgent } from "../../app/agent-context";
 import { Button, Card, CardHeader, Dot, ErrorBox, Note, Spinner, StatusBadge } from "../../shared/ui";
 
 export function Sweep() {
-  const operator = useIsOperator();
+  const canSweep = useCanCall("sweep");
   const executor = useAgent().setup.executor !== false;
   const grant = useAgent().setup.grant;
   const canShield = grant?.label === "treasury" || Boolean(grant?.label.startsWith("treasury:"));
@@ -46,12 +46,13 @@ export function Sweep() {
         <ErrorBox error={error} />
       </div>
       <div className="mt-auto flex justify-end gap-3">
-        <Button variant="outline" size="sm" disabled={running || !operator || !executor || !canShield} onClick={() => run({ execute: false })}>
+        <Button variant="outline" size="sm" disabled={running || !canSweep || !executor || !canShield} onClick={() => run({ execute: false })}>
           Preview
         </Button>
         <ConfirmButton
+          path="sweep"
           label={running && input?.execute ? <><Spinner /> Shielding</> : "Shield"}
-          disabled={!operator || exposed.length === 0 || running || input?.execute || !executor || !canShield}
+          disabled={!canSweep || exposed.length === 0 || running || input?.execute || !executor || !canShield}
           title="Shield these managed balances?"
           description="Moves the listed public USDC, wNEAR and ETH balances into the agent's confidential balance on mainnet. It stays in the account, out of public view."
           confirm="Shield"

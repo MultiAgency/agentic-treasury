@@ -1,9 +1,7 @@
-import { InvoiceReview } from "../payables/invoice-review";
 import { ManualPayment } from "../payables/payees";
 import { ArrowRight, CheckCircle, WarningCircle, X } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, type LinkProps } from "@tanstack/react-router";
-import { Activity } from "../activity/activity";
+import { Link, useLocation, type LinkProps } from "@tanstack/react-router";
 import { attentionOf } from "../workspace/attention";
 import { Held } from "../payables/held";
 import { PaymentQueue } from "../payables/timeline-payment";
@@ -15,7 +13,7 @@ import { RunPreview } from "./timeline-run";
 import { bindingBudget, PERIOD } from "../../shared/budget";
 import { useNameOf } from "../../shared/names";
 import { ASSET_COLOR, ago, amount, bookValue, client, fromUnits, type Holding, kindOf, type Overview as Book, queries, swaps, units, usd, useAttempt } from "../../shared/lib";
-import { useIsOperator } from "../../app/viewer";
+import { useCanCall } from "../../app/viewer";
 import { useAgent } from "../../app/agent-context";
 import { Details, ErrorBox, Loading, QueryError, Section } from "../../shared/ui";
 import { useValuedBook } from "../../shared/valuation";
@@ -60,13 +58,18 @@ function Figures({ data }: { data: Book }) {
   if (kindOf(data) === "facilitator") {
     const usdc = data.book.find((h) => h.symbol === "USDC");
     return (
-      <div className="grid gap-10 sm:grid-cols-2">
-        <Figure label="Balance" value={usdc ? amount(usdc.confidential, usdc) : "0 USDC"}>
-          <span className="text-sm text-muted-foreground">In the confidential balance, paid out only by vote</span>
+      <section aria-label="Balance and budget" className="flex flex-col gap-3 text-sm">
+        <dl className="flex flex-wrap gap-x-8 gap-y-3">
+          <div><dt className="text-muted-foreground">Confidential balance</dt><dd className="font-medium tabular-nums">{usdc ? amount(usdc.confidential, usdc) : "Not reported"}</dd></div>
+          <div><dt className="text-muted-foreground">{window ? `${PERIOD[window.period]} budget left` : "USD budget"}</dt><dd className="font-medium tabular-nums">{window ? usd(window.remaining_usd) : "No USD budget reported"}</dd></div>
+        </dl>
+        <p className="text-muted-foreground">Reported balances include held funds and do not establish what can be spent. Policy caps and current action checks still apply.</p>
+        <Details summary="Funding and budget details">
+          {window && <p>{usd(window.spent_usd)} of {usd(limit)} spent{window.resets_at && ` · resets ${ago(window.resets_at)}`}</p>}
           <TopUp />
-        </Figure>
-        {budget}
-      </div>
+          <Link to="/funding" className="self-start underline">Review balances and funding</Link>
+        </Details>
+      </section>
     );
   }
   return (
@@ -149,7 +152,8 @@ function useAttention(dismissing: ReturnType<typeof useAttempt>): Item[] {
 }
 
 function Attention() {
-  const operator = useIsOperator();
+  const canRecover = useCanCall("recover");
+  const canDismiss = useCanCall("inbox/dismiss");
   const { data } = useAgent();
   const reads = [useQuery(queries.held), useQuery(queries.inbox), useQuery(queries.unresolved), useQuery({ ...queries.agreements, enabled: kindOf(data) === "facilitator" })];
   const required = kindOf(data) === "facilitator" ? reads : reads.slice(0, 3);
@@ -158,6 +162,13 @@ function Attention() {
   const checked = Math.min(...required.map((q) => q.dataUpdatedAt));
   const dismissing = useAttempt([["inbox"]]);
   const items = useAttention(dismissing);
+
+  if (kindOf(data) === "facilitator" && !items.length && !loading && !unavailable && !dismissing.error) {
+    return <div className="flex flex-col gap-1 text-sm text-muted-foreground">
+      <p>No items need attention in the records checked.</p>
+      {checked > 0 && <p className="text-xs">Last checked {new Date(checked).toLocaleString()}</p>}
+    </div>;
+  }
 
   return (
     <Section title="Needs attention">
@@ -175,7 +186,7 @@ function Attention() {
             const body = (
               <>
                 <WarningCircle size={18} className={`shrink-0 ${item.tone === "destructive" ? "text-destructive-muted-foreground" : item.tone === "info" ? "text-info-muted-foreground" : "text-warning-muted-foreground"}`} />
-                <span className="flex-1">{item.text}{item.action && <span className="block font-medium">{item.action}{!operator && item.action === "Check status" ? " · operator required" : ""}</span>}</span>
+                <span className="flex-1">{item.text}{item.action && <span className="block font-medium">{item.action}{!canRecover && item.action === "Check status" ? " · permission required" : ""}</span>}</span>
               </>
             );
             return (
@@ -188,7 +199,7 @@ function Attention() {
                 ) : (
                   <div className="flex flex-1 items-center gap-3 py-3 text-sm">{body}</div>
                 )}
-                {item.dismiss && operator && (
+                {item.dismiss && canDismiss && (
                   <button type="button" disabled={dismissing.busy} onClick={item.dismiss} className="min-h-11 min-w-11 shrink-0 p-2 text-muted-foreground hover:text-foreground" aria-label="Dismiss">
                     <X size={16} />
                   </button>
@@ -276,26 +287,24 @@ export function Overview() {
   const { data: rawData, setup } = useAgent();
   const data = useValuedBook(rawData);
   const kind = kindOf(data);
+  const hash = useLocation({ select: location => location.hash });
   return (
     <>
       <Attention />
       {kind === "facilitator" ? <>
-        <PaymentQueue />
-        <section id="manual-payment" className="scroll-mt-24"><ManualPayment listed={new Set(destinationsOf(data).map(d => d.address))} /></section>
-        <section id="invoices" className="scroll-mt-24"><InvoiceReview /></section>
+        <section id="manual-payment" className="scroll-mt-24"><ManualPayment listed={new Set(destinationsOf(data).map(d => d.address))} entry open={hash === "manual-payment" || undefined} /></section>
+        <section id="invoices" className="scroll-mt-24"><PaymentQueue /></section>
       </> : <Held data={data} setup={setup} />}
       {kind === "treasury" && <RunPreview />}
-      <p className="text-sm text-muted-foreground">{kind === "treasury" ? "What this demonstrates: recorded Portfolio actions under a policy and grant." : "What this demonstrates: held payouts reviewed and decided by the owner."} <a href="#evidence" className="underline">Inspect evidence and limitations</a></p>
       <Figures data={data} />
       {kind === "treasury" && <Allocation data={data} />}
-      <Details summary="Recent activity">
-        <Activity limit={5} />
-      </Details>
       <section id="evidence" className="scroll-mt-48 flex flex-col gap-4">
         <div className="text-sm"><h2 className="font-semibold">Known limitations</h2>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">{PROTOTYPES[kind].briefs[0].limitations?.map(limitation => <li key={limitation}>{limitation}</li>)}</ul>
         </div>
-        <WhatThisShows kind={kind} dao={setup.dao?.id} openRunning /></section>
+        {kind === "facilitator" ? <Details summary="Requirements and evidence" open={hash === "evidence" || undefined}>
+          <WhatThisShows kind={kind} dao={setup.dao?.id} openRunning={hash === "evidence"} />
+        </Details> : <WhatThisShows kind={kind} dao={setup.dao?.id} openRunning={hash === "evidence"} />}</section>
     </>
   );
 }

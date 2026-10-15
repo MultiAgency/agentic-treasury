@@ -103,8 +103,9 @@ These are catalog targets, not established guarantees. Evidence stages describe 
 ## Run-log adapter and export (offline-tested)
 
 `src/agui.ts` projects a tick and its agent-scoped journal history into a private recording, validated
-against the pinned `@ag-ui/core` 1.0.2 event schemas. Historical recordings use envelope version 1;
-new ticks with intermediate progress use version 2. Both are readable.
+against the pinned `@ag-ui/core` 1.0.2 event schemas. New exports use envelope version 3 and declare
+AG-UI protocol 1.0 separately from the SDK version. Versions 1/2 remain readable as legacy archives;
+they are not retroactively certified as conforming event sequences.
 It imports evidence types only and makes no provider calls, writes, or money decisions.
 `src/journal-history.ts` reads a bounded snapshot of the existing JSONL journal without changing it;
 malformed lines and unavailable history appear as gaps. Only explicit fields enter the recording,
@@ -118,6 +119,16 @@ stage transitions and provider-accepted submissions before their end, via a supp
 file. The before/after books and quoted plan still become available at tick end.
 See [integrated run updates](live-run.md) for the offline-tested behavior and limits.
 
+Version 3 validates lifecycle order as well as event shapes. A recorded end with an open stage
+emits `RUN_ERROR` and an explicit progress gap, never an invented `STEP_FINISHED`. A recorded run
+failure also emits `RUN_ERROR`; its original outcome, refusal and rejections remain in metadata.
+Failure detection follows the current producer's `Failed: ` outcome prefix when no refusal is
+recorded. It is not inferred from operation statuses; the persisted tick format has no separate
+failure enum. A missing tick end stays open. A normally completed refusal may use `RUN_FINISHED`
+once all observed stages have returned. These rules follow the
+[AG-UI 1.0 lifecycle specification](https://docs.ag-ui.com/spec/1.0/events/lifecycle) and are checked
+against an independent lifecycle consumer in offline tests; no live client transport is implemented.
+
 `test/agui.test.ts` and `test/journal-history.test.ts` cover synthetic success, refusal, partial and
 unresolved execution, interrupted ticks, late reconciliation, missing timing, conflicting operation
 associations, schema validation and read-only file access. No real recording has been validated by
@@ -126,8 +137,9 @@ optional **Inspect recording** view steps through historical observations with a
 Previous/Next controls, without timed playback or a live stream. It shows missing timing and source
 gaps, and keeps later journal observations separate from the run's original outcome. It cannot
 replay or authorize an operation. `test/recording-view.test.ts` checks version, identity, size and
-completion semantics. `test/browser/simplicity.cjs` checks synthetic recordings at 320px, 390px and
-1280px with all requests intercepted, including identity refusal and separate later settlement.
+completion semantics. `test/browser/run-history.cjs` checks synthetic recording behavior once,
+including identity refusal and separate later settlement, and resizes the loaded inspector to
+320px, 390px and 1280px. All requests are intercepted.
 These are offline checks, not verification of a deployed inspector or a real recording.
 
 Members can download a recording from the executor using `autopilot.log({ tickId? })`: the selected
@@ -139,8 +151,8 @@ missing selected ID. Approve-only hosts refuse export. Current token metadata is
 enrichment, dated at export, and failure leaves explicit gaps rather than changing historical amounts.
 `test/run-log-export.test.ts` and `test/gateway-denial.test.ts` exercise these behaviors offline.
 
-To save a private recording, open **Runs** in Treasury, then
-**Inspect recording** and **Download recording**. Strategy links to the same full run view. **Run to view** lists
+To save a private recording, follow **View treasury runs** from Portfolio Overview, open **Run details**,
+then choose **Inspect recording** or **Download recording**. Strategy links to the same full run view. **Run to view** lists
 retained runs, including quiet runs. The download requests that run's exact ID and saves a JSON file locally;
 keep real files in `~/agencies/proto-releases`, never the repository or public assets. A tick without
 a recorded end downloads as incomplete, containing its known start and any recorded intermediate events. Downloading does not run or
@@ -158,8 +170,8 @@ reconcile a tick. The browser download flow has been built, but has not been che
 
 ## Strategy setup in the dashboard (offline-tested)
 
-Strategy shows the saved Treasury strategy, with swap limits on demand. An operator on the
-executor edits allocations, schedule and ceiling, reviews them, and saves with the schedule off.
+Strategy shows the saved Treasury strategy, with swap limits on demand. An account with settings
+permission on the executor edits allocations, schedule and ceiling, reviews them, and saves with the schedule off.
 Saving needs no existing grant. A stale save preserves the draft and requires comparing the current
 strategy before reviewing again. The owner then reviews the exact saved strategy and issues its
 digest-bound grant through the existing wallet or DAO flow. Prepared/submitted owner actions remain
@@ -167,7 +179,7 @@ accessible in Activity; a grant outcome is neither schedule enablement nor payme
 A matching live grant can be reused or renewed before expiry through **Review grant renewal**,
 with the schedule off and the same saved strategy digest. Renewal uses the existing owner-signature
 flow; it requires no strategy edit or prior grant revocation and does not enable the schedule.
-An operator explicitly enables the saved strategy afterward.
+An account with execution permission explicitly enables the saved strategy afterward.
 
 Server controls serialize dashboard saves and schedule changes on this host, persist off before
 strategy replacement, reject stale digests, and check policy, held grant and unresolved operations
@@ -178,7 +190,7 @@ endpoint cannot combine settings changes and enablement. Approve-only
 instances cannot configure strategies; Payables has no Treasury setup and retains stop for an
 existing schedule. No state format migration is required.
 
-`test/strategy-controls.test.ts` and `test/browser/schedule.cjs` cover server refusal/failure paths
+`test/strategy-controls.test.ts` and `test/browser/strategy.cjs` cover server refusal/failure paths
 and synthetic wallet/DAO workflows. This is offline-tested behavior, not deployed or mainnet-observed.
 Dispatch still authorizes every operation; the settings lock is not distributed fencing and does not
 coordinate manual file edits or make provider observations atomic with subsequent sends.

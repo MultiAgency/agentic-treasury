@@ -3,13 +3,14 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, request, type ServerResponse } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mayCall } from "./allowlist.js";
+import { isIntervention, mayCall } from "./allowlist.js";
 import { BadRequest, crossSite, readJson, SECURITY_HEADERS, sendFailure, sendJson as json, serveStatic } from "../http.js";
 import { chainKeyLookup, challengeAnswer, clientAddress, hourlyLimit, parseSignIn, sessions, verifySignIn } from "../signin.js";
 import { type AgentEntry, childEnv, hostOf, loadConfig } from "./config.js";
 import { recentSignProposals } from "./proposals.js";
-import { ownerOf, resolveAccess } from "./roles.js";
+import { ownerOf, resolveAccess, resolveAgentAccess } from "./roles.js";
 import { appendSynced } from "../synced.js";
+import { HostedAgents, authorizeSetup, hostedEnvironment, setupRequest, type HostedAgent } from "./hosted-agents.js";
 
 /**
  * The hosted dashboard: the one public process. It signs members in, decides per request what each
@@ -20,6 +21,9 @@ import { appendSynced } from "../synced.js";
  */
 
 const config = loadConfig();
+const hosted = new HostedAgents(".hosted", config.agents);
+// Retain existing reservations even if new self-service setup is later disabled.
+const agents = [...config.agents, ...hosted.list()];
 const PORT = Number(process.env.PORT ?? 8800);
 /** The host members sign in to; DASHBOARD_HOST overrides it, e.g. to test on a provider's domain before DNS moves. */
 const HOST = hostOf(process.env.DASHBOARD_HOST || config.host);
@@ -33,7 +37,7 @@ const session = sessions({ cookie: "dao_session", secret: SECRET, secure: true }
 
 const INTERVENTIONS = join(".evidence", "interventions.jsonl");
 /**
- * Recorded operator calls since `since`, oldest first, and the line numbers that don't parse. An
+ * Recorded interventions since `since`, oldest first, and the line numbers that don't parse. An
  * unreadable line may have been a call, so it is counted, not skipped: the report can't claim none.
  */
 function interventions(since: string) {
@@ -51,8 +55,8 @@ function interventions(since: string) {
 async function viewer(req: IncomingMessage) {
   const account = session.account(req);
   if (!account) return null;
-  const access = await resolveAccess(account, config.agents);
-  return Object.keys(access).length ? { account, access } : null;
+  const access = await resolveAccess(account, agents);
+  return config.selfService || Object.keys(access).length ? { account, access } : null;
 }
 
 /**
@@ -61,7 +65,8 @@ async function viewer(req: IncomingMessage) {
  * since every owner action is an on-chain proposal naming the agent; a wallet's agent is not.
  */
 async function agentsView(me: Awaited<ReturnType<typeof viewer>>) {
-  const all = await Promise.all(config.agents.map(async ({ name, owner, area }) => ({ name, owner, ...(area && { area }), dao: (await ownerOf(owner)).policy !== null })));
+  if (!me && config.walkthroughs) return [];
+  const all = await Promise.all(agents.filter(a => !me || me.access[a.name]).map(async (agent) => ({ name: agent.name, owner: agent.owner, ...(agent.area && { area: agent.area }), ...("kind" in agent && { invoices: null }), dao: (await ownerOf(agent.owner)).policy !== null })));
   return all.filter((a) => (me ? Boolean(me.access[a.name]) : a.dao));
 }
 
@@ -104,8 +109,8 @@ createServer(async (req, res) => {
     if (pathname === "/gw/session" && req.method === "POST") {
       const account = await verifySignIn(parseSignIn(await readJson(req)), HOST, chainKeyLookup).catch((error: Error) => error);
       if (account instanceof Error) return json(res, 401, { error: account.message });
-      const access = await resolveAccess(account, config.agents);
-      if (!Object.keys(access).length) return json(res, 403, { error: `${account} doesn't own any agent here, nor is a member of a DAO that does` });
+      const access = await resolveAccess(account, agents);
+      if (!config.selfService && !Object.keys(access).length) return json(res, 403, { error: `${account} doesn't own any agent here, nor is a member of a DAO that does` });
       return json(res, 200, { account, access }, { "set-cookie": session.open(account) });
     }
     if (pathname === "/gw/logout" && req.method === "POST")
@@ -113,7 +118,20 @@ createServer(async (req, res) => {
 
     if (pathname === "/gw/me") {
       const me = await viewer(req);
-      return json(res, 200, { agents: await agentsView(me), invoices: config.invoices ?? null, viewer: me });
+      return json(res, 200, { agents: await agentsView(me), invoices: config.invoices ?? null, viewer: me, ...(config.walkthroughs && { walkthroughs: true }), ...(config.selfService && { selfService: true }) });
+    }
+
+    if (pathname === "/gw/agents" && req.method === "POST") {
+      const account = session.account(req);
+      if (!account) return json(res, 401, { error: "Sign in first" });
+      if (!config.selfService) return json(res, 403, { error: "New agent setup is disabled on this host" });
+      const parsed = setupRequest.safeParse(await readJson(req));
+      if (!parsed.success) return json(res, 400, { error: "Choose a valid owner, owner type and area" });
+      try { authorizeSetup(account, parsed.data.kind, await ownerOf(parsed.data.owner)); }
+      catch { return json(res, 403, { error: "Owner access could not be verified. Use your own wallet or a DAO where you can propose owner actions." }); }
+      const reserved = hosted.reserve(parsed.data);
+      if (!agents.some(a => a.name === reserved.name)) { agents.push(reserved); start(reserved); }
+      return json(res, 200, { name: reserved.name });
     }
 
     // A DAO's recent signing proposals, for a viewer who may see one of the agents it owns.
@@ -121,19 +139,19 @@ createServer(async (req, res) => {
       const me = await viewer(req);
       if (!me) return json(res, 401, { error: "Sign in first", access: "session" });
       const dao = url.searchParams.get("dao") ?? "";
-      const owned = config.agents.filter((a) => a.owner === dao && me.access[a.name]);
+      const owned = agents.filter((a) => a.owner === dao && me.access[a.name]);
       if (!owned.length) return json(res, 403, { error: `No agent here you may see is owned by ${dao || "that account"}`, access: "procedure" });
       if (!(await ownerOf(dao)).policy) return json(res, 400, { error: `${dao} is not a DAO` });
       return json(res, 200, await recentSignProposals(dao, owned));
     }
 
-    // Operator interventions, for the unattended-run report: who called what, when, on the agents this viewer operates.
+    // Intervention history, including old operator records, for agents this viewer may execute or manage.
     if (pathname === "/gw/interventions") {
       const me = await viewer(req);
-      const operated = new Set(Object.entries(me?.access ?? {}).filter(([, a]) => a.role === "operator").map(([agent]) => agent));
-      if (!operated.size) return json(res, me ? 403 : 401, { error: "Operators only", access: me ? "procedure" : "session" });
+      const operated = new Set(Object.entries(me?.access ?? {}).filter(([, a]) => a.canExecute || a.canManage).map(([agent]) => agent));
+      if (!operated.size) return json(res, me ? 403 : 401, { error: "Execution or management permission required", access: me ? "procedure" : "session" });
       const { calls, corrupt } = interventions(url.searchParams.get("since") ?? "");
-      // An unreadable line can't be attributed to an agent, so every operator is told it exists.
+      // An unreadable line can't be attributed to an agent, so every eligible viewer is told it exists.
       return json(res, 200, { calls: calls.filter((c) => operated.has(c.agent)), corrupt });
     }
     // Every gateway path is listed above; anything else under /gw/ is no page either.
@@ -141,20 +159,20 @@ createServer(async (req, res) => {
 
     const call = pathname.match(/^\/a\/([a-z0-9-]+)\/rpc\/(.+)$/);
     if (call) {
-      const agent = config.agents.find((a) => a.name === call[1]);
+      const agent = agents.find((a) => a.name === call[1]);
       if (!agent) return json(res, 404, { error: "No such agent" });
-      const me = await viewer(req);
-      if (!me) return json(res, 401, { error: "Sign in first", access: "session" });
-      const access = me.access[agent.name];
-      if (!access) return json(res, 403, { error: `${me.account} may not see the ${agent.name} agent`, access: "agent" });
-      if (!mayCall(access.role, call[2]!)) return json(res, 403, { error: "Operators only", access: "procedure" });
-      // Anything beyond a member's reads is an intervention: recorded before it runs, or not run.
-      if (!mayCall("member", call[2]!)) {
+      const account = session.account(req);
+      if (!account) return json(res, 401, { error: "Sign in first", access: "session" });
+      const access = await resolveAgentAccess(account, agent);
+      if (!access) return json(res, 403, { error: `${account} may not see the ${agent.name} agent`, access: "agent" });
+      if (!mayCall(access, call[2]!)) return json(res, 403, { error: "This account does not have permission for this action", access: "procedure" });
+      // Preserve which calls count as interventions: recorded before they run, or not run.
+      if (isIntervention(call[2]!)) {
         try {
           mkdirSync(".evidence", { recursive: true });
-          appendSynced(INTERVENTIONS, { at: new Date().toISOString(), account: me.account, agent: agent.name, path: call[2] });
+          appendSynced(INTERVENTIONS, { at: new Date().toISOString(), account, agent: agent.name, path: call[2] });
         } catch {
-          return json(res, 503, { error: "The operator action could not be recorded, so it was not run" });
+          return json(res, 503, { error: "The action could not be recorded, so it was not run" });
         }
       }
       return forward(req, res, agent, call[2]!);
@@ -174,8 +192,10 @@ const children = new Set<ChildProcess>();
  */
 function start(agent: AgentEntry & { envFile: string }, delay = 5_000) {
   const started = Date.now();
-  const child = spawn(join(APP, "node_modules/.bin/tsx"), ["--env-file-if-exists=.env", join(APP, "src/server.ts")], {
-    env: childEnv(agent),
+  const managed = "kind" in agent ? agent as HostedAgent : undefined;
+  const environment = managed ? hostedEnvironment(managed, process.env) : childEnv(agent);
+  const child = spawn(join(APP, "node_modules/.bin/tsx"), [...(managed ? [] : ["--env-file-if-exists=.env"]), join(APP, "src/server.ts")], {
+    env: environment,
     stdio: ["ignore", "inherit", "inherit"],
   });
   children.add(child);
@@ -186,7 +206,7 @@ function start(agent: AgentEntry & { envFile: string }, delay = 5_000) {
     setTimeout(() => start(agent, next), next);
   });
 }
-for (const agent of config.agents) if (agent.envFile) start({ ...agent, envFile: agent.envFile });
+for (const agent of agents) if (agent.envFile) start({ ...agent, envFile: agent.envFile });
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.on(signal, () => {
     for (const child of children) child.removeAllListeners("exit").kill(signal);

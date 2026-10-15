@@ -8,7 +8,7 @@ const snapshot: StrategyStatus = { strategy: DEFAULT_STRATEGY, digest: "reviewed
   readiness: { state: "off", reasons: [], canEnable: true } };
 const facts = () => ({ status: { data: snapshot, error: null as unknown }, schedule: { data: { on: false }, error: null as unknown },
   actions: { data: [] as { type: string; stage: string }[], error: null, isSuccess: true },
-  review: snapshot, executor: true, operator: true, busy: false, canSign: true });
+  review: snapshot, executor: true, canSave: true, canStop: true, canSchedule: true, busy: false, canSign: true });
 
 test("failed observations cannot produce ready labels or grant/enable controls; stop and drafts remain available", () => {
   for (const source of ["status", "schedule"] as const) {
@@ -20,7 +20,7 @@ test("failed observations cannot produce ready labels or grant/enable controls; 
   }
 });
 
-test("review identity, pending owner actions, and operator permissions govern their respective controls", () => {
+test("review identity, pending owner actions, and action permissions govern their respective controls", () => {
   const input = facts();
   assert.equal(strategyPresentation(input).canAuthorize, true);
   input.review = { ...snapshot, digest: "old" };
@@ -28,8 +28,21 @@ test("review identity, pending owner actions, and operator permissions govern th
   input.review = snapshot; input.actions.data = [{ type: "grant_issue", stage: "submitted" }];
   assert.equal(strategyPresentation(input).canAuthorize, false);
   assert.equal(strategyPresentation(input).canEdit, false);
-  input.actions.data = []; input.operator = false;
+  input.actions.data = []; input.canSave = false; input.canSchedule = false; input.canStop = false;
   assert.equal(strategyPresentation(input).canAuthorize, true, "members who can sign may propose owner authorization");
   assert.equal(strategyPresentation(input).canEnable, false);
   assert.equal(strategyPresentation(input).canEdit, false);
+});
+
+test("permission to edit strategy cannot enable it, and execution access cannot edit it", () => {
+  const manager = facts();
+  manager.canSchedule = false;
+  assert.equal(strategyPresentation(manager).canEdit, true);
+  assert.equal(strategyPresentation(manager).canEnable, false);
+  const executor = facts();
+  executor.canSave = false;
+  assert.equal(strategyPresentation(executor).canEdit, false);
+  assert.equal(strategyPresentation(executor).canEnable, true);
+  executor.canSign = false;
+  assert.equal(strategyPresentation(executor).canAuthorize, false);
 });

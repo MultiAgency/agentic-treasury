@@ -24,11 +24,27 @@ const definitions = [
 const sha = data => createHash('sha256').update(data).digest('hex');
 const specs = suite => [...(suite.specs ?? []), ...(suite.suites ?? []).flatMap(specs)];
 
+/** Match the complete discovered baseline; adding a journey must not invalidate the challenge runner. */
+export function validateBaseline(baseline, discovered) {
+  const cases = report => specs(report).flatMap(spec => spec.tests.map(test => ({
+    key: JSON.stringify([spec.id, test.projectId]), title: spec.title, test,
+  })));
+  const expected = cases(discovered), actual = cases(baseline);
+  const keys = rows => rows.map(row => row.key).sort();
+  const successful = ({ test }) => test.expectedStatus === 'passed' && test.status === 'expected'
+    && test.results.length === 1 && test.results[0].status === 'passed' && test.results[0].retry === 0;
+  if (!expected.length || discovered.errors?.length || baseline.errors?.length
+    || new Set(keys(expected)).size !== expected.length || new Set(keys(actual)).size !== actual.length
+    || JSON.stringify(keys(expected)) !== JSON.stringify(keys(actual))
+    || baseline.stats.expected !== expected.length || baseline.stats.unexpected || baseline.stats.skipped || baseline.stats.flaky
+    || !actual.every(successful) || definitions.some(definition => !actual.some(row => row.title === definition.test)))
+    throw new Error('Challenges require every discovered baseline E2E case to pass once, without skips or retries');
+}
+
 /** Mutate fresh descendants of the already-tested snapshot, never the caller's application files. */
 export function runChallenges({ snapshot: seed, artifacts, env, root }) {
   const baseline = JSON.parse(readFileSync(join(artifacts, 'results.json')));
-  if (baseline.stats.unexpected || baseline.stats.skipped || baseline.stats.flaky || baseline.stats.expected !== 5)
-    throw new Error('Challenges require all five baseline E2E cases to pass without skips or retries');
+  validateBaseline(baseline, JSON.parse(readFileSync(join(artifacts, 'baseline-list.json'))));
   const original = new Map(definitions.map(d => [d.file, sha(readFileSync(join(seed, d.file)))]));
   const summary = { baseline: 'passed', results: [] };
   for (const definition of definitions) {

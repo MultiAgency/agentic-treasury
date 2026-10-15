@@ -5,7 +5,6 @@ import { AgentApiError } from "@near-intents-agent-api/sdk";
 import { agentId } from "./env.js";
 import { appendSynced, mkdirSynced } from "./synced.js";
 import { claimInvoiceSubmission, invoiceOperations, recordInvoiceOperation, type PaymentState } from "./invoice-store.js";
-import { totalUsd } from "./valuation.js";
 
 /**
  * The append-only log of one agent's money actions, `.ops/<agent id>.jsonl`. A request line is
@@ -77,14 +76,14 @@ export const isHeld = (op: Op) => op.status === "PENDING_APPROVAL";
  */
 export const blocksDispatch = (op: Op) => !isResolved(op) && !isHeld(op) && !(op.invoiceId && op.submissionState === "PREPARED");
 
-/** Gross value of submitted swaps in one plan, from folded journal evidence. Failed or refunded
+/** Individual values of submitted swaps in one plan, from folded journal evidence. Failed or refunded
  * submissions do not replenish its ceiling. Unknown legacy submissions count conservatively;
  * missing valuations remain unknown, and unresolved operations still block dispatch independently. */
-export function submittedSwapUsd(ops: readonly Op[], planId: string): number | null {
-  return totalUsd(ops.filter(op => op.planId === planId && op.refused === undefined &&
+export function submittedSwapValues(ops: readonly Op[], planId: string): readonly (number | null)[] {
+  return ops.filter(op => op.planId === planId && op.refused === undefined &&
     (op.method === "swap" || (op.method === undefined && "origin_asset" in op.request)) &&
     !(op.journalVersion === 2 && op.submissionState === "PREPARED"))
-    .map(op => ({ usd: op.usdIn ?? null })));
+    .map(op => op.usdIn ?? null);
 }
 
 export function record(line: Line) {

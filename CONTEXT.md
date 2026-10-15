@@ -30,14 +30,31 @@ behavior unverified, and requirements not yet demonstrated.
 _Avoid_: prototype (for an area), use case
 
 **Workspace**:
+The hosted walkthrough mode starts with **Your guided walkthroughs**, agent selection and optional
+self-service setup. It links funding, policy, grants, agreements and recovery from the selected guide.
+The broader task workspace below remains available on hosts without walkthrough mode.
 The signed-in owner's interface, with a shared Home, Payables and Portfolio sections, and Activity.
 Each area retains its own agent, policy, grant, balance and access permissions. The shared Home
 routes attention to the relevant area; it does not combine balances or authorize money actions.
-Payables opens on Payments; Portfolio opens on Overview, with Strategy and Runs as task destinations.
-Payment queue rows link to one payment detail; approval and payment completion remain separate.
-The desktop navigation rail and mobile drawer share one hierarchy. Payments includes manual payment
-creation and invoice review; Agreements covers terms and policy inclusion. Sweep is in Balances &
-funding. Each task keeps its evidence summary and limitations nearby.
+Payables opens on Payments, with Agreements as its other task; Portfolio opens on Overview, with Strategy
+as its other task. These tasks appear in the content area's navigation.
+Payment queue rows include local invoices and link to one selected record; an invoice joins a payment
+only through its recorded provider correlation ID. Approval and payment completion remain separate.
+Payments defaults to **Needs review**: held payouts, changed or prepared invoices, owner-action recovery,
+and unknown or conflicting retained outcomes. **All records** includes recorded terminal outcomes;
+local recipient/reference search never fetches per-payment status or authorizes an action. Read failures
+and incomplete coverage remain visible with either filter.
+The desktop navigation rail and mobile drawer share the four workspace destinations. Payments includes manual payment
+creation and invoice review; Agreements groups terms and separate policy inclusion by recipient.
+Shared Activity retains each agent's returned operation, owner-action and run history, with links to
+scoped **Operation status** controls and individual run details. Shared history supports local search and
+expandable record type, recorded status and date filters. Unresolved operations, failed reads and
+incomplete run records remain above the filters across all areas. Dates use local time; undated records,
+including owner actions, remain included. A run ending, owner action or proposal vote does not establish
+payment settlement. Operation status retains scoped URLs and links back to shared Activity.
+Funding and policy are content-area utilities;
+Guided walkthrough is under Help. Home keeps its real-funds entry under Guided walkthrough. Sweep is in
+Balances & funding. Entry pages retain known limitations and expandable requirement evidence.
 _Avoid_: entering a prototype or switching dashboards for navigation within the workspace.
 
 **Executor**:
@@ -45,14 +62,22 @@ The one instance that sends, reconciles and serves invoices for an agent. Any ot
 agent is **approve-only**: it reads and approves as the owner, and never sends.
 _Avoid_: primary, leader
 
-**Member** / **Operator**:
-Who may use the hosted dashboard, decided per agent from its owner. A member is named in one of the
-owner DAO's group roles (a token-weighted role names no one): reads everything and may file owner actions
-as proposals. An operator may also move money and change settings: an owner that is a wallet, for its own
-agents, or an account named beside an agent in the dashboard's configuration, for that agent.
+**Member**:
+An account named in one of the owner DAO's group roles. Members may read the agent's private records;
+public `Everyone` permissions and token-weighted roles do not establish private workspace membership.
+For wallet-owned agents, only the owner account has access.
+
+**Dashboard permissions**:
+Per-agent capabilities derived from wallet ownership or the DAO's onchain policy, with no configured
+operator list. For admitted DAO members, applicable Group and Everyone permissions combine. FunctionCall
+proposal permission allows preparing requests; both FunctionCall proposal and approval permissions allow
+execution controls under the existing signed policy and grant. Both policy proposal and approval permissions
+allow local settings changes. These are application mappings, not proof of a passed DAO proposal.
+Owner actions still require the owner's verified signature, obtained through the DAO's voting threshold
+when it owns the agent. Historical records retain `operator` as the label for a manually triggered run.
 
 **Portfolio**:
-The product-facing label for the Treasury area across the landing page, example workspace and
+The product-facing label for the Treasury area across the walkthroughs and
 signed-in workspace.
 It covers allocations, rebalancing and strategy limits; the underlying treasury agent, purpose,
 grant labels and routes retain their existing names.
@@ -93,9 +118,19 @@ _Avoid_: allowlisted address, destination
 **Agreement**:
 An owner's consent to pay a payee, with **terms**: an amount ceiling per invoice and a deadline. A payee
 *requests* one from the invoice page (an **agreement request**), or the owner *offers* one first (a
-purchase order, a bounty or grant award). Agreeing makes the payee an agreed payee by policy update;
+service agreement, a bounty or grant award). Agreeing makes the payee an agreed payee by policy update;
 the terms are this server's record, shown beside each held payout, and enforced by the vote on it.
 _Avoid_: whitelist entry, PO (unless it is one)
+
+**Work order**:
+Agreed work for one payee, a fixed USDC amount and a deadline, with a dedicated agent and expiring
+invoice grant. The owner signs that agent's policy and grant and separately approves its held payout.
+The payee files against the order's immutable invoice identity on the invoice page. Exact terms and
+one retained payment identity are application checks; the provider enforces its signed policy and
+grant expiry. Expiry stops new submissions, not already accepted work, and does not return residual
+funds. Work orders appear in Payables' Agreements and Payments; catalog brief 03 retains its original
+title, Invoicing & Purchase-Order Management, in the audit. The implementation is offline-tested,
+not observed on mainnet. Supplier conversion and forwarding are separate, unimplemented work.
 
 **Strategy**:
 The owner's target allocation and limits for a treasury agent. The autopilot acts only while its live
@@ -164,7 +199,7 @@ _Avoid_: bot, cron job
 **Tick**:
 One autopilot run: sweep, then rebalance if the strategy's grant approves it and the plan fits the
 limit. Scheduled on the strategy's interval, counted from the latest recorded `run` summary in the
-inbox, or run by an operator. That summary is written before the final after-observation and evidence
+inbox, or started manually by an account with execution permission. That summary is written before the final after-observation and evidence
 end; it is not proof that the tick or its operations settled. Each records a start and an end in the evidence. New ticks also record intermediate stage
 starts/returns and provider-accepted submissions in a supplementary progress file. These observations
 never authorize a send or establish settlement; older ticks have no reconstructed stages.
@@ -174,16 +209,33 @@ A private, versioned projection of a tick's recorded observations into AG-UI eve
 tick's outcome separately from later journal observations. Missing timing stays unknown; a recorded
 tick end does not prove every operation settled. It never authorizes a money action. The adapter is
 offline-tested. Members can export a recording from its executor and inspect its recorded observations
-in the dashboard. The inspector is read-only, with no timed playback or live stream; it keeps source
+in the dashboard. New exports use envelope version 3 and declare AG-UI protocol 1.0. A recorded end
+with an unclosed stage or an explicitly failed run emits `RUN_ERROR`; a missing end stays open.
+Older version 1/2 recordings remain readable without rewriting their events. The inspector is read-only,
+with no timed playback or live stream; it keeps source
 gaps, unknown timing and later observations explicit. The inspector and export access controls are
 tested offline, not mainnet-observed.
 
-**Interactive simulation**:
-A public, browser-only illustration driven by authored AG-UI events. Its example strategies,
-approval and refusal are fictional. It reads no agent records and submits no money actions;
-playback timing is illustrative, and a simulation is never evidence of mainnet behavior.
-The **example workspace** presents selected prototype flows as navigable pages using this fictional
-state. It is public, requires no wallet, and never mounts the authenticated dashboard or its reads.
+**Sign-in entry**:
+The public page introduces the real-funds walkthroughs and offers wallet sign-in. It shows no agent
+records or requirement cards. Legacy example hashes use the same entry. The authenticated app
+mounts only after gateway admission; verified self-service users may have no agent access yet.
+
+**Hosted setup reservation**:
+A durable, private instance assignment for one owner and area, created after verifying wallet
+ownership or DAO membership with proposal permission. It submits no provider intent and authorizes
+no money action. The owner must separately create the agent with its signed policy and issue a grant.
+Retries reuse the assignment; each instance has its own settings, grant and records. Coordination
+and executor leases are single-host, not distributed fencing.
+
+**Guided walkthrough**:
+A guided walkthrough in the signed-in workspace that uses the agent's actual balances, policy and
+grant. It reuses the existing payment and rebalance controls, including their explicit confirmations
+and owner approvals. Its prerequisite observations do not authorize a send. Outcomes come from
+operation and payment records selected by the exact confirmed plan or returned payment identity;
+a walkthrough can finish without a swap, wait for approval, be refused, or leave an unresolved
+operation. Opening or reloading it submits nothing. Reload clears the local selection, and existing
+records remain accessible through Payments and Activity.
 
 **Inbox**:
 What the agent tells its owner while no one is watching: a record of each tick, and warnings or
@@ -195,5 +247,6 @@ confidential balances against the API's recorded executions. A difference is une
 outside credits or incomplete records.
 
 **Intervention**:
-An operator call through the hosted dashboard beyond what a member may do, recorded before it runs
-(or not run). The unattended-run report counts them.
+A hosted dashboard call classified by the gateway's intervention list, recorded before it runs
+(or not run). The unattended-run report counts them. The existing record format and historical
+classification are retained when dashboard permissions change.

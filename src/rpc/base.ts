@@ -3,7 +3,7 @@ import { ORPCError, os as base } from "@orpc/server";
 import { refusalDetails } from "../provider-display.js";
 /**
  * Errors reach the page with their message: this server answers only its own page on loopback, and
- * behind the hosted gateway only signed-in members (operators, for anything beyond reads). An Agent
+ * behind the hosted gateway only signed-in accounts with the required owner's capabilities. An Agent
  * API refusal keeps its code (`policy_change_throttled`, ...) for the page to branch on, and for a
  * throttle, quota or schedule refusal when it can be tried again (`availableAt`).
  */

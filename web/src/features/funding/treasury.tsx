@@ -12,7 +12,7 @@ import { useAgent } from "../../app/agent-context";
 import { Badge, Button, Card, CopyButton, Details, ErrorBox, input, Loading, QueryError, Section, Spinner } from "../../shared/ui";
 import { Field, focusInvalid } from "../../shared/form";
 import { accountError } from "../../shared/form-validation";
-import { useIsOperator } from "../../app/viewer";
+import { useCanCall } from "../../app/viewer";
 import { connect, dao, type Transaction, send, useWallet } from "../owner/wallet";
 
 export type Treasury = NonNullable<Awaited<ReturnType<typeof client.treasury.get>>>;
@@ -30,7 +30,7 @@ function LinkTreasury() {
   const daoWallet = dao.use();
   const [accountId, setAccountId] = useState("");
   const link = useAttempt([["treasury"], ["setup"]]);
-  const operator = useIsOperator();
+  const canLink = useCanCall("treasury/link");
   const [submitted, setSubmitted] = useState(false);
 
   const linkTo = (id: string) => link.attempt(() => client.treasury.link({ accountId: id }));
@@ -44,14 +44,14 @@ function LinkTreasury() {
       <div className="flex flex-wrap gap-3">
         <Button
           variant="outline"
-          disabled={!operator || link.busy || wallet.status !== "connected"}
+          disabled={!canLink || link.busy || wallet.status !== "connected"}
           onClick={() => wallet.accountId && linkTo(wallet.accountId)}
         >
           <Bank size={18} /> {wallet.accountId ? `Use ${short(wallet.accountId, 24)}` : "Use my account"}
         </Button>
         <Button
           variant="outline"
-          disabled={!operator || link.busy || daoWallet.status === "connecting"}
+          disabled={!canLink || link.busy || daoWallet.status === "connecting"}
           onClick={() => link.attempt(linkTrezuDao)}
         >
           {daoWallet.status === "connecting" ? <Spinner /> : <UsersThree size={18} />} Connect a DAO with Trezu
@@ -63,7 +63,7 @@ function LinkTreasury() {
           e.preventDefault();
           setSubmitted(true);
           if (accountError(accountId)) { focusInvalid(e.currentTarget); return; }
-          if (operator && !link.busy) linkTo(accountId.trim());
+          if (canLink && !link.busy) linkTo(accountId.trim());
         }}
       >
         <Field label="Treasury NEAR account" name="treasury-account" autoComplete="off" spellCheck={false} autoCapitalize="none"
@@ -73,7 +73,7 @@ function LinkTreasury() {
           value={accountId}
           onChange={(e) => setAccountId(e.target.value)}
         />
-        <Button type="submit" variant="outline" disabled={link.busy || !operator}>
+        <Button type="submit" variant="outline" disabled={link.busy || !canLink}>
           {link.busy && <Spinner />} Link
         </Button>
       </form>
@@ -109,6 +109,7 @@ function proposalId(outcome: unknown) {
 }
 
 function Fund({ treasury }: { treasury: Treasury }) {
+  const canFund = useCanCall("treasury/fund");
   const signer = useTreasurySigner(treasury);
   const [asset, setAsset] = useState<"USDC" | "NEAR">("USDC");
   const [value, setValue] = useState("");
@@ -132,7 +133,7 @@ function Fund({ treasury }: { treasury: Treasury }) {
           e.preventDefault();
           setSubmitted(true);
           if (!amount) { focusInvalid(e.currentTarget); return; }
-          if (fund.busy || !signer.ready) return;
+          if (fund.busy || !signer.ready || !canFund) return;
           setProposal(undefined);
           fund.attempt(async () => {
             const { transaction } = await client.treasury.fund({ asset, amount });
@@ -151,7 +152,7 @@ function Fund({ treasury }: { treasury: Treasury }) {
           <option value="NEAR">NEAR (as wNEAR)</option>
         </select></label>
         {signer.ready ? (
-          <Button type="submit" disabled={fund.busy}>
+          <Button type="submit" disabled={fund.busy || !canFund}>
             {fund.busy && <Spinner />} {signer.isDao ? "File funding proposal" : "Send"}
           </Button>
         ) : (
@@ -206,7 +207,7 @@ function Return({ treasury, data, setup }: { treasury: Treasury; data: Overview;
   const destinations = useDestinations(data, setup);
   const entry = destinations.current.find((d) => d.address === treasury.accountId);
   const payout = usePayout();
-  const operator = useIsOperator();
+  const canPay = useCanCall("pay");
   const [submitted, setSubmitted] = useState(false);
   const [review, setReview] = useState<PaymentReviewData>();
   const book = paymentAssets(data.book, setup.grant?.label);
@@ -230,7 +231,7 @@ function Return({ treasury, data, setup }: { treasury: Treasury; data: Overview;
               e.preventDefault();
               setSubmitted(true);
               if (!amount) { focusInvalid(e.currentTarget); return; }
-              if (operator && !payout.busy && holding) setReview({
+              if (canPay && !payout.busy && holding) setReview({
                 request: { recipient: treasury.accountId, asset, amount, confidential: entry.confidential },
                 symbol: holding.symbol, decimals: holding.decimals, ownerApproval: data.policy.policy?.owner_approval,
                 expectedPolicy: reviewedPolicyOf(data),
@@ -238,7 +239,7 @@ function Return({ treasury, data, setup }: { treasury: Treasury; data: Overview;
             }}
           >
             <AssetAmount book={book} asset={asset} setAsset={setAsset} value={value} setValue={setValue} submitted={submitted} />
-            <Button type="submit" disabled={payout.busy || !operator}>
+            <Button type="submit" disabled={payout.busy || !canPay}>
               {payout.busy ? <Spinner /> : <ArrowUUpLeft size={18} />} {payout.busy ? "Sending…" : "Review return"}
             </Button>
             <PayoutResult result={payout.result} />
@@ -272,6 +273,7 @@ function Return({ treasury, data, setup }: { treasury: Treasury; data: Overview;
 
 /** A deposit address for NEAR-native USDC; anyone can fund the account, no signature needed, empty or already funded. */
 function Deposit({ empty }: { empty: boolean }) {
+  const canDeposit = useCanCall("deposit");
   const [deposit, setDeposit] = useState<Awaited<ReturnType<typeof client.deposit>>>();
   const { busy, error, attempt } = useAttempt();
   const request = () => attempt(async () => setDeposit(await client.deposit()));
@@ -305,12 +307,12 @@ function Deposit({ empty }: { empty: boolean }) {
         ) : (
           <div className="flex flex-col items-start gap-4">
             <p className="text-sm text-muted-foreground">Incoming funds need no grant and no owner signature.</p>
-            <Button disabled={busy} onClick={request}>
+            <Button disabled={busy || !canDeposit} onClick={request}>
               {busy && <Spinner />} Get a deposit address
             </Button>
           </div>
         )}
-        {deposit && <Button className="self-start" variant="outline" disabled={busy} onClick={request}>{busy && <Spinner />} Get a new deposit address</Button>}
+        {deposit && <Button className="self-start" variant="outline" disabled={busy || !canDeposit} onClick={request}>{busy && <Spinner />} Get a new deposit address</Button>}
         <ErrorBox error={error} />
       </Card>
     </Section>
@@ -322,6 +324,7 @@ function Deposit({ empty }: { empty: boolean }) {
  * whether its public proposals are a source of payees: a confidential DAO pays out of public view.
  */
 function ConfidentialSetting({ treasury }: { treasury: Treasury }) {
+  const canChange = useCanCall("treasury/setConfidential");
   const { busy, error, attempt } = useAttempt();
   return (
     <>
@@ -329,7 +332,7 @@ function ConfidentialSetting({ treasury }: { treasury: Treasury }) {
         <input
           type="checkbox"
           checked={treasury.confidential}
-          disabled={busy}
+          disabled={busy || !canChange}
           onChange={(e) => attempt(() => client.treasury.setConfidential({ confidential: e.target.checked }))}
         />
         <LockKey size={14} /> Confidential in Trezu
@@ -343,7 +346,6 @@ export function TreasurySection() {
   const { treasury, data, setup } = useAgent();
   const linked = useQuery({ ...queries.treasury, enabled: false });
   const unlink = useAttempt([["treasury"], ["setup"]]);
-  const operator = useIsOperator();
   const empty = data.book.every((h) => BigInt(h.public) + BigInt(h.confidential) === 0n);
   if (linked.error) return <Section title="Receive funds"><p>Linked account could not be checked.</p><QueryError error={linked.error} retry={() => linked.refetch()} /></Section>;
   if (linked.isPending) return <Section title="Receive funds"><Loading label="Checking linked account…" /></Section>;
@@ -389,9 +391,9 @@ export function TreasurySection() {
               </>
             )}
             <div>
-              <ConfirmButton label="Unlink this treasury" title="Unlink this treasury?"
+              <ConfirmButton path="treasury/unlink" label="Unlink this treasury" title="Unlink this treasury?"
                 description={`Unlink ${treasury.accountId} from this dashboard. Funding and its suggested payees will no longer be shown here. This does not move funds or change the signed policy.`}
-                confirm="Unlink treasury" disabled={unlink.busy || !operator} onConfirm={() => unlink.attempt(() => client.treasury.unlink())} />
+                confirm="Unlink treasury" disabled={unlink.busy} onConfirm={() => unlink.attempt(() => client.treasury.unlink())} />
             </div>
             <ErrorBox error={unlink.error} />
           </Details>

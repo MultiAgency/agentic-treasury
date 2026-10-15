@@ -11,7 +11,7 @@ the Agent Connect catalog and plans more:
 
 | Area | What it shows | Details |
 |---|---|---|
-| **Payables** (Confidential Treasury Facilitator) | Anyone asks the DAO to be paid; agreements carry terms (contractor requests, purchase orders, bounty and grant awards); each payment is held for the DAO's vote and paid confidentially | [docs/facilitator.md](docs/facilitator.md) |
+| **Payables** (Confidential Treasury Facilitator) | Anyone asks the DAO to be paid; agreements carry terms (contractor requests, work orders, bounty and grant awards); each payment is held for the DAO's vote and paid confidentially | [docs/facilitator.md](docs/facilitator.md) |
 | **Treasury** (Agentic Treasury Management) | An agent rebalances toward a target on its own, quoting every swap, inside per-asset caps and a USD budget the DAO signed; idle funds stay confidential | [docs/treasury.md](docs/treasury.md) |
 
 Each doc measures its briefs requirement by requirement (complete, tested, live) and lists what isn't covered.
@@ -67,21 +67,39 @@ The command line has only what the dashboard doesn't: owner actions signed with 
 
 Two pages run on Railway. Signing in with a NEAR wallet signs a message, never a transaction.
 
-- **Dashboard**, https://proto.multiagency.ai: the treasury executor and a payout approve-only instance.
-  Public pages show fictional workflows and recorded requirement stages from the canonical inventory,
-  with known limitations visible. The simulations and example workspace read no agent records and
-  submit no money actions. Members sign in to inspect their agents and owner actions.
-- **Invoices**, https://invoices.multiagency.ai: the payout executor, where payees request agreements,
-  file invoices and follow their existing payment identities.
+- **Dashboard**, https://proto.multiagency.ai: the existing treasury executor and payout approve-only instance.
+  The prepared deployment configuration selects a sign-in-only public entry and real-funds guided
+  walkthroughs after sign-in. This change has not been deployed or observed on mainnet.
+- **Invoices**, https://invoices.multiagency.ai: the existing payout executor, where its payees request
+  agreements, file invoices and follow their existing payment identities.
 
-The locally prepared workspace has Home, Payables, Portfolio (the Treasury area), and Activity.
-Desktop navigation uses one rail; mobile uses a navigation drawer. Payments groups review, manual
-payment creation and invoice administration. Strategy separates saved configuration, owner
-authorization and scheduling; sweep is in Balances & funding. Area identities and permissions remain
-separate; balances are not combined. Payment approval and
-payment completion are separate outcomes. Treasury strategy configuration, owner authorization and
-schedule enablement remain separate decisions. Existing agent, payment and run URLs are retained.
-These interface changes are covered by offline browser fixtures, not verified on the deployed hosts.
+With `walkthroughs: true`, the signed-in entry is **Your guided walkthroughs**. Choose an existing
+agent or **Create your own agent**, select Portfolio or Payables, and continue setup. A regular NEAR
+wallet owns its own agent. For a DAO, sign in with a member's wallet, then select the DAO through
+Trezu; the gateway verifies membership and permission to propose owner actions. Owner signatures,
+DAO votes, policy application, grants and funding remain separate steps.
+
+Self-service setup (`selfService: true`) reserves one instance per owner and area, up to 32 on this
+host. Retrying reopens the same reservation. The selected owner and area cannot be changed inside
+that setup. Each instance retains its own settings, grant, lease and records; reservation itself
+sends nothing to the provider. The agent's policy is still created through the existing owner-intent
+flow. Provisioning and ownership isolation are tested offline, not mainnet-observed.
+
+**Open walkthrough** leads directly to the real rebalance or payment controls. The guide summarizes
+prerequisite observations and follows the exact confirmed plan or returned payment. Funding,
+policy, grants, agreements and Activity remain linked where needed. Unknown outcomes remain
+unresolved; approval does not establish settlement. Opening or reloading a guide submits nothing.
+New Payables agents use manual payments; no supplier invoice intake is provisioned for them. The
+existing approve-only payout agent links to a separate **Invoice demo** at
+https://invoices.multiagency.ai. Payees sign in there to request agreements, file invoices and
+follow payment status. Owners review agreements and approve held payouts in the signed-in
+Payables walkthrough at proto.multiagency.ai. The invoice demo retains its existing payout executor;
+new self-service agents are not connected to it. This presentation change is prepared locally.
+
+There are no public read-only walkthroughs or requirement cards at the entry. Legacy example hashes
+also show sign-in when signed out. Requirement evidence remains in the canonical area documentation.
+Hosts without walkthrough mode retain the existing workspace navigation and task pages.
+
 See [frontend responsibilities](docs/architecture.md#frontend-responsibilities-offline-tested) for
 query, recovery and navigation behavior, [Payables](docs/facilitator.md) and [Treasury](docs/treasury.md)
 for requirement evidence, and [DEMO.md](DEMO.md) for the walkthrough.
@@ -93,13 +111,15 @@ builds the app and runs the offline browser suites. These intercept requests and
 for credential isolation, live-test submission blocking, fixture contracts and failure artifacts.
 
 Each agent in `deploy/dashboard.json` names its `owner`, and the gateway decides per agent who may see
-it, from that owner at most a minute old. When the owner is a Sputnik DAO, an account in any of its roles
-is a member: it reads everything and may file owner actions as proposals, which do nothing until the DAO
-votes. Any other owner account signs in itself and operates its agents, signing owner actions with its
-own wallet. Accounts listed in an agent's `operators` can also move its money and change its settings.
-Anyone else is refused at sign-in. Signed out, the gateway lists only the DAOs' agents, which their
-on-chain proposals already name; a wallet's agent is listed only to those who may see it. None of this
-limits whoever runs the host, who can read every agent's state there. Both hosted agents are owned by the DAO; a wallet-owned agent behind the
+it, from that owner at most a minute old. A wallet-owned agent admits only its owner account.
+A Sputnik DAO's named group members may read private records. Their applicable Group and Everyone
+permissions determine proposal and vote capabilities; public proposal rights alone never admit an outsider.
+There is no configured operator list. Execution controls require both FunctionCall proposal and approval
+permissions; local settings require both policy proposal and approval permissions. These are local
+application permissions: they never replace the owner's signature, DAO approval threshold, signed policy
+or live grant. The gateway and frontend share the same action checks. This mapping is offline-tested;
+see [dashboard access](docs/architecture.md#dashboard-access-offline-tested) for its exact scope.
+With self-service enabled, a verified wallet without an agent may sign in to start setup, but gains no access to another owner’s agents. Walkthrough mode lists no agents while signed out. Hosts without these options retain the member-only sign-in behavior. None of this limits whoever runs the host, who can read every agent’s state there. Both hosted agents are owned by the DAO; a wallet-owned agent behind the
 gateway is tested offline only (`test/gateway-denial.test.ts`). On the invoice page anyone may sign in, but only payees in
 the payout agent's policy file invoices; anyone else files an agreement request.
 
@@ -144,11 +164,18 @@ grant, money lock and recovery loop. See [payout setup](docs/operations.md#payou
 Anyone signs in with a full-access NEAR wallet key and files an amount and optional note for their
 own account. An agreed payee's filing is an invoice; anyone else's is an **agreement request**, which is
 never a payment. Agreements carry terms (an amount per invoice and a deadline), and the DAO can also
-offer them first, as a purchase order or an award. Agreeing lists the payee in the policy by vote; the
+offer them first, as a service agreement or an award. Agreeing lists the payee in the policy by vote; the
 payee then files the invoice, which is held for its own vote ([facilitator](docs/facilitator.md)).
 The hosted dashboard reads the invoice host's agreements with a shared secret (`AGREEMENTS_URL`,
 `AGREEMENTS_SECRET`; [operations](docs/operations.md#payout-executor)). Sign-in, storage, retries and
 recovery are in [docs/architecture.md](docs/architecture.md#invoice-storage).
+
+**Work orders** use the same Payables workspace and invoice portal, with a dedicated agent for each
+order. In Agreements, save one payee's fixed USDC amount, work description and deadline; authorize
+its policy and expiring grant, then obtain a confidential USDC deposit address. Share its invoice link
+with the payee. Payments also lists the order, its held payout and owner actions. Payment submission
+always uses the original invoice identity and the shared dispatch path. This flow is locally implemented
+and offline-tested; no work-order agent has been demonstrated on the deployed hosts.
 
 ## DAO ownership
 
@@ -181,13 +208,27 @@ of maintaining separate requirement statuses.
 
 ## Not done yet
 
+Self-service hosted creation is offline-tested only. Mainnet wallet and Trezu setup, capacity under load, and invoice intake for newly created Payables agents have not been demonstrated. Reservations are bounded to 32 instances; the cap is not abuse-resistant admission or distributed execution.
+
+Work orders have no mainnet lifecycle evidence yet. Partial invoices, amendments, automatic residual-fund
+return, automatic archival, and supplier conversion/forwarding are not implemented. Work-order executors
+run on one host, with a default capacity of eight; this is not distributed fencing. Exact invoice matching
+and one retained payment identity are local checks, not provider guarantees of lifetime spending or
+settlement by a deadline. See [operations](docs/operations.md#work-order-executors) before rollout.
+
+The guided walkthroughs are locally implemented and tested with offline browser fixtures, not verified
+on the deployed hosts. They depend on existing permissions, configured services and retained records;
+they cannot guarantee a swap, immediate owner approval, or settlement.
+
 Sweep covers managed USDC, wNEAR and ETH only; it does not establish that other assets are confidential.
 Campaign winner identity and prize validation are not built. The local duplicate check covers only
 a manual payout matching an existing held payout; provider replay deduplication remains unverified.
 
-- The cumulative auto-execute ceiling currently adds numeric USD estimates with floating-point
-  arithmetic. Offline reproductions show that rounding can admit a value just above the ceiling or
-  refuse values that sum to the ceiling. Exact decimal comparison remains outstanding.
+- The local auto-execute ceiling now sums and compares the decimal representations of individual
+  numeric USD estimates exactly (offline-tested, not verified on the deployed hosts). Raw-amount
+  conversion, individual valuations and the earlier plan-preview total still use floating-point
+  arithmetic; their precision limitations remain. Provider-enforced policy caps and USD-budget
+  accounting are unchanged; see [enforcement](docs/enforcement.md).
 
 - Payment recovery reads and owner-action discovery are locally implemented and offline-tested, not
   verified on the deployed hosts. Recent payout discovery scans at most 250 provider records and
@@ -200,7 +241,7 @@ a manual payout matching an existing held payout; provider replay deduplication 
   provider outcomes. Setup recovery is locally tested, not verified on deployed hosts.
 
 - The inline Treasury strategy workflow is locally implemented and offline/browser-fixture tested,
-  not deployed or mainnet-observed. Operators edit allocations and limits, save with the schedule off,
+  not deployed or mainnet-observed. Accounts with settings permission edit allocations and limits, save with the schedule off,
   and explicitly enable only after the owner authorizes the saved strategy. Server controls reject
   stale reviews; stop does not require provider availability and prevents future scheduled ticks. A tick
   already started can submit further operations; submitted operations may finish. Configuration coordination is single-host,
@@ -211,7 +252,12 @@ a manual payout matching an existing held payout; provider replay deduplication 
 
 - The AG-UI run-log adapter, private dashboard export and read-only recording inspector are offline-tested
   ([Treasury](docs/treasury.md#run-log-adapter-and-export-offline-tested)). The inspector steps through
-  recorded observations; it provides no timed playback or live stream. New ticks record intermediate
+  recorded observations, with each recorded stage's start and return grouped together and individual
+  observations available on demand; it provides no timed playback or live stream. A missing stage
+  return stays unknown even after a run end is recorded. New exports use envelope version 3 with
+  AG-UI protocol 1.0 lifecycle validation: an unclosed stage or explicitly failed run ends with
+  `RUN_ERROR`, not a fabricated stage completion. Versions 1/2 remain readable as legacy recordings.
+  New ticks record intermediate
   stages and provider-accepted submissions for the polling run view; older ticks retain only their
   original evidence. See the [progress rollout](docs/operations.md#run-progress-rollout) before deployment.
   No real-recording or mainnet validation is claimed for these additions.

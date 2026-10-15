@@ -1,7 +1,6 @@
 import { authorityFixture, balanceView, fixtureGrant, policyView, timedPrices } from "./fixtures/authority.js";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, mock, test } from "node:test";
 import { api } from "../src/api.js";
@@ -310,7 +309,8 @@ test("a start with no end reads as incomplete, and a torn last line is counted, 
 });
 
 test("the source digest identifies a tree: same files, same digest; one changed byte, another", () => {
-  const dir = mkdtempSync(join(tmpdir(), "source-"));
+  const dir = "source";
+  mkdirSync(dir);
   writeFileSync(join(dir, "a.ts"), "export const a = 1;\n");
   const digest = sourceDigest(dir);
   assert.equal(sourceDigest(dir), digest);

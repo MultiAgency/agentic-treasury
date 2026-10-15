@@ -67,7 +67,9 @@ export async function provider(directory, { treasury = false, account = OWNER } 
         if (url.pathname === base) return json(res, { id, status: 'ACTIVE', archived: false, deleted: false, owner, wallet });
         if (url.pathname === `${base}/wallet`) return json(res, wallet);
         if (url.pathname === `${base}/grants`) return json(res, { data: grants });
-        if (url.pathname === `${base}/policy`) return json(res, { policy, revision: 1, status: 'APPLIED', provider_policy_synced: true, wallet_id: wallet.wallet_id, usage: { budget: Object.fromEntries(['daily', 'weekly', 'monthly'].map(window => [window, { limit_usd: policy.budget[`${window}_usd`], spent_usd: '0', remaining_usd: policy.budget[`${window}_usd`], resets_at: null }])), timelock: { delay_ms: 0, scheduled_count: 0 } } });
+        if (url.pathname === `${base}/policy`) return json(res, { policy, revision: 1, status: 'APPLIED', provider_policy_synced: true, wallet_id: wallet.wallet_id,
+          cooldowns: { policy_change_available_at: null, unfreeze_available_at: null },
+          usage: { budget: Object.fromEntries(['daily', 'weekly', 'monthly'].map(window => [window, { limit_usd: policy.budget[`${window}_usd`], spent_usd: '0', remaining_usd: policy.budget[`${window}_usd`], resets_at: null }])), timelock: { delay_ms: 0, scheduled_count: 0 } } });
         if (url.pathname === `${base}/policy/history`) return json(res, { data: [], next_cursor: null });
         if (url.pathname === `${base}/balances`) return json(res, { near_account_id: wallet.near_account_id, source: url.searchParams.get('source'),
           balances: [{ asset_id: USDC, balance_raw: url.searchParams.get('source') === 'public' ? '0' : (100000000n - transfers.filter(p => p.status === 'SUCCESS').reduce((sum, p) => sum + BigInt(p.body.amount), 0n)).toString() }] });

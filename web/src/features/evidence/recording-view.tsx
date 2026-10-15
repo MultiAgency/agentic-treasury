@@ -1,16 +1,22 @@
 import { useId, useState } from "react";
+import { NativeSelect } from "@/components/ui/native-select";
 import type { Recording, RunLogEvent } from "../../../../src/run-log-schema";
-import { observationLabel, recordingSummary } from "./recording-model";
+import { observationLabel, recordingProgress, recordingSummary } from "./recording-model";
+import { RecordedProgress } from "./recorded-progress";
 import { Badge, Button, Details } from "../../shared/ui";
 
 export function Observation({ event }: { event: RunLogEvent }) {
   if (event.type === "RUN_STARTED") return <p>The scheduler recorded the start of this run.</p>;
-  if (event.type === "RUN_FINISHED") return <div className="flex flex-col gap-2">
-    <p>{event.result.outcome}</p>
-    {event.result.refusal && <p>Refusal: {event.result.refusal}</p>}
-    {event.result.rejected.length > 0 && <ul className="list-disc pl-5">{event.result.rejected.map((reason, i) => <li key={i}>{reason}</li>)}</ul>}
-    <p className="text-muted-foreground">This recorded end does not prove that any operation settled.</p>
-  </div>;
+  if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") {
+    const result = event.type === "RUN_ERROR" ? event.metadata.tickResult : event.result;
+    return <div className="flex flex-col gap-2">
+      {event.type === "RUN_ERROR" && event.code === "progress_incomplete" && <p>{event.message}</p>}
+      <p>{result.outcome}</p>
+      {result.refusal && <p>Refusal: {result.refusal}</p>}
+      {result.rejected.length > 0 && <ul className="list-disc pl-5">{result.rejected.map((reason, i) => <li key={i}>{reason}</li>)}</ul>}
+      <p className="text-muted-foreground">This recorded end does not prove that any operation settled.</p>
+    </div>;
+  }
   if (event.type === "STEP_STARTED" || event.type === "STEP_FINISHED") return <p>{observationLabel(event)}. A stage returning does not establish an operation outcome.</p>;
   const value = event.value;
   if (value.stage === "submission") return <p className="break-all">The provider accepted this {value.method}: {value.correlationId}. Acceptance does not establish settlement.</p>;
@@ -43,6 +49,7 @@ export function RecordingView({ recording }: { recording: Recording }) {
   const id = useId();
   const [index, setIndex] = useState(0);
   const event = recording.events[index] ?? recording.events[0]!;
+  const progress = recordingProgress(recording);
   return <section aria-labelledby={`${id}-title`} className="flex min-w-0 flex-col gap-4 rounded-xl border p-4 text-sm">
     <div className="flex flex-wrap items-center gap-2"><h3 id={`${id}-title`} className="font-medium">Recorded observations</h3><Badge>Historical · read only</Badge></div>
     <p>{recordingSummary(recording)}</p>
@@ -50,10 +57,12 @@ export function RecordingView({ recording }: { recording: Recording }) {
     {recording.gaps.length > 0 && <Details summary={`${recording.gaps.length} source gaps`} open>
       <ul className="flex flex-col gap-1">{recording.gaps.map((gap, i) => <li key={i} className="break-all">{gap.code}{gap.line && ` · line ${gap.line}`}{gap.ref && ` · ${gap.ref}`}</li>)}</ul>
     </Details>}
+    <RecordedProgress items={progress.items} />
+    <Details summary="Inspect individual observations">
     <label className="flex flex-col gap-2">Observation
-      <select className="min-w-0 rounded-lg border bg-background p-2" value={index} onChange={(e) => setIndex(Number(e.target.value))}>
+      <NativeSelect value={index} onChange={(e) => setIndex(Number(e.target.value))}>
         {recording.events.map((item, i) => <option key={item.metadata.eventId} value={i}>{i + 1}. {observationLabel(item)}</option>)}
-      </select>
+      </NativeSelect>
     </label>
     <div className="flex justify-between gap-3">
       <Button size="sm" variant="outline" disabled={index === 0} onClick={() => setIndex(index - 1)}>Previous</Button>
@@ -64,6 +73,7 @@ export function RecordingView({ recording }: { recording: Recording }) {
       <p className="text-muted-foreground">{event.timestamp === undefined ? "Event timing unknown" : `${event.metadata.timing === "observed" ? "Observed" : "Recorded"} ${new Date(event.timestamp).toLocaleString()}`}</p>
       <Observation event={event} />
     </div>
+    </Details>
     {recording.laterObservations.length > 0 && <Details summary={`Later journal observations (${recording.laterObservations.length})`}>
       <p>Recorded after the run ended. These do not replace the run's original observations.</p>
       <ul className="flex flex-col gap-3">{recording.laterObservations.map((entry, i) => <li key={i} className="break-all">

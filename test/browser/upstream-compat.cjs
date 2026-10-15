@@ -21,7 +21,7 @@ const root = require('node:path').resolve(process.argv[2] || 'web/dist');
         const u = new URL(route.request().url()), p = u.pathname;
         if (u.hostname !== 'frontend.test') return route.abort();
         if (p === '/gw/me') return route.fulfill({ json: { agents: [{ name: 'treasury', owner: 'owner.near', dao: false }], invoices: null,
-          viewer: { account: 'owner.near', access: { treasury: { role: 'operator', canPropose: true, canVote: true } } } } });
+          viewer: { account: 'owner.near', access: { treasury: { canSign: true, canPropose: true, canVote: true, canExecute: true, canManage: true } } } } });
         if (p.includes('/rpc/')) {
           const method = p.split('/rpc/')[1];
           if (['pay', 'owner/prepare', 'owner/submit', 'agreements/offer'].includes(method)) writes.push({ method, body: route.request().postDataJSON() });
@@ -34,7 +34,7 @@ const root = require('node:path').resolve(process.argv[2] || 'web/dist');
               policy: { status: 'APPLIED', revision: 1, policy: { actions: ['swap', 'transfer'], owner_approval: true, frozen: false,
                 destinations: { mode: 'only', list: [{ action: 'transfer', address: 'payee.near', confidential: scenario !== 'public-recipient' }] },
                 assets: ['usdc'], budget: {}, limits: {} }, usage: { budget: {} }, cooldowns: {} } },
-            'treasury/get': null, held: [], unresolved: [], 'inbox/list': [], 'agreements/list': [], activity: [],
+            'treasury/get': null, held: [], unresolved: [], 'inbox/list': [], 'workOrders/list': [], 'agreements/list': [], activity: [],
             'owner/pending': [], 'owner/actions': [], policyHistory: [], paymentHistory: { items: [], complete: true },
             'autopilot/get': { on: false, everyMin: 60, maxUsd: 10 }, 'autopilot/evidence': { ticks: [] }, 'strategy/get': {}, invoices: [],
             pay: { outcome: 'refused', code: 'duplicate_held_payout' },
@@ -65,20 +65,21 @@ const root = require('node:path').resolve(process.argv[2] || 'web/dist');
         assert.equal(writes[0].body.json.confidential, scenario !== 'public-recipient');
       } else {
         await page.goto('http://frontend.test/a/treasury/policy');
-        const grants = page.locator('details').filter({ has: page.locator('summary', { hasText: 'Grant controls and history' }) }).first();
+        const grants = page.locator('#grants');
         await grants.waitFor();
-        if (!await grants.evaluate(element => element.open)) await grants.locator('summary').first().click();
+        assert.equal(await page.getByText('expired-history', { exact: true }).isVisible(), false);
+        await grants.getByText(/Ended grants \(/).click();
         await page.getByText('expired-history', { exact: true }).waitFor();
         await page.getByText('revoked-history', { exact: true }).waitFor();
         assert.match(await page.locator('body').innerText(), /Expired/);
         assert.match(await page.locator('body').innerText(), /Revoked/);
         if (scenario === 'ended-grants') {
           assert.match(await page.locator('body').innerText(), /No live grant/);
-          assert.equal(await page.getByText('Revoke a grant', { exact: true }).count(), 0);
+          assert.equal(await page.getByRole('list', { name: 'Live grants' }).count(), 0);
           assert.equal(await page.getByText('Current', { exact: true }).count(), 0);
         } else {
-          await page.getByText('Revoke a grant', { exact: true }).click();
-          const controls = page.locator('details').filter({ has: page.locator(':scope > summary', { hasText: 'Revoke a grant' }) });
+          const controls = page.getByRole('list', { name: 'Live grants' });
+          assert.ok(await controls.getByRole('button').first().isVisible(), 'revocation does not require opening history');
           assert.doesNotMatch(await controls.innerText(), /expired-history|revoked-history/);
         }
         assert.equal(writes.length, 0);

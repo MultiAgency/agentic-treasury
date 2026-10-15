@@ -1,16 +1,18 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
+import { temporaryDirectories } from "./fixtures/harness.js";
+
+const scratch = temporaryDirectories();
 import { fileURLToPath } from "node:url";
 
 const TSX = fileURLToPath(new URL("../node_modules/.bin/tsx", import.meta.url));
 const FIXTURE = fileURLToPath(new URL("./fixtures/owner-intents-race.ts", import.meta.url));
 
 test("two processes preparing owner intents for one instance both keep theirs", { timeout: 15_000 }, async () => {
-  const dir = mkdtempSync(join(tmpdir(), "owner-intents-race-"));
+  const dir = scratch.create("owner-intents-race");
   const options = { timeout: 10_000, cwd: dir, env: { ...process.env, ENV_FILE: "", AGENT_ID: "a".repeat(64) } };
   // The server loaded the intents before the command line prepared one, and prepares its own after.
   const server = spawn(TSX, [FIXTURE, "from-server", join(dir, "go")], options);
@@ -33,7 +35,7 @@ const signatures = (dir: string) => readFileSync(join(dir, "signatures.jsonl"), 
 const clearDeadLock = (dir: string) => rmSync(join(dir, ".owner-intents", ".env.json.lock"), { recursive: true, force: true });
 
 test("two processes submitting one owner intent send its signature once and retain settlement", { timeout: 20_000 }, async () => {
-  const dir = mkdtempSync(join(tmpdir(), "owner-submit-race-"));
+  const dir = scratch.create("owner-submit-race");
   assert.equal(run(dir, "prepare").status, 0);
   const results = await Promise.all([1, 2].map(() => new Promise<{ code: number | null; stderr: string }>((resolve, reject) => {
     const child = spawn(TSX, [PROCESS, "submit"], optionsFor(dir));
@@ -48,7 +50,7 @@ test("two processes submitting one owner intent send its signature once and reta
 });
 
 test("a process dying after signature submission retains attempted state for poll-only recovery", () => {
-  const dir = mkdtempSync(join(tmpdir(), "owner-submit-crash-"));
+  const dir = scratch.create("owner-submit-crash");
   assert.equal(run(dir, "prepare").status, 0);
   assert.equal(run(dir, "prepare", "other").status, 0);
   const crashed = run(dir, "submit-crash");
@@ -63,7 +65,7 @@ test("a process dying after signature submission retains attempted state for pol
 });
 
 test("a process dying after preparing an owner intent cannot lose it on the next writer", () => {
-  const dir = mkdtempSync(join(tmpdir(), "owner-prepare-crash-"));
+  const dir = scratch.create("owner-prepare-crash");
   const crashed = run(dir, "prepare-crash");
   assert.equal(crashed.status, 71, crashed.stderr);
   clearDeadLock(dir);
@@ -73,7 +75,7 @@ test("a process dying after preparing an owner intent cannot lose it on the next
 });
 
 test("a stale process cannot resurrect an owner intent another process settled", { timeout: 15_000 }, async () => {
-  const dir = mkdtempSync(join(tmpdir(), "owner-stale-settlement-"));
+  const dir = scratch.create("owner-stale-settlement");
   assert.equal(run(dir, "prepare").status, 0);
   const server = spawn(TSX, [FIXTURE, "other", join(dir, "go")], optionsFor(dir));
   let stderr = "";
@@ -92,3 +94,5 @@ test("a stale process cannot resurrect an owner intent another process settled",
   assert.equal(saved(dir).other.stage, "prepared");
   assert.equal(signatures(dir).length, 1);
 });
+
+after(scratch.cleanup);

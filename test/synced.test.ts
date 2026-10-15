@@ -1,12 +1,14 @@
+import { temporaryDirectories } from "./fixtures/harness.js";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { claimPlan } from "../src/plans.js";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, mock, test } from "node:test";
+import { after, afterEach, mock, test } from "node:test";
 import { appendSynced, mkdirSynced, writeAtomic } from "../src/synced.js";
+
+const scratch = temporaryDirectories();
 
 /** The append every log here shares (journal, evidence, interventions, inbox): what a crash mid-append can cost. */
 
@@ -14,7 +16,7 @@ const lines = (path: string) => readFileSync(path, "utf8").split("\n").filter((l
 const parsed = (path: string) => lines(path).flatMap((l) => { try { return [JSON.parse(l) as { id: string }]; } catch { return []; } });
 
 test("after a torn last line the next record starts its own line: only the torn one is lost", () => {
-  const path = join(mkdtempSync(join(tmpdir(), "synced-")), "log.jsonl");
+  const path = join(scratch.create("synced"), "log.jsonl");
   writeFileSync(path, `${JSON.stringify({ id: "a" })}\n{"id":"b","at":"2026-`); // a crash mid-append
   appendSynced(path, { id: "c" });
   assert.deepEqual(parsed(path).map((l) => l.id), ["a", "c"]);
@@ -22,7 +24,7 @@ test("after a torn last line the next record starts its own line: only the torn 
 });
 
 test("an append to a new or intact file adds exactly one line", () => {
-  const path = join(mkdtempSync(join(tmpdir(), "synced-")), "log.jsonl");
+  const path = join(scratch.create("synced"), "log.jsonl");
   appendSynced(path, { id: "a" });
   appendSynced(path, { id: "b" });
   assert.equal(readFileSync(path, "utf8"), `${JSON.stringify({ id: "a" })}\n${JSON.stringify({ id: "b" })}\n`);
@@ -44,14 +46,14 @@ function failDirectorySync() {
 }
 
 test("an append cannot report success when the directory entry cannot be synced", () => {
-  const path = join(mkdtempSync(join(tmpdir(), "synced-")), "new.jsonl");
+  const path = join(scratch.create("synced"), "new.jsonl");
   const observed = failDirectorySync();
   assert.throws(() => appendSynced(path, { id: "a" }), /directory sync failed/);
   assert.deepEqual(observed, ["file", "directory"]);
 });
 
 test("an atomic replacement reports directory sync failure even if the rename became visible", () => {
-  const path = join(mkdtempSync(join(tmpdir(), "synced-")), "settings");
+  const path = join(scratch.create("synced"), "settings");
   writeFileSync(path, "old");
   failDirectorySync();
   assert.throws(() => writeAtomic(path, "new"), /directory sync failed/);
@@ -60,7 +62,7 @@ test("an atomic replacement reports directory sync failure even if the rename be
 
 test("a plan cannot proceed when its execution marker cannot be durably recorded", () => {
   const cwd = process.cwd();
-  const dir = mkdtempSync(join(tmpdir(), "plan-sync-"));
+  const dir = scratch.create("plan-sync");
   fs.mkdirSync(join(dir, ".plans"));
   process.chdir(dir);
   try {
@@ -73,7 +75,7 @@ test("a plan cannot proceed when its execution marker cannot be durably recorded
 
 
 test("ordinary writes sync only the containing directory", () => {
-  const dir = mkdtempSync(join(tmpdir(), "synced-"));
+  const dir = scratch.create("synced");
   const expected = fs.statSync(dir).ino;
   const sync = fs.fsyncSync;
   const directories: number[] = [];
@@ -89,7 +91,7 @@ test("ordinary writes sync only the containing directory", () => {
 });
 
 test("state-directory setup syncs its parent on creation and reuse", () => {
-  const dir = mkdtempSync(join(tmpdir(), "synced-"));
+  const dir = scratch.create("synced");
   const sync = fs.fsyncSync;
   const directories: number[] = [];
   mock.method(fs, "fsyncSync", (fd: number) => {
@@ -103,7 +105,7 @@ test("state-directory setup syncs its parent on creation and reuse", () => {
 });
 
 test("state-directory setup requires an established parent and refuses a file", () => {
-  const dir = mkdtempSync(join(tmpdir(), "synced-"));
+  const dir = scratch.create("synced");
   assert.throws(() => mkdirSynced(join(dir, "missing", "state")), { code: "ENOENT" });
   const file = join(dir, "file");
   writeFileSync(file, "keep");
@@ -112,7 +114,7 @@ test("state-directory setup requires an established parent and refuses a file", 
 });
 
 test("failed state-directory sync is retried even when the directory already exists", () => {
-  const root = mkdtempSync(join(tmpdir(), "state-sync-"));
+  const root = scratch.create("state-sync");
   const directory = join(root, ".ops");
   const parentInode = fs.statSync(root).ino;
   const sync = fs.fsyncSync;
@@ -134,3 +136,6 @@ test("failed state-directory sync is retried even when the directory already exi
   appendSynced(join(directory, "journal.jsonl"), { id: "safe" });
   assert.equal(attempts, 3);
 });
+
+// Remove state only after this suite has released its locks and stopped its processes.
+after(scratch.cleanup);

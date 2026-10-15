@@ -1,11 +1,13 @@
+import { temporaryDirectories } from "./fixtures/harness.js";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, test } from "node:test";
+import { after, afterEach, beforeEach, test } from "node:test";
 import { daoRequests, delegateWaiting, prepare, reconcileOwnerIntents } from "../src/owner-intents.js";
 import { Near } from "near-kit";
 import { api } from "../src/api.js";
+
+const scratch = temporaryDirectories();
 
 /**
  * One owner key, one nonce sequence: a NEAR delegate action executing raises the key's nonce, so a
@@ -19,7 +21,7 @@ const future = new Date(Date.now() + 300_000).toISOString();
 const delegate = (owner = OWNER, change: Record<string, unknown> = {}) =>
   ({ type: "agent_freeze", expiresAt: future, stage: "prepared", dao: { owner: { account_id: owner }, hash: "h", delegate: "AAAA" }, ...change });
 
-beforeEach(() => { process.chdir(mkdtempSync(join(tmpdir(), "delegate-"))); mkdirSync(".owner-intents"); });
+beforeEach(() => { process.chdir(scratch.create("delegate")); mkdirSync(".owner-intents"); });
 afterEach(() => process.chdir(home));
 const file = (name: string, entries: Record<string, unknown>) => writeFileSync(join(".owner-intents", name), JSON.stringify(entries));
 
@@ -114,3 +116,6 @@ test("an approval whose signing window closed still names its payment, read back
     ["vote-2", "expired", { correlationId: "op_payment", verdict: "reject" }],
   ]);
 });
+
+// Remove state only after this suite has released its locks and stopped its processes.
+after(scratch.cleanup);

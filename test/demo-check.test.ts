@@ -1,13 +1,15 @@
+import { temporaryDirectories } from "./fixtures/harness.js";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { test } from "node:test";
+import { after, test } from "node:test";
+
+const scratch = temporaryDirectories();
 
 test("demo preflight fails explicitly when a hosted valuation is unavailable", () => {
-  const directory = mkdtempSync(join(tmpdir(), "demo-preflight-"));
+  const directory = scratch.create("demo-preflight");
   const cookie = join(directory, "cookie");
   const preload = join(directory, "offline.mjs");
   writeFileSync(cookie, "offline-fixture");
@@ -30,3 +32,6 @@ test("demo preflight fails explicitly when a hosted valuation is unavailable", (
   assert.match(result.stdout, /Treasury valuation unavailable/);
   assert.doesNotMatch(result.stdout, /Treasury book \$0\.00|furthest from target/);
 });
+
+// Remove state only after this suite has released its locks and stopped its processes.
+after(scratch.cleanup);

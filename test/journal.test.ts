@@ -1,20 +1,17 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, rmSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, test } from "node:test";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { beforeEach, test } from "node:test";
+import { freshDirectory } from "./fixtures/harness.js";
 import { acquireMoneyLock } from "../src/lock.js";
 import { claimSubmission, opsLog, readOps, record } from "../src/ops.js";
 import { ASSETS } from "../src/policy.js";
 
-const home = process.cwd();
+freshDirectory("journal");
 beforeEach(() => {
-  process.chdir(mkdtempSync(join(tmpdir(), "journal-")));
   process.env.AGENT_ID = "a".repeat(64);
 });
-afterEach(() => process.chdir(home));
 
 test("a send recorded but never claimed is resolved as never submitted when the lock is next taken", async () => {
   // A crash between the write-ahead record and the claim: provably nothing reached the provider.

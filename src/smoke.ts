@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { hostedRpc, required } from "./remote.js";
+import type { Access } from "./gateway/roles.js";
 
 /**
  * Checks a deployed dashboard and invoice page from outside, changing nothing: health, security
@@ -81,10 +82,11 @@ const rpc = <T>(agent: string, path: string) => hostedRpc<T>(DASHBOARD, COOKIE!,
 
 // As a signed-in account.
 if (COOKIE) {
-  type Me = { agents: { name: string; owner: string; dao: boolean }[]; viewer: { account: string; access: Record<string, { role: string }> } | null };
+  type Me = { agents: { name: string; owner: string; dao: boolean }[]; viewer: { account: string; access: Record<string, Access> } | null };
   const me = (await (await get(at(DASHBOARD, "/gw/me"), { cookie: COOKIE })).json()) as Me;
   check("the session signs in", me.viewer !== null);
-  if (me.viewer) console.log(`     as ${me.viewer.account} (${Object.entries(me.viewer.access).map(([agent, a]) => `${agent}: ${a.role}`).join(", ")})`);
+  if (me.viewer) console.log(`     as ${me.viewer.account} (${Object.entries(me.viewer.access).map(([agent, access]) =>
+    `${agent}: ${Object.entries(access).filter(([, allowed]) => allowed).map(([capability]) => capability).join(", ") || "read only"}`).join("; ")})`);
   for (const dao of new Set(me.agents.filter((a) => a.dao).map((a) => a.owner)))
     check(`proposals of ${dao} read`, (await get(at(DASHBOARD, `/gw/proposals?dao=${dao}`), { cookie: COOKIE })).ok);
 

@@ -1,13 +1,18 @@
 import { queries } from "../../shared/queries";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { client } from "../../shared/lib";
-import { inspectRecording, observationLabel } from "../evidence/recording-model";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { inspectRecording, observationLabel, recordingProgress, recordingSummary } from "../evidence/recording-model";
+import { RecordedProgress } from "../evidence/recorded-progress";
 import { Badge, Button, Details, StatusBadge } from "../../shared/ui";
 
-/** Supplement the actual run/receipt flow; never start, retry or reconstruct an operation. */
-export function RunUpdates({ agentId, tickId, startedAt, ended }: { agentId: string; tickId: string; startedAt: string; ended: boolean }) {
+/** One read-only timeline for recorded progress, the run outcome and later operation observations. */
+export function RunUpdates({ agentId, tickId, startedAt, ended, enabled, summary, nextAction, details }: {
+  agentId: string; tickId: string; startedAt: string; ended: boolean; enabled: boolean;
+  summary: ReactNode; nextAction: ReactNode; details: ReactNode;
+}) {
   const [paused, setPaused] = useState(false);
   const cache = useQueryClient();
   const deadline = Date.parse(startedAt) + 10 * 60_000;
@@ -23,45 +28,44 @@ export function RunUpdates({ agentId, tickId, startedAt, ended }: { agentId: str
   const query = useQuery({
     ...queries.recording(agentId, tickId),
     queryFn: async ({ signal }) => inspectRecording(await client.autopilot.log({ tickId }, { signal }), agentId, tickId),
-    enabled: recent && !paused,
-    refetchInterval: (q) => !recent || paused || q.state.status === "error" ? false : q.state.data?.completion === "recorded-end" ? 15_000 : 3_000,
+    enabled: enabled && recent && !paused,
+    refetchInterval: (q) => !enabled || !recent || paused || q.state.status === "error" ? false : q.state.data?.completion === "recorded-end" ? 15_000 : 3_000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: false,
     gcTime: 0,
   });
-  const recording = query.error ? undefined : query.data;
-  const progress = recording?.events.filter(event => event.type === "STEP_STARTED" || event.type === "STEP_FINISHED" || (event.type === "CUSTOM" && event.value.stage === "submission")) ?? [];
-  const latest = progress.at(-1);
+  const recording = !enabled || query.error ? undefined : query.data;
+  const progress = recording ? recordingProgress(recording) : undefined;
+  const latest = progress?.latest;
   useEffect(() => {
     if (!ended && recording?.completion === "recorded-end") {
       void cache.invalidateQueries({ queryKey: ["autopilot", "evidence", "timeline", "history"] });
     }
   }, [cache, ended, recording?.completion]);
-  return <section aria-label="Run updates" className="flex min-w-0 flex-col gap-3 rounded-xl border p-4 text-sm">
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <h3 className="font-medium">Run updates</h3>
-      <Badge>{query.error ? "Read unavailable" : !recent ? "On request" : paused ? "Paused" : "Following"}</Badge>
-    </div>
-    <p role="status" aria-live="polite" aria-atomic="true" className="text-muted-foreground">
-      {query.error ? "Run updates unavailable. The last recorded details below may be out of date."
+  return <section aria-label="Run timeline" className="min-w-0"><Card>
+    <CardHeader className="flex flex-wrap items-center justify-between gap-3">
+      <CardTitle><h3>Run timeline</h3></CardTitle>
+      <Badge>{!enabled ? "Retained records" : query.error ? "Read unavailable" : !recent ? "On request" : paused ? "Paused" : "Following"}</Badge>
+    </CardHeader>
+    <CardContent className="flex min-w-0 flex-col gap-4 text-sm">
+    {!ended && recording?.completion === "recorded-end"
+      ? <p className="font-medium">{recordingSummary(recording)} The run receipt has not refreshed yet.</p>
+      : summary}
+    {enabled && <div className="flex flex-wrap items-center justify-between gap-3">
+    <p role="status" aria-live="polite" aria-atomic="true" className="min-w-0 flex-1 text-muted-foreground">
+      {query.error ? "Run updates unavailable. The recorded run summary may be out of date."
         : !recent ? "Automatic following ended. Refresh outcomes to read the latest recorded evidence."
           : paused ? "Automatic updates paused. The agent may still be running."
           : !recording ? "Checking run updates…"
-            : !ended && latest ? `Last recorded: ${observationLabel(latest)}.`
-            : ended ? "Following later operation outcomes." : "Following this run. Detailed observations arrive when its end is recorded."}
+            : ended || recording.completion === "recorded-end" ? "Following later operation outcomes."
+            : latest ? `Last recorded: ${observationLabel(latest)}.` : "No stage observations recorded yet."}
     </p>
-    <Button variant="outline" size="sm" className="self-start" aria-busy={query.isFetching} disabled={query.isFetching} onClick={() => void query.refetch()}>{query.error ? "Retry run updates" : "Refresh outcomes"}</Button>
-    {query.dataUpdatedAt > 0 && !query.error && <p className="text-xs text-muted-foreground">Last read {new Date(query.dataUpdatedAt).toLocaleTimeString()}{paused || !recent ? ". Updates are not automatic." : "."}</p>}
-    {recording && recording.gaps.length > 0 && <p className="text-muted-foreground">Some evidence is incomplete. Inspect recording for details.</p>}
-    {progress.length > 0 && <Details summary="Recorded run stages">
-      <p className="text-muted-foreground">These are recorded observations. A stage returning does not mean every operation settled.</p>
-      <ol className="flex flex-col gap-3">{progress.map(event => <li key={event.metadata.eventId} className="flex flex-col gap-1">
-        <span>{observationLabel(event)}</span>
-        <span className="text-xs text-muted-foreground">{event.timestamp === undefined ? "Timing unknown" : new Date(event.timestamp).toLocaleTimeString()}</span>
-        {event.type === "CUSTOM" && event.value.stage === "submission" && <Link to="/activity" hash={`operation-${event.value.correlationId}`} className="inline-flex min-h-11 items-center underline">Inspect submitted {event.value.method}</Link>}
-      </li>)}</ol>
-    </Details>}
+    <Button variant="outline" size="sm" aria-busy={query.isFetching} disabled={query.isFetching} onClick={() => void query.refetch()}>{query.error ? "Retry run updates" : "Refresh outcomes"}</Button>
+    </div>}
+    {enabled && query.dataUpdatedAt > 0 && !query.error && <p className="text-xs text-muted-foreground">Last read {new Date(query.dataUpdatedAt).toLocaleTimeString()}{paused || !recent ? ". Updates are not automatic." : "."}</p>}
+    {recording && recording.gaps.length > 0 && <p className="text-muted-foreground">Some evidence is incomplete. Open Run details to inspect the recording.</p>}
+    {progress && progress.items.length > 0 && <RecordedProgress items={progress.items} />}
     {recording && recording.laterObservations.length > 0 && <div>
       <h4 className="font-medium">Later operation outcomes</h4>
       <p className="text-muted-foreground">Recorded after the run ended; these do not replace its original observations.</p>
@@ -80,9 +84,14 @@ export function RunUpdates({ agentId, tickId, startedAt, ended }: { agentId: str
         </li>;
       })}</ul>
     </div>}
-    <Details summary="Automatic update details">
+    {nextAction}
+    <Details summary="Run details">
+      {details}
+      {enabled && <div className="flex flex-col gap-3 border-t pt-4">
       <p>Checks every {recording?.completion === "recorded-end" ? 15 : 3} seconds for ten minutes after the run starts. Pauses in background tabs. Pausing this view does not stop the executor.</p>
-      {recent && <Button variant="outline" size="sm" onClick={() => setPaused(!paused)}>{paused ? "Resume updates" : "Pause updates"}</Button>}
+      {recent && <Button variant="outline" size="sm" className="self-start" onClick={() => setPaused(!paused)}>{paused ? "Resume updates" : "Pause updates"}</Button>}
+      </div>}
     </Details>
-  </section>;
+    </CardContent>
+  </Card></section>;
 }

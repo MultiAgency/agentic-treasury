@@ -6,6 +6,8 @@ import { ago, minutesSeconds, useCountdown } from "../../shared/lib";
 import { Badge, Card, Details, Section, Spinner, type Tone } from "../../shared/ui";
 import { visibleProposals, useAccessState } from "../../shared/access";
 
+import { describeProposal, matchesHistory, type HistoryFilters } from "./activity-filters";
+
 const TYPE_WORDS: Record<string, string> = {
   agent_create: "Create the agent",
   grant_issue: "Issue a grant to the agent's server",
@@ -121,36 +123,37 @@ function Proposal({ p, dao }: { p: Decoded; dao: string }) {
   );
 }
 
-export function Proposals({ dao }: { dao: string }) {
+export function ProposalRecords({ dao, data, error, history = false, filters }: { dao: string; data?: Decoded[]; error: Error | null; history?: boolean; filters?: HistoryFilters }) {
   const access = useAccessState();
-  const proposals = useQuery({
-    ...gatewayQueries.proposals(dao),
-  });
   // One DAO can retain accessible agents. Filter decoded private payloads even when a read begun
   // before an agent's denial returns successfully after it.
-  const visible = visibleProposals(proposals.data ?? [], access);
+  const accessible = visibleProposals(data ?? [], access);
+  const visible = filters ? accessible.filter(p => matchesHistory(describeProposal(p), filters)) : accessible;
   const open = visible.filter(p => p.status === "InProgress");
-  const recent = visible.filter(p => p.status !== "InProgress").slice(0, 5);
-  return (
-    <Section
-      title="What am I voting on?"
-      description="Each request to sign as the agents' owner, matched to what an agent prepared, with its hash recomputed from that payload."
-    >
-      <Card>
-        {proposals.error ? (
-          <p className="text-sm text-destructive-muted-foreground">{proposals.error.message}</p>
-        ) : !proposals.data ? (
+  const recent = visible.filter(p => p.status !== "InProgress");
+  if (!history && data && !error && !open.length) return null;
+  return <div className="flex flex-col gap-3">
+        <h3 className="font-medium">{history ? "Proposal history" : "What am I voting on?"} · {dao}</h3>
+        <p className="text-sm text-muted-foreground">Each request to sign as the agents' owner is matched to what an agent prepared, with its hash recomputed from that payload.</p>
+        {error ? (
+          <p className="text-sm text-destructive-muted-foreground">{error.message}</p>
+        ) : !data ? (
           <Spinner />
         ) : (
           <ul className="flex flex-col divide-y">
-            {open.length === 0 && <li className="pb-4 text-sm text-muted-foreground">Nothing waits for a vote.</li>}
+            {history && open.length === 0 && recent.length === 0 && <li className="text-sm text-muted-foreground">{accessible.length ? "No proposals match these filters." : "No proposals returned by this DAO."}</li>}
             {open.map((p) => <Proposal key={p.id} p={p} dao={dao} />)}
           </ul>
         )}
-        {!proposals.error && recent.length > 0 && <Details summary={`Recent completed proposals (${recent.length})`}>
+        {history && !error && recent.length > 0 && <Details summary={`Recent completed proposals (${recent.length})`}>
           <ul className="flex flex-col divide-y">{recent.map(p => <Proposal key={p.id} p={p} dao={dao} />)}</ul>
         </Details>}
-      </Card>
-    </Section>
-  );
+      </div>;
+}
+
+export function Proposals({ dao }: { dao: string }) {
+  const proposals = useQuery(gatewayQueries.proposals(dao));
+  return <Section title="DAO proposals" description="Proposal history returned by this DAO. Agent records remain scoped to their own area.">
+    <Card><ProposalRecords dao={dao} data={proposals.data} error={proposals.error} history /></Card>
+  </Section>;
 }

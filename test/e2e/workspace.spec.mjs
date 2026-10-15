@@ -19,8 +19,8 @@ async function signedPage(browser, stack, account, path) {
   await expect.poll(async () => page.evaluate(async () => (await (await fetch('/gw/me')).json()).viewer?.account)).toBe(account);
   return { ...wallet, page };
 }
-async function scenario(browser, info, run) {
-  const stack = await environment(info.outputPath('environment'), { workspace: true });
+async function scenario(browser, info, run, options = {}) {
+  const stack = await environment(info.outputPath('environment'), { workspace: true, ...options });
   stack.browserVersion = browser.version();
   const wallets = [];
   try { await run(stack, async (account, path) => { const wallet = await signedPage(browser, stack, account, path); wallets.push(wallet); return wallet; }); }
@@ -43,6 +43,13 @@ test('cross-agent navigation keeps identity and gateway permissions isolated', a
     await expect(page.getByRole('heading', { name: 'Payments', exact: true })).toBeVisible();
     const payout = await rpc(page, 'payout', 'instance');
     expect(payout.body.json.agentId).toBe(stack.simulated.id);
+    await page.getByRole('navigation', { name: 'Area', exact: true }).getByRole('link', { name: 'Agreements', exact: true }).click();
+    await expect(page.getByRole('article', { name: `Recipient ${PAYEE}`, exact: true })).toBeVisible();
+    const offer = page.getByText('Offer terms (a bounty, grant award or service agreement)', { exact: true });
+    await expect(offer).toBeVisible();
+    expect(await offer.evaluate(element => element.parentElement.open)).toBe(false);
+    await page.getByRole('navigation', { name: 'Area', exact: true }).getByRole('link', { name: 'Payments', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Payments', exact: true })).toBeVisible();
     // Cross-agent links must cause a document navigation, resetting client/cache ownership.
     await page.evaluate(() => { window.__candidateDocument = 'payout'; });
     const link = page.locator('a[href="/a/portfolio/"]').first();
@@ -52,7 +59,21 @@ test('cross-agent navigation keeps identity and gateway permissions isolated', a
     await page.goBack();
     await expect(page.getByRole('heading', { name: 'Payments', exact: true })).toBeVisible();
     expect((await rpc(page, 'payout', 'instance')).body.json.agentId).toBe(stack.simulated.id);
+    expect(stack.simulated.intents).toHaveLength(0);
+    expect(stack.simulated.transfers).toHaveLength(0);
+    expect(stack.portfolio.intents).toHaveLength(0);
+    expect(stack.portfolioState().strategy).toBeNull();
+  }, { portfolioOwner: OWNER });
+});
 
+test('each wallet sees only its own agents despite legacy operator configuration', async ({ browser }, info) => {
+  await scenario(browser, info, async (stack, login) => {
+    const owner = await login(OWNER, '/a/payout/');
+    const ownerView = await owner.page.evaluate(async () => (await fetch('/gw/me')).json());
+    expect(Object.keys(ownerView.viewer.access)).toEqual(['payout']);
+    expect(ownerView.viewer.access.payout).toEqual({ canSign: true, canPropose: false, canVote: false, canExecute: true, canManage: true });
+    expect((await rpc(owner.page, 'portfolio', 'instance')).status).toBe(403);
+    expect((await rpc(owner.page, 'portfolio', 'autopilot/stop')).status).toBe(403);
     const restricted = await login(PAYEE, '/a/portfolio/automations');
     const me = await restricted.page.evaluate(async () => (await fetch('/gw/me')).json());
     expect(Object.keys(me.viewer.access)).toEqual(['portfolio']);
@@ -78,7 +99,6 @@ test('strategy saves off, authorizes, rejects stale review, enables explicitly a
     await page.getByLabel('wNEAR (%)', { exact: true }).fill('20');
     await page.getByLabel('ETH (%)', { exact: true }).fill('20');
     await page.getByLabel('Run every (minutes)', { exact: true }).fill('120');
-    await page.getByRole('button', { name: 'Review change', exact: true }).click();
     await page.getByRole('button', { name: 'Save with autopilot off', exact: true }).click();
     await expect.poll(() => stack.portfolioState().strategy?.autopilot.everyMin).toBe(120);
     expect(stack.portfolioState().settings).toMatch(/AUTOPILOT=\n/);
@@ -93,7 +113,7 @@ test('strategy saves off, authorizes, rejects stale review, enables explicitly a
     ]) expect((await rpc(page, 'portfolio', method, input)).status).toBeGreaterThanOrEqual(400);
     expect(stack.portfolio.intents).toHaveLength(0);
     expect(stack.portfolioState().strategy).toEqual(saved.strategy);
-    await page.getByRole('button', { name: 'Review authorization', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Authorize this saved strategy', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Authorize in wallet', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Turn on', exact: true })).toBeVisible();
     expect(stack.portfolio.intents).toHaveLength(1);

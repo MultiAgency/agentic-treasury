@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
 import { AgentApiError } from "@near-intents-agent-api/sdk";
-import { createRouterClient } from "@orpc/server";
+import { createRouterClient, ORPCError } from "@orpc/server";
 import { api } from "../src/api.js";
 import { router } from "../src/router.js";
 import { paymentStatus } from "../src/payouts.js";
@@ -39,14 +39,26 @@ test("dashboard excludes expired prices and preserves their timestamps", async (
   assert.equal((usdc as unknown as Record<string, unknown>).priceUpdatedAt, "2020-01-01T00:00:00Z");
 });
 
-test("RPC retains only allowlisted provider budget metadata", async () => {
-  mock.method(api, "getPolicy", async () => { throw new AgentApiError(403, { errors: [{ status: "403", code: "spend_budget_exceeded", title: "Budget exceeded",
-    meta: { budget_remaining_usd: "0.000001", available_at: "2030-01-01T00:00:00Z", token: "secret" } }] } as never); });
-  await assert.rejects(client.overview(), (error: unknown) => {
-    const data = (error as { data: unknown }).data;
-    assert.deepEqual(data, { code: "spend_budget_exceeded", availableAt: "2030-01-01T00:00:00Z", budgetRemainingUsd: "0.000001" });
-    return true;
-  });
+test("RPC errors retain exact provider codes and allowlisted budget or retry metadata", async () => {
+  for (const { status, code, method, call, meta, expected } of [
+    { status: 403, code: "spend_budget_exceeded", method: "getPolicy" as const, call: () => client.overview(),
+      meta: { budget_remaining_usd: "0.000001", available_at: "2030-01-01T00:00:00Z", token: "secret" },
+      expected: { code: "spend_budget_exceeded", availableAt: "2030-01-01T00:00:00Z", budgetRemainingUsd: "0.000001" } },
+    { status: 429, code: "policy_change_throttled", method: "getPolicyHistory" as const, call: () => client.policyHistory(),
+      meta: { retryable: true, available_at: "2030-01-01T00:00:00Z", token: "secret" },
+      expected: { code: "policy_change_throttled", availableAt: "2030-01-01T00:00:00Z" } },
+  ]) {
+    const read = mock.method(api, method, async () => { throw new AgentApiError(status,
+      { errors: [{ status: String(status), code, title: "Provider refusal", meta }] } as never); });
+    try {
+      await assert.rejects(call, (error: unknown) => {
+        assert.ok(error instanceof ORPCError, code);
+        assert.deepEqual(error.data, expected, code);
+        return true;
+      });
+      assert.equal(read.mock.callCount(), 1, `${code} must come from the selected provider read`);
+    } finally { read.mock.restore(); }
+  }
 });
 
 test("payment status exposes provider-reported transaction and refund evidence only", async () => {

@@ -44,6 +44,14 @@ export const observationsRoutes = {
 
   /** Local configuration only: no provider calls or state changes. */
   instance: os.handler(() => ({ agentId: process.env.AGENT_ID ?? null, executor: executes() })),
+  /** Gateway ownership evidence only: no grant adoption, funding lookup or other setup work. */
+  ownerIdentity: os.handler(async () => {
+    const id = process.env.AGENT_ID;
+    if (!id) return { agentId: null, owner: null };
+    const agent = await api.getAgent(id);
+    // A successful read without ownership is invalid evidence, not an outage or an uncreated agent.
+    return { agentId: id, owner: agent?.owner ?? null };
+  }),
   /**
    * How far onboarding has got: an agent, its owner, and a live grant whose token this server holds.
    * Adopts a staged grant token whose grant is in force, so it writes the settings file at times.

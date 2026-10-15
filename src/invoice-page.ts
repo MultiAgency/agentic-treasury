@@ -60,14 +60,28 @@ ul.items{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}u
 .when{font-size:13px;color:var(--muted)}.notice{border-radius:12px;padding:12px 16px;font-size:14px;background:var(--warn-bg);color:var(--warn)}
 [hidden]{display:none!important}code{word-break:break-all}
 </style></head><body><main>
+<p>Invoice demo · NEAR mainnet</p>
 <h1>${escape(title)}</h1>
+<p class="notice">This demo uses real funds. Sign in as the payee to request an agreement, file an invoice, and follow its payment status. The owner reviews agreements and approves held payouts separately in the signed-in Payables walkthrough.</p>
 <p>Sign in with the NEAR account you want to be paid to, enter the USDC amount, and submit. After approval, follow the invoice status until it shows Paid.</p>
 <section class="card" id="step-signin">
 <p>Your wallet signs a message proving you control the account. It doesn't send a transaction or spend anything.</p>
 <button id="signin">Sign in with NEAR</button>
 </section>
+<section class="card" id="work-orders-card" hidden aria-labelledby="work-orders-title">
+<h2 id="work-orders-title">Your work orders</h2>
+<p>File an invoice against fixed terms. Each payment still needs the owner's approval.</p>
+<button id="work-orders-check">Check work orders</button>
+<ul class="items" id="work-orders-list"></ul>
+<div id="work-order-detail" hidden>
+<h3 id="work-order-note"></h3><p id="work-order-terms"></p><p id="work-order-status" role="status"></p>
+<button id="work-order-file" disabled>File work order invoice</button>
+</div>
+<p id="work-order-error" role="alert"></p>
+</section>
 <section class="card" id="step-invoice" hidden>
 <div class="row"><span>Signed in as <code id="account"></code></span><span class="chip" id="agreed-chip"></span><button class="link" id="signout">Sign out</button></div>
+<h2 id="ordinary-invoice-title">New invoice or agreement request</h2>
 <p id="not-agreed" class="notice" hidden>The DAO hasn't agreed to pay this account yet. Submitting sends it a request; you're paid only after it agrees and you file the invoice.</p>
 <section id="agreements-card" hidden><h2>Your agreements</h2><ul class="items" id="agreements"></ul></section>
 <label>Amount (USDC)<input id="amount" inputmode="decimal" autocomplete="off" placeholder="250"></label>

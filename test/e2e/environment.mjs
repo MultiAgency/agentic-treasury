@@ -15,13 +15,13 @@ async function freePort(host = '127.0.0.1') {
   await new Promise(resolve => server.listen(0, host, resolve));
   const port = server.address().port; await close(server); return port;
 }
-export async function environment(directory, { workspace = false } = {}) {
+export async function environment(directory, { workspace = false, portfolioOwner = PAYEE } = {}) {
   mkdirSync(directory, { recursive: true });
   const services = [], proxies = [];
   const simulated = await provider(directory);
   const portfolioDir = join(directory, 'portfolio');
   let portfolio;
-  if (workspace) { mkdirSync(portfolioDir); portfolio = await provider(portfolioDir, { treasury: true, account: PAYEE }); }
+  if (workspace) { mkdirSync(portfolioDir); portfolio = await provider(portfolioDir, { treasury: true, account: portfolioOwner }); }
   let executor, reviewer;
   const executorDir = join(directory, 'executor'), reviewerDir = join(directory, 'reviewer'), gatewayDir = join(directory, 'gateway');
   for (const dir of [executorDir, reviewerDir, gatewayDir]) mkdirSync(dir);
@@ -89,7 +89,8 @@ export async function environment(directory, { workspace = false } = {}) {
       await start('portfolio', portfolioDir, 'src/server.ts', { PORT: String(port), EXECUTOR: 'on',
         AGENT_ID: portfolio.id, AGENT_GRANT_TOKEN: portfolio.token, NEAR_INTENTS_AGENT_API_URL: portfolio.url,
         DASHBOARD_AREA: 'treasury' }, 'Treasury dashboard on');
-      agents.push({ name: 'portfolio', owner: PAYEE, operators: [OWNER], area: 'treasury', port, executor: true });
+      // An obsolete operator list is ignored; only the actual owner can access this wallet's agent.
+      agents.push({ name: 'portfolio', owner: portfolioOwner, operators: [OWNER], area: 'treasury', port, executor: true });
     }
     writeFileSync(join(gatewayDir, 'dashboard.json'), JSON.stringify({ host: new URL(dashboard).host, invoices,
       agents }));

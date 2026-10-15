@@ -1,5 +1,15 @@
 # Enforcement: what the signed policy guarantees today
 
+Work orders bind one immutable invoice to a dedicated agent. The local dispatch check compares
+payee, asset, exact amount, invoice identity, policy digest and grant deadline, after the final provider
+reads; `test/work-order-binding.test.ts` covers changed terms, policy changes, deadline crossing,
+concurrent filing and an interrupted outcome. These are offline application checks, not evidence of
+provider enforcement against a bypassed executor. The signed transfer policy restricts destination
+and per-payment cap; the grant carries its expiry. Neither expresses a lifetime one-payment limit,
+exact invoice matching, nor completion by a deadline. Held payouts still need owner approval.
+No dedicated work-order payment has been mainnet-observed; residual-fund recovery and supplier
+conversion/forwarding remain unimplemented.
+
 Scheduling is not settlement evidence: the timer counts from the latest inbox `run` summary, which
 precedes the final after-observation and tick end. An interrupted evidence start alone does not pause
 that timer. Unresolved operations still block sends at the money lock. A dedicated durable scheduler
@@ -64,7 +74,7 @@ settings written by another process. Upgrade and preservation requirements are i
 Schedule-stop contention is visible in the Portfolio, Payables and recovery controls: an offline
 browser fixture returns the settings-lock retry error, verifies the schedule stays on and no success
 message appears, then retries successfully. The mutation is not automatically retried. These cases
-are covered in `test/browser/schedule.cjs`; they are not deployed-browser observations.
+are covered in `test/browser/strategy.cjs`; they are not deployed-browser observations.
 
 What this prototype can claim about staying inside the owner's policy, the evidence for each part, the
 gaps, and what a stronger claim would need. Dated runs are in the [mainnet log](mainnet-log.md). Further source pins and evidence are in the release record
@@ -75,17 +85,18 @@ limits. Output-asset enforcement is local, strict cumulative per-asset limits de
 serialization that is not fully established, and USD-budget atomicity has not been independently verified."
 
 ## The envelope
-The intended complete policy contains the following rules. The API documents signing the complete
+The owner-signed policy configures the provider controls below. The API documents signing the complete
 policy; independently verifying the binding from its plaintext to the signed payload remains open.
 
-- **Allowed assets.** A swap's input and output are in `assets`.
+- **Allowed input assets.** The provider's `assets` list restricts what may be spent. This executor
+  additionally requires swap outputs to be in the same list; that stricter check is local.
 - **Permitted actions.** `actions`, with shield and unshield under `confidential`, and transfers only to
   `destinations`.
-- **Cumulative per-asset spending caps.** Per transaction, hour, day and month. A swap spends its input.
+- **Per-asset spending caps.** Per transaction, hour, day and month. A swap spends its input.
   OutLayer's pinned tests show the hour and day counters as UTC calendar periods, not rolling windows
   (tests/velocity_accounting_e2e.sh:40–41); the monthly bucket key `monthly:%Y-%m` comes from coordinator
   code since removed, so its current form is unknown. The deployed version is not established.
-- **A cross-asset USD budget.** Rolling 24 h, 7 d and 30 d, shared by every grant.
+- **A cross-asset USD budget.** The Agent API documents rolling 24 h, 7 d and 30 d windows, shared by every grant.
 
 Outside the envelope:
 - The strategy (allocation target, cost cap, per-run ceiling): an application rule bound to the owner's
@@ -147,14 +158,18 @@ omits an asset; unknown unmanaged decimals remain unknown.
 swap using one observation time after its provider reads. Missing, expired or invalid input/output
 valuation refuses with `valuation_unavailable`, including before a prerequisite shield. The swap is
 checked again before submission. For autopilot, prior submitted swaps for the same plan are counted
-once at their recorded gross values, plus the proposed swap at its current observed value. An excess
-refuses with `autopilot_limit_exceeded`; equality is permitted. Shields, proven refusals and
+once at their recorded gross values, plus the proposed swap at its current observed value. The cumulative
+check sums and compares each numeric estimate's shortest decimal representation exactly. This avoids
+additional rounding during accumulation; it does not recover precision lost when an estimate was
+calculated. An excess refuses with `autopilot_limit_exceeded`; equality is permitted. Shields, proven refusals and
 never-submitted preparations do not count. Missing historical values refuse rather than count as zero;
 refunds do not replenish the ceiling. Manual plans retain their separate execution behavior.
-`test/planning-valuation.test.ts` covers freshness, cumulative accounting and recovery. The plan remains
-single-use, and an unresolved operation still blocks new sends. These are local strategy checks, not
-provider budget enforcement or a bound on settlement-time prices, fees or exact decimal accounting.
-No deployed observation is claimed.
+`test/strategy-value.test.ts` and `test/planning-valuation.test.ts` cover decimal comparisons, freshness,
+cumulative accounting and recovery. The plan remains single-use, and an unresolved operation still
+blocks new sends. These checks enforce the existing local strategy ceiling. Policy caps and USD-budget
+enforcement remain the provider's responsibility. Raw-amount conversion, individual valuations and the
+earlier plan-preview total still use floating-point arithmetic. Exact accumulation does not establish
+exact valuation, settlement-time prices or fees, or provider accounting. No deployed observation is claimed.
 
 RPC errors and immediate payment refusals carry only validated budget-remaining and availability
 metadata. Availability is an observation, not permission to retry; ambiguous outcomes remain unresolved.
@@ -174,6 +189,17 @@ below describe the pinned code, not necessarily the running service; that is not
 Upstream documentation disagrees with itself in places: the skills reference calls per-asset limits
 "rolling" while the upstream tests use UTC calendar periods for hour and day, and OutLayer's CUSTODY.md says usage is
 recorded post-settlement (:386, current) and before execution (:1077, older, matching removed code).
+
+**Provider documentation reviewed 2026-10-15.** The
+[Agent API policy reference at skills@b639531](https://github.com/NEAR-Intents-Agent-API/skills/blob/b63953155cd39d127f529f54e18275639bffbaed/near-intents-agent-api/references/policy.md)
+assigns USD budgets and destinations to the API and documents atomic USD charging at dispatch.
+[OutLayer's custody reference at 635d273](https://github.com/out-layer/outlayer/blob/635d2736b39acbccc885b0f57fb38a21ee091fc4/CUSTODY.md#policy-evaluation-flow-inside-tee)
+describes cumulative asset and rate counters as best-effort under concurrency, dependent on
+coordinator-supplied usage. These are different enforcement layers. That general custody description
+does not establish a failure of the Agent API's USD budget, and the API's documented atomic charging
+does not independently verify its deployed implementation. The relationship between the custody
+description, pinned serialization tests and our deployed route remains a provider clarification.
+We retain the existing provider controls and local checks; this review introduces no local budget engine.
 
 ## Status
 | Constraint | Status |
@@ -198,15 +224,54 @@ status semantics. It does not independently establish that a failed operation ha
 or that a replacement payment is safe. Acceptance case E7 requires that distinction; it remains open.
 A missing operation ID on a claimed or legacy operation cannot be repaired by status-only reconciliation.
 
+The [SDK recovery guidance at 20ca15c](https://github.com/NEAR-Intents-Agent-API/sdk-typescript/blob/20ca15c0bd54b6f15b22773de0ad4007b16ea851/README.md#L348-L360)
+explicitly allows partial effects under `FAILED`; neither `FAILED` nor `REFUNDED` proves nothing was
+sent. Its [budget-release contract](https://github.com/NEAR-Intents-Agent-API/sdk-typescript/blob/20ca15c0bd54b6f15b22773de0ad4007b16ea851/README.md#L288-L289)
+names `details.never_executed` or `details.never_submitted` for releasing a failed operation's USD
+charge once. These provider statements sharpen the existing gap: an operation ending and a replacement
+payment being safe are different conclusions. They do not independently prove deployed accounting.
+
+**Original invoice replay (offline-tested).** The application has no automatic replacement path for
+an existing invoice: filing the same payee/submission identity returns its recorded result, revisions
+retain the original payment, and submission requires the original attempt still to be `PREPARED`.
+`test/invoice-terminal-replay.test.ts` uses real SQLite and separate processes to check that failed or
+refunded outcomes, including responses carrying absent, non-execution, partial-effect or conflicting
+details, cannot authorize a second send for that identity. The original key, correlation ID and request
+remain unchanged across restart, filing, revision, reconciliation and attempted continuation.
+
+These tests do not classify the provider's effect evidence: the journal retains status, not those
+details, and terminal records stop automatic reconciliation. Releasing an invoice's SQLite reservation
+is local bookkeeping; it neither restores the provider's budget nor proves funds returned. A manual
+payment or invoice with a new submission identity is distinct work and still requires review of the
+earlier payment. Matching recipient and amount alone cannot distinguish a replacement from another
+legitimate obligation. No new money-path rule or provider guarantee follows from these tests.
+
 ## Local presentation limits
+
+Hosted access is derived from verified wallet ownership or the owner DAO's named groups and permissions;
+the former configured operator list grants no access. The gateway's execution/settings mappings are
+local application controls, not evidence that a DAO proposal passed. Existing owner signatures, provider
+policy and grant checks remain authoritative for money actions. See the
+[exact access mapping](architecture.md#dashboard-access-offline-tested).
+Token-weighted `Member` roles are not supported for private workspace admission; that would require
+verified delegated voting balances. Public `Everyone` permissions contribute only after Group admission.
+The gateway caches DAO policy for up to a minute, so removal may take that long to affect access.
+
+Source-review limitation: work-order `get` and `status` reads start retained child processes through
+`src/work-order-pool.ts`. The pool defaults to eight workers and currently removes them only after
+process exit. An admitted reader can therefore fill that capacity by inspecting different orders;
+idle-worker retirement remains open. This is an availability limit, not additional signing authority.
 
 An explicit session or agent-access denial hides retained private records in the shared Home and agent
 views and refreshes gateway permissions. This includes decoded proposals cached for a DAO shared by
 multiple agents: denied-agent payloads are removed while permitted sibling proposals remain, and late
-responses cannot restore denied payloads. An operator-only procedure refusal leaves permitted member
-reads available without repeatedly invalidating its own query. Expired invoice-page sessions clear rendered records and invalidate outstanding reads;
+responses cannot restore denied payloads. A procedure-permission refusal leaves permitted member
+reads available without repeatedly invalidating its own query. An agent procedure refusal clears that
+agent's cached action permissions until a successful permission refresh; failed refreshes cannot restore
+them. Delayed owner-action callbacks check current permissions before preparing. Expired invoice-page
+sessions clear rendered records and invalidate outstanding reads;
 account-scoped draft submission identity is retained for signing in again. Offline browser regressions
-in `test/browser/access-expiry.cjs` and `test/browser/invoice-expiry.cjs` reproduce the previous cached-data
+in `test/browser/access-expiry.cjs` and `test/browser/invoices.cjs` reproduce the previous cached-data
 exposure and verify the correction. A transient provider failure still permits explicitly stale
 observations. Policy digests identify reported policy JSON; they do not verify the owner's signature
 or the provider's enforcement. These tests do not establish hosted behavior.
@@ -341,16 +406,18 @@ on these: queued (timelocked) work reserves nothing, per the provider's examples
 not serialized with spends (inferred: the owner stores policies on chain and the keystore re-reads them
 on each check). This server's floating-point `usdIn` is a record, not authoritative accounting.
 
-**A held payout is committed for dispatch before its vote.** Mainnet-observed, from our own provider
-readback (2026-10-13T04:10Z): both held payouts of 2026-10-12 recorded `dispatch_committed_at` 10 and
-56 seconds before their approval requests (21:47:00Z then 21:47:10Z; 22:16:35Z then 22:17:31Z). Per the
-Agent API's own docs, a revoke or freeze after that point does not stop the operation, so the API-side
-rules (destinations, USD budget, grant) are judged once, at admission, not again at the vote. Per OutLayer
-source (`outlayer@da5c9ff`, keystore worker), the keystore re-evaluates its own rules before signing:
-frozen, input asset and the per-transaction cap, and cumulative caps only if the private coordinator
-supplies usage. So tightening destinations or the budget after a payout is held won't stop it, while the
-per-transaction cap still binds at signing. This narrows E8; it is source-based for the keystore, and
-the deployed version is unknown.
+**Two observed held payouts were committed before approval.** Our provider readback
+(2026-10-13T04:10Z) showed that both held payouts of 2026-10-12 recorded `dispatch_committed_at` 10 and
+56 seconds before their approval requests (21:47:00Z then 21:47:10Z; 22:16:35Z then 22:17:31Z).
+The [API recovery reference](https://github.com/NEAR-Intents-Agent-API/skills/blob/8e03b0ea8e8f24f66923346f82c7afa56c40c6d1/near-intents-agent-api/references/status-and-recovery.md#L113-L117)
+places the revocation/freeze cutoff at dispatch commitment. However, its
+[conceptual pipeline](https://github.com/NEAR-Intents-Agent-API/skills/blob/8e03b0ea8e8f24f66923346f82c7afa56c40c6d1/near-intents-agent-api/references/concepts.md#L73-L85)
+places the approval wait before that commitment. This documentation mismatch does not establish
+the deployed ordering of every check. OutLayer source (`outlayer@da5c9ff`, keystore worker) rechecks
+frozen, input asset and the per-transaction cap before signing, and cumulative caps only when the
+coordinator supplies usage. API commitment and keystore signing are separate boundaries. Whether a
+reduced cap, changed destination, freeze or revoked grant stops an already-held payout remains
+unverified on our deployed route; the timestamps alone do not prove that it will or will not.
 
 **Open cases.** Local checks that pass: an unlisted output asset refused with no send (A1) and a policy
 change between preview and execution refused (A3), both in the local regression suites; one send site (C1,
@@ -379,10 +446,56 @@ route that an unrelated refusal can't pass for a cap. A refusal needs
 attribution: `spend_budget_exceeded` identifies the budget, but `policy_denied` alone doesn't identify
 which cap.
 
-**Questions for the providers:** what identifies the deployed enforcement code; what stops admission
-before crash-recovered usage is accounted for; what coordinates wallet admission across service
-instances; how USD reservations are made atomic and recovered; what binds the owner-authorized policy
-and operation terms to the signed artifact; and whether both swap assets will be enforced.
+### Repository review, 2026-10-15
+
+The four public repositories answer integration questions; they do not contain the Agent API's
+server-side budget accounting or custody coordinator implementation. This read-only source review
+ran no examples or funded tests and does not identify a deployed provider build.
+
+| Repository | Reviewed revision | Scope |
+|---|---|---|
+| [skills](https://github.com/NEAR-Intents-Agent-API/skills/tree/8e03b0ea8e8f24f66923346f82c7afa56c40c6d1) | `8e03b0e` | API guidance and reference clients |
+| [sdk-typescript](https://github.com/NEAR-Intents-Agent-API/sdk-typescript/tree/20ca15c0bd54b6f15b22773de0ad4007b16ea851) | `20ca15c` | HTTP client, generated contract, proof verifier and client tests |
+| [demo](https://github.com/NEAR-Intents-Agent-API/demo/tree/77cce320ee810fbd53916bdafd2f2a9153f50948) | `77cce32` | Dashboard and MCP integration calling the external API |
+| [examples](https://github.com/NEAR-Intents-Agent-API/examples/tree/6cf51ee9e9746ba0489a06ace4547148b09854eb) | `6cf51ee` | Integration recipes, not provider enforcement tests |
+
+1. **Shared spending limits: the contract is explicit; the implementation remains unverified.**
+   The [policy reference](https://github.com/NEAR-Intents-Agent-API/skills/blob/8e03b0ea8e8f24f66923346f82c7afa56c40c6d1/near-intents-agent-api/references/policy.md#L47-L64)
+   documents an account-wide USD budget, atomic charging at dispatch and refusal without fresh prices.
+   The SDK preserves caller-supplied idempotency keys and performs no automatic retry; its
+   [tests](https://github.com/NEAR-Intents-Agent-API/sdk-typescript/blob/20ca15c0bd54b6f15b22773de0ad4007b16ea851/tests/idempotency.test.ts#L139-L224)
+   check client behavior with mocked responses. They do not establish server deduplication or
+   capacity conservation across grants, instances and crashes. The recovery contract above and
+   OutLayer's qualified cumulative counters remain distinct from this documented USD guarantee.
+2. **Held payouts: use the existing controls, with their dispatch boundary visible.**
+   The [timelock recipe](https://github.com/NEAR-Intents-Agent-API/examples/blob/6cf51ee9e9746ba0489a06ace4547148b09854eb/10-recipes/02-timelocked-payout.ts#L1-L17)
+   documents no USD reservation while queued and invalidation on a policy revision change; it also
+   demonstrates `execution_cancel`. Queued work and a provider-held approval are different states.
+   The ordering mismatch above remains unresolved. The SDK's
+   [containment response](https://github.com/NEAR-Intents-Agent-API/sdk-typescript/blob/20ca15c0bd54b6f15b22773de0ad4007b16ea851/src/generated/api.d.ts#L2694-L2720)
+   explicitly labels provider enforcement and direct-provider-key bypass `unverified`.
+3. **Signed terms: approval binding exists, with a documented coordinator dependency.**
+   The [demo approval flow](https://github.com/NEAR-Intents-Agent-API/demo/blob/77cce320ee810fbd53916bdafd2f2a9153f50948/features/wallet/approvals/use-approvals.ts#L62-L75)
+   displays provider-generated approval terms; it does not independently verify the final artifact.
+   [OutLayer's custody reference](https://github.com/out-layer/outlayer/blob/635d2736b39acbccc885b0f57fb38a21ee091fc4/CUSTODY.md#L489-L505)
+   describes verification of approvals over the canonical operation, while swaps and confidential
+   operations trust the coordinator to match the signed artifact's token and amount to that operation.
+   The SDK's operation-proof verifier checks logged evidence and signatures, not enforcement or the
+   TDX quote; [attestation remains a separate check](https://github.com/NEAR-Intents-Agent-API/sdk-typescript/blob/20ca15c0bd54b6f15b22773de0ad4007b16ea851/README.md#L291-L309).
+
+**Effect on the feature gaps.** [Grants identify actors and expiry, without separate permissions](https://github.com/NEAR-Intents-Agent-API/skills/blob/8e03b0ea8e8f24f66923346f82c7afa56c40c6d1/near-intents-agent-api/references/concepts.md#L17-L32).
+Recipient restrictions and spending caps belong in the shared policy. Its schema has no
+agreement-specific invoice ceiling or absolute deadline; the weekly schedule and grant expiry do not
+bind an invoice to an agreement. The existing owner vote therefore remains responsible for those terms.
+The [private-balance example](https://github.com/NEAR-Intents-Agent-API/examples/blob/6cf51ee9e9746ba0489a06ace4547148b09854eb/05-money-moves/05-private-balance.ts#L43-L56)
+unshields a supplied amount; it does not implement an atomic shortfall-and-payout operation.
+These repositories do not close the documented membership-privacy or unattended-operation gaps.
+
+**Validation follow-up.** The original-invoice replay checks above cover the existing local protection;
+they do not establish whether a new payment is a safe replacement. Provider non-execution evidence and
+budget-release semantics remain unverified. The separate funded check still needed is whether tightening
+a per-transaction cap on an already-held payout refuses signing after approval. This review and its
+offline follow-up change no money-path behavior or canonical requirement evidence stage.
 
 Missing evidence narrows the claim; it doesn't call for a separate signer, custody contract or local
 budget engine.
@@ -397,7 +510,7 @@ requires an explicit comparison against the new policy before re-review. Tests a
 
 The payment check is local: it does not make the provider read and later submission atomic. A policy
 change at the provider after that read can still affect whether the payment is held. The dashboard
-therefore describes the reviewed approval requirement and directs the operator to the recorded
+therefore describes the reviewed approval requirement and directs the user to the recorded
 outcome; it does not promise a hold. Closing this interval requires a provider-enforced transfer
 precondition, whose deployed behavior has not been established. Existing invoice and plan paths
 retain their own bindings; they do not use the dashboard confirmation contract.
@@ -416,8 +529,8 @@ the current strategy digest and persist schedule-off before replacing the strate
 an unchanged digest, policy in force, a live held Treasury grant matching the strategy, and no unresolved
 operation; the digest is checked again after asynchronous reads. Stop is independent of provider reads.
 The dashboard binds an open enable confirmation to its reviewed digest and displayed terms. A
-changed digest or unavailable readiness invalidates it until the operator cancels and reviews again
-(`test/browser/schedule.cjs`, offline browser fixtures).
+changed digest or unavailable readiness invalidates it until the user cancels and reviews again
+(`test/browser/strategy.cjs`, offline browser fixtures).
 After a failed strategy or schedule refresh, the dashboard labels readiness unknown rather than
 presenting cached authorization as current. Cached strategy details remain available for editing,
 and the stop control remains available. Recovery restores the label after successful reads.
@@ -514,3 +627,14 @@ Provider timelocks and scheduled release remain an open enforcement question. Th
 authorization path does not hold every delayed action and does not inspect the provider's
 scheduled-execution queue. The architecture text now states this limit; no new timelock rule
 or claim about deployed release-time enforcement is introduced.
+
+
+### Self-service setup boundary (offline-tested only)
+
+Hosted reservations bind one owner and area before provider creation. A verified wallet may reserve
+its own setup; a DAO member also needs proposal permission. Reservation is not owner approval.
+Creation uses the existing verified owner-intent lifecycle, and another open creation blocks a new
+one on that instance. The 32-instance cap bounds local reservations; it does not establish capacity
+under load, fair admission or protection against many wallets exhausting that cap. Mainnet creation
+through both owner types, and supplier invoice intake for newly reserved Payables agents, remain
+unverified or unimplemented respectively. See `docs/operations.md` for preservation and host limits.

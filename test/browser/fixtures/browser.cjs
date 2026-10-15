@@ -6,6 +6,15 @@ const { join } = require('node:path');
 let sequence = 0;
 let fixtureFailed = false;
 process.on('exit', () => { if (fixtureFailed) process.exitCode = 1; });
+function recordFailure(error, filename) {
+  fixtureFailed = true;
+  const message = error instanceof Error ? error.stack : String(error);
+  console.error(message);
+  if (process.env.PROTO_BROWSER_ARTIFACTS) {
+    mkdirSync(process.env.PROTO_BROWSER_ARTIFACTS, { recursive: true });
+    appendFileSync(join(process.env.PROTO_BROWSER_ARTIFACTS, filename), message + '\n');
+  }
+}
 function protectRoutes(target) {
   const register = target.route.bind(target);
   const remove = target.unroute.bind(target);
@@ -14,13 +23,7 @@ function protectRoutes(target) {
     if (!wrappers.has(handler)) wrappers.set(handler, async (route, request) => {
       try { await handler(route, request); }
       catch (error) {
-        fixtureFailed = true;
-        const message = error instanceof Error ? error.stack : String(error);
-        console.error(message);
-        if (process.env.PROTO_BROWSER_ARTIFACTS) {
-          mkdirSync(process.env.PROTO_BROWSER_ARTIFACTS, { recursive: true });
-          appendFileSync(join(process.env.PROTO_BROWSER_ARTIFACTS, 'fixture-errors.log'), message + '\n');
-        }
+        recordFailure(error, 'fixture-errors.log');
         await route.abort().catch(() => {});
       }
     });
@@ -33,7 +36,10 @@ async function instrument(context) {
   await context.route('**/*', route => route.abort());
   await context.routeWebSocket('**/*', socket => socket.close());
   protectRoutes(context);
-  context.on('page', page => protectRoutes(page));
+  context.on('page', page => {
+    protectRoutes(page);
+    page.on('pageerror', error => recordFailure(error, 'page-errors.log'));
+  });
   const root = process.env.PROTO_BROWSER_ARTIFACTS;
   if (!root) return context;
   const directory = join(root, `context-${++sequence}`);

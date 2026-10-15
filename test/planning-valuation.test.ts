@@ -5,8 +5,9 @@ import { dispatch } from "../src/agent.js";
 import { withMoneyLock } from "../src/lock.js";
 import { executePlan, observe, savePlan, type Plan, type PlanEvent, type PlannedAction } from "../src/plans.js";
 import { ASSETS, treasuryPolicy } from "../src/policy.js";
-import { claimSubmission, readOps, record, submittedSwapUsd, type Method } from "../src/ops.js";
+import { claimSubmission, readOps, record, submittedSwapValues, type Method } from "../src/ops.js";
 import { loadStrategy, saveStrategy } from "../src/strategy.js";
+import { withinRunCeiling } from "../src/strategy-value.js";
 import { authorityFixture, balanceView, policyView, timedPrices } from "./fixtures/authority.js";
 import { freshDirectory, offline } from "./fixtures/harness.js";
 
@@ -82,6 +83,57 @@ test("a later swap cannot take submission-time run value above the autopilot cei
   assert.deepEqual(readOps().map(op => ({ usd: op.usdIn, refusal: op.refused ?? null })), [
     { usd: 5, refusal: null }, { usd: 5.05, refusal: "autopilot_limit_exceeded" },
   ]);
+});
+
+test("automatic execution refuses decimal excess that floating addition rounds down to the ceiling", async () => {
+  const strategy = loadStrategy();
+  saveStrategy({ ...strategy, autopilot: { ...strategy.autopilot, maxUsd: 1 } });
+  price = 0.9;
+  afterSend = () => { price = 0.10000000000000005; };
+  const leg = { ...swap(), amount: "1", amountOut: "1", minAmountOut: "1" };
+  const events = await run([leg, leg]);
+  assert.deepEqual(sends, ["swap"]);
+  assert.equal(events.at(-1)?.type, "rejected");
+  assert.equal(readOps().at(-1)?.refused, "autopilot_limit_exceeded");
+});
+
+test("cumulative authorization preserves every previously recorded decimal estimate", async () => {
+  const strategy = loadStrategy();
+  saveStrategy({ ...strategy, autopilot: { ...strategy.autopilot, maxUsd: 2 } });
+  price = 0.9;
+  afterSend = () => { price = sends.length === 1 ? 0.10000000000000005 : 1; };
+  const leg = { ...swap(), amount: "1", amountOut: "1", minAmountOut: "1" };
+  const events = await run([leg, leg, leg]);
+  assert.deepEqual(sends, ["swap", "swap"]);
+  assert.equal(events.at(-1)?.type, "rejected");
+  assert.equal(readOps().at(-1)?.refused, "autopilot_limit_exceeded");
+});
+
+test("decimal equality stays executable at an integer strategy ceiling", async () => {
+  const strategy = loadStrategy();
+  saveStrategy({ ...strategy, autopilot: { ...strategy.autopilot, maxUsd: 1 } });
+  price = 0.05;
+  const leg = { ...swap(), amount: "1", amountOut: "1", minAmountOut: "1" };
+  const events = await run(Array.from({ length: 20 }, () => ({ ...leg })));
+  assert.deepEqual(sends, Array(20).fill("swap"));
+  assert.equal(events.filter(event => event.type === "action" && event.status === "SUCCESS").length, 20);
+});
+
+for (const afterShield of [false, true]) test(`fractional ceiling excess ${afterShield ? "after" : "before"} a prerequisite shield refuses its swap`, async () => {
+  const strategy = loadStrategy();
+  saveStrategy({ ...strategy, autopilot: { ...strategy.autopilot, maxUsd: 1 } });
+  balances[input] = { public: 2n, confidential: 0n };
+  price = 0.9;
+  afterSend = () => {
+    if (sends.filter(method => method === "swap").length === 1)
+      price = !afterShield || sends.at(-1) === "shield" ? 0.10000000000000005 : 0.1;
+  };
+  const leg = { ...swap(), amount: "1", amountOut: "1", minAmountOut: "1" };
+  const events = await run([leg, leg]);
+  assert.deepEqual(sends, afterShield ? ["shield", "swap", "shield"] : ["shield", "swap"]);
+  assert.equal(events.at(-1)?.type, "rejected");
+  assert.equal(readOps().at(-1)?.method, afterShield ? "swap" : "shield");
+  assert.equal(readOps().at(-1)?.refused, "autopilot_limit_exceeded");
 });
 
 test("expired prices cannot produce a treasury plan", async () => {
@@ -170,19 +222,21 @@ test("journal accounting counts submitted swaps once, retains failed/refunded va
   prior("preparation", 99, "PREPARED");
   prior("shield", 99, "SUCCESS", { method: "shield" });
   prior("other-plan", 99, "SUCCESS", { planId: "other" });
-  assert.equal(submittedSwapUsd(readOps(), "accounted"), 10);
-  assert.equal(submittedSwapUsd(readOps(), "accounted"), 10, "rereading durable evidence never resets or duplicates its value");
+  assert.deepEqual(submittedSwapValues(readOps(), "accounted"), [2, 3, 4, 1]);
+  assert.deepEqual(submittedSwapValues(readOps(), "accounted"), [2, 3, 4, 1], "rereading durable evidence never resets or duplicates its value");
+  assert.equal(withinRunCeiling(submittedSwapValues(readOps(), "accounted"), 10), true);
 });
 
 for (const value of [undefined, null, -1]) test(`a submitted legacy swap with ${String(value)} valuation leaves cumulative value unknown`, () => {
   prior("legacy", value, "SUCCESS", { legacy: true });
-  assert.equal(submittedSwapUsd(readOps(), "accounted"), null);
+  assert.equal(withinRunCeiling(submittedSwapValues(readOps(), "accounted"), 10), null);
 });
 
-test("overflowing cumulative journal value remains unknown", () => {
+test("finite journal values exceeding Number capacity are still provably above the ceiling", () => {
   prior("first", 1e308, "SUCCESS");
   prior("second", 1e308, "SUCCESS");
-  assert.equal(submittedSwapUsd(readOps(), "accounted"), null);
+  assert.deepEqual(submittedSwapValues(readOps(), "accounted"), [1e308, 1e308]);
+  assert.equal(withinRunCeiling(submittedSwapValues(readOps(), "accounted"), Number.MAX_VALUE), false);
 });
 
 test("unknown historical plan valuation refuses automatic continuation instead of implying unused capacity", async () => {
@@ -196,7 +250,7 @@ test("unknown historical plan valuation refuses automatic continuation instead o
 
 test("an unresolved submission blocks new execution regardless of cumulative valuation", async () => {
   prior("unknown", 1, "CLAIMED");
-  assert.equal(submittedSwapUsd(readOps(), "accounted"), 1);
+  assert.deepEqual(submittedSwapValues(readOps(), "accounted"), [1]);
   await assert.rejects(run([swap()]), /earlier money action/);
   assert.deepEqual(sends, []);
   assert.equal(readOps()[0]?.submissionState, "SUBMISSION_ATTEMPTED");

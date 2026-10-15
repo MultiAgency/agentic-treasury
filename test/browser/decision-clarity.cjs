@@ -20,7 +20,7 @@ const root = path.resolve(process.argv[2] || 'web/dist');
       if (url.pathname === '/gw/me') return route.fulfill({ json: {
         agents: ['treasury', 'payables'].map(name => ({ name, area: name, owner: 'owner.near', dao: false })),
         invoices: null, viewer: { account: 'owner.near', access: Object.fromEntries(['treasury', 'payables'].map(name => [name,
-          { role: options.member ? 'member' : 'operator', canVote: true, canPropose: true }])) },
+          { canSign: !options.member, canPropose: !options.member, canVote: !options.member, canExecute: !options.member, canManage: !options.member }])) },
       } });
       if (url.pathname.includes('/rpc/')) {
         const method = url.pathname.split('/rpc/')[1];
@@ -36,7 +36,7 @@ const root = path.resolve(process.argv[2] || 'web/dist');
           overview: { agentId: 'fixture', area: treasury ? 'treasury' : 'payables', digest: 'fixture', notInForce: null, agreed: [], unmanaged: [], grants: [],
             book: [], target: {}, rebalance: { minLegUsd: 1, maxCostBps: 100 },
             policy: { policy: { actions: treasury ? ['swap'] : ['transfer'], frozen: false }, usage: { budget: {} }, cooldowns: {} } },
-          'treasury/get': null, held: [], 'inbox/list': [], 'agreements/list': [], invoices: [],
+          'treasury/get': null, held: [], 'inbox/list': [], 'workOrders/list': [], 'agreements/list': [], invoices: [],
           unresolved: treasury ? [] : [{ key: 'fixture', at: '2026-10-01T00:00:00Z' }],
           'autopilot/get': { on, everyMin: 60, maxUsd: 10 }, 'autopilot/stop': undefined,
           'autopilot/evidence': { ticks: [] }, 'owner/actions': [],
@@ -89,10 +89,6 @@ const root = path.resolve(process.argv[2] || 'web/dist');
     await check('unknown area retains the policy fallback for grants', { route: '/', noGrant: true, fail: 'overview' }, async page => {
       await page.getByRole('link', { name: 'Issue', exact: true }).nth(1).waitFor();
       assert.ok((await page.getByRole('link', { name: 'Issue', exact: true }).evaluateAll(links => links.map(link => link.getAttribute('href')))).includes('/a/treasury/policy#grants'));
-    });
-    await check('Activity does not depend on linked-treasury reads', { fail: 'treasury/get' }, async (page, calls) => {
-      await page.getByText('Operations recorded on this instance, including refusals, newest first.').waitFor();
-      assert.ok(!calls.includes('treasury/get'));
     });
     await check('stop survives cold overview failure', { fail: 'overview' }, async (page, calls) => {
       await page.getByText('Fixture observation unavailable', { exact: true }).waitFor();

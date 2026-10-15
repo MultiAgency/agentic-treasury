@@ -8,6 +8,9 @@ import { linkTrezuDao } from "../features/funding/treasury";
 import { Button, Card, ErrorBox, input, Section, Spinner, Step } from "../shared/ui";
 import { connect, dao, send, useWallet } from "../features/owner/wallet";
 import { SetupActions, useSetupActions } from "./setup-progress";
+import { useCanCall, useViewer } from "./viewer";
+import { useGateway } from "./gateway-context";
+import { BASE } from "../shared/client";
 
 function ActionRow({ label, busy, disabled, onClick, children }: { label: ReactNode; busy: boolean; disabled?: boolean; onClick: () => void; children: ReactNode }) {
   return (
@@ -31,13 +34,18 @@ export function Onboarding({ setup }: { setup: Setup }) {
   const action = useOwnerAction(setup);
   const existing = useSetupActions(true);
   const { canSign } = useSigner(setup);
+  const viewer = useViewer();
+  const reserved = useGateway()?.agents.find(agent => `/a/${agent.name}` === BASE && agent.name.startsWith("own-"));
+  const canLink = useCanCall("treasury/link");
+  const canPrepare = useCanCall("owner/prepare");
   const [choice, setChoice] = useState<Signer | null>(setup.dao ? "dao" : null);
   const [funding, setFunding] = useState<string>();
-  const [role, setRole] = useState<"treasury" | "payout">("treasury");
+  const [role, setRole] = useState<"treasury" | "payout">(reserved?.area === "payables" ? "payout" : "treasury");
   const [payees, setPayees] = useState(setup.dao?.id ?? "");
   const payeeList = payees.split(/[\s,]+/).filter(Boolean);
   const signer: Signer = setup.agentId ? ownerSigner(setup) : (choice ?? "wallet");
   const isDao = signer === "dao" && Boolean(setup.dao);
+  const canCreate = canPrepare && (viewer === null || (signer === "dao" ? viewer.access?.canPropose : viewer.access?.canSign));
 
   const chosen = isDao ? true : wallet.status === "connected";
   type StepId = "owner" | "fund" | "create" | "grant";
@@ -55,6 +63,7 @@ export function Onboarding({ setup }: { setup: Setup }) {
 
   const linking = useAttempt();
   const linkDao = () => linking.attempt(async () => {
+    if (!canLink) return;
     await linkTrezuDao();
     setChoice("dao");
   });
@@ -84,6 +93,7 @@ export function Onboarding({ setup }: { setup: Setup }) {
       }
     >
       <p className="text-sm">Next: {existing.blocked ? "check existing setup actions before creating an agent." : current === "owner" ? "choose and connect the owner." : current === "fund" ? "check or create the DAO’s owner account." : "review the selected area and create its agent."}</p>
+      {reserved && <p className="break-all text-sm">Selected owner: {reserved.owner}. This setup is reserved for {reserved.area === "payables" ? "Payables" : "Portfolio"}. <a href="/" className="underline">Choose another setup</a>.</p>}
       <SetupActions state={existing} />
       <Card>
         <ol className="flex flex-col">
@@ -98,10 +108,10 @@ export function Onboarding({ setup }: { setup: Setup }) {
               votes can sign for.
             </p>
             <div className="flex flex-wrap gap-3">
-              <Button variant={choice === "dao" ? "outline" : "default"} disabled={wallet.status === "connecting"} onClick={() => { setChoice("wallet"); connect().catch(() => {}); }}>
+              <Button variant={choice === "dao" ? "outline" : "default"} disabled={wallet.status === "connecting" || reserved?.dao} onClick={() => { setChoice("wallet"); connect().catch(() => {}); }}>
                 <WalletIcon size={18} /> My wallet
               </Button>
-              <Button variant="outline" disabled={daoWallet.status === "connecting"} onClick={linkDao}>
+              <Button variant="outline" disabled={daoWallet.status === "connecting" || !canLink || Boolean(reserved)} onClick={linkDao}>
                 {daoWallet.status === "connecting" ? <Spinner /> : <UsersThree size={18} />} A DAO, through Trezu
               </Button>
             </div>
@@ -141,14 +151,14 @@ export function Onboarding({ setup }: { setup: Setup }) {
             </p>
             <div className="flex flex-col gap-2 text-sm">
               <label className="flex items-start gap-2">
-                <input type="radio" checked={role === "treasury"} onChange={() => setRole("treasury")} />
+                <input type="radio" disabled={Boolean(reserved)} checked={role === "treasury"} onChange={() => setRole("treasury")} />
                 <span>
                   <span className="font-medium">Portfolio agent.</span>{" "}
                   <span className="text-muted-foreground">Swaps between USDC, wNEAR and ETH inside caps, with no vote per action.</span>
                 </span>
               </label>
               <label className="flex items-start gap-2">
-                <input type="radio" checked={role === "payout"} onChange={() => setRole("payout")} />
+                <input type="radio" disabled={Boolean(reserved)} checked={role === "payout"} onChange={() => setRole("payout")} />
                 <span>
                   <span className="font-medium">Payout agent.</span>{" "}
                   <span className="text-muted-foreground">
@@ -168,7 +178,7 @@ export function Onboarding({ setup }: { setup: Setup }) {
             <ActionRow
               label={action.label}
               busy={action.busy}
-              disabled={existing.blocked || (role === "payout" && payeeList.length === 0)}
+              disabled={!canCreate || existing.blocked || (reserved && !reserved.dao && wallet.accountId !== reserved.owner) || (role === "payout" && payeeList.length === 0)}
               onClick={() => action.run({ type: "agent_create", role, payees: role === "payout" ? payeeList : undefined }, signer)}
             >
               {isDao ? "Propose creating the agent" : "Create agent"}
@@ -180,7 +190,7 @@ export function Onboarding({ setup }: { setup: Setup }) {
               from Policy & grants.
             </p>
             {!canSign && (
-              <p className="text-sm text-warning-muted-foreground">Only {ownerName(setup)} can issue grants. Connect that wallet.</p>
+              <p className="text-sm text-warning-muted-foreground">{isDao ? "Proposing a grant requires permission to propose owner actions for this DAO." : `Only ${ownerName(setup)} can issue grants. Connect that wallet.`}</p>
             )}
             <ErrorBox error={action.error} />
             {role === "treasury" ? <Link to="/automations" className="underline">Review and authorize the Portfolio strategy</Link> : <ActionRow label={action.label} busy={action.busy || !canSign} onClick={() => action.run({ type: "grant_issue" })}>

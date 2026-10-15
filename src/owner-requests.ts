@@ -3,19 +3,24 @@ import { agentId } from "./env.js";
 import { api } from "./api.js";
 import { type AgentRole, payoutPolicy, treasuryPolicy } from "./policy.js";
 import { mandateDigest, type ReviewedPolicy } from "./mandate.js";
+import { currentWorkOrder, workOrderPolicy } from "./work-order-store.js";
 
 /**
  * The owner actions this treasury uses, built once for both signers: the CLI's owner key and
  * the dashboard's connected wallet.
  */
 export const ownerRequests = {
-  agent_create: (owner: OwnerWallet, role: AgentRole = "treasury", payees: string[] = []) =>
-    ({
+  agent_create: (owner: OwnerWallet, role: AgentRole = "treasury", payees: string[] = []) => {
+    const order = currentWorkOrder();
+    if (order && (owner.type !== "near" || owner.account_id !== order.owner.account_id || owner.public_key !== order.owner.public_key))
+      throw new Error("The work order owner changed. Preserve the original order and review its authority.");
+    return {
       type: "agent_create",
-      name: role === "payout" ? "Payouts" : "Agentic Treasury",
+      name: order ? "Work order" : role === "payout" ? "Payouts" : "Agentic Treasury",
       owner,
-      policy: role === "payout" ? payoutPolicy(payees) : treasuryPolicy,
-    }) as const,
+      policy: order ? workOrderPolicy(order) : role === "payout" ? payoutPolicy(payees) : treasuryPolicy,
+    } as const;
+  },
   agent_freeze: () => ({ type: "agent_freeze", agent_id: agentId() }) as const,
   agent_unfreeze: () => ({ type: "agent_unfreeze", agent_id: agentId() }) as const,
 };

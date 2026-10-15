@@ -42,7 +42,7 @@ test("failed replacement leaves schedule durably off", async () => {
   await assert.rejects(c.saveReviewedStrategy(changed, digest));
   assert.deepEqual(loadStrategy(), DEFAULT_STRATEGY);
   const env = { ...process.env }; delete env.AUTOPILOT;
-  const restarted = spawnSync(process.execPath, ["--env-file=.env", "-e", "if(process.env.AUTOPILOT === 'on') process.exit(1)"], { env });
+  const restarted = spawnSync(process.execPath, ["--env-file=.env", "-e", "if(process.env.AUTOPILOT === 'on') process.exit(1)"], { env, timeout: 15_000 });
   assert.equal(restarted.status, 0);
   assert.notEqual(process.env.AUTOPILOT, "on");
   assert.match(readFileSync(".env", "utf8"), /AUTOPILOT=\s*$/);
@@ -90,12 +90,19 @@ test("legacy requests cannot enable without a review or change and enable togeth
   assert.notEqual(process.env.AUTOPILOT, "on");
 });
 
-test("members cannot mutate and approve-only hosts refuse direct controls", async () => {
+test("strategy controls require their specific capabilities and approve-only hosts refuse direct controls", async () => {
   const c = await controls();
+  const reader = { canSign: false, canPropose: false, canVote: false, canExecute: false, canManage: false };
   for (const route of ["strategy/save", "autopilot/enable", "autopilot/stop"]) {
-    assert.equal(mayCall("member", route), false);
-    assert.equal(mayCall("operator", route), true);
+    assert.equal(mayCall(reader, route), false);
+    assert.equal(mayCall({ ...reader, canManage: true, canExecute: true }, route), true);
   }
+  assert.equal(mayCall({ ...reader, canManage: true }, "strategy/save"), true);
+  assert.equal(mayCall({ ...reader, canManage: true }, "autopilot/enable"), false);
+  assert.equal(mayCall({ ...reader, canExecute: true }, "strategy/save"), false);
+  assert.equal(mayCall({ ...reader, canExecute: true }, "autopilot/enable"), true);
+  assert.equal(mayCall({ ...reader, canExecute: true }, "autopilot/set"), false);
+  assert.equal(mayCall({ ...reader, canManage: true }, "autopilot/set"), false);
   process.env.EXECUTOR = "off";
   await assert.rejects(c.saveReviewedStrategy(changed, digest), /executor/i);
   await assert.rejects(c.enableSchedule(digest), /executor/i);

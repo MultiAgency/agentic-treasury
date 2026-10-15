@@ -1,8 +1,12 @@
 import { ConfirmButton } from "../owner/confirm-button";
 import { Robot, ShieldCheck } from "@phosphor-icons/react";
-import { useState } from "react";
+import { useId, useState } from "react";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { inputStyles } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 import { amountOf, client, useRun } from "../../shared/lib";
 import { useAgent } from "../../app/agent-context";
+import { useCanCall } from "../../app/viewer";
 import { Badge, Button, Card, CardHeader, Empty, ErrorBox, NotExecuted, Spinner, StatusBadge, statusTone } from "../../shared/ui";
 
 /** A tool result that starts like this was stopped by the policy or the cost cap, or not proposed. */
@@ -10,11 +14,13 @@ const resultTone = (result: string) =>
   /^(REFUSED|ERROR)/.test(result) ? "destructive" : /^(NOT PROPOSED|ALREADY)/.test(result) ? "warning" : /^PROPOSED/.test(result) ? "info" : "neutral";
 
 export function Steward() {
+  const canPropose = useCanCall("steward/propose");
   const { data } = useAgent();
   const symbol = (asset: string) => data.book.find((h) => h.asset === asset)?.symbol ?? asset;
   const proposal = useRun(client.steward.propose, []);
   const execution = useRun(client.executePlan);
   const [instruction, setInstruction] = useState("");
+  const instructionId = useId();
   const busy = proposal.state === "running" || execution.state === "running";
   const plan = proposal.events.find((e) => e.type === "plan")?.plan;
   const executed = execution.input?.planId === plan?.id && execution.state !== "idle";
@@ -27,14 +33,19 @@ export function Steward() {
         description="GLM 5.3 Flash on NEAR AI Cloud proposes a plan inside the policy. Each response is signed in a TEE and verified before its tool calls run. Executing runs the plan exactly as proposed."
       />
 
-      <textarea
-        value={instruction}
-        onChange={(e) => setInstruction(e.target.value)}
-        disabled={busy}
-        rows={2}
-        placeholder="Leave empty for a routine review: rebalance if it is worth a fee, shield anything public."
-        className="w-full resize-y rounded-xl border bg-transparent px-4 py-3 text-sm placeholder:text-muted-foreground focus-visible:outline-2"
-      />
+      <Field data-disabled={busy}>
+        <FieldLabel htmlFor={instructionId}>Instructions (optional)</FieldLabel>
+        <textarea
+          id={instructionId}
+          aria-describedby={`${instructionId}-description`}
+          value={instruction}
+          onChange={(e) => setInstruction(e.target.value)}
+          disabled={busy}
+          rows={2}
+          className={cn(inputStyles, "h-auto min-h-22 w-full resize-y rounded-xl py-3")}
+        />
+        <FieldDescription id={`${instructionId}-description`}>Leave empty for a routine review: rebalance if it is worth a fee, shield anything public.</FieldDescription>
+      </Field>
 
       <div className="flex min-h-40 flex-col gap-3">
         {proposal.events.length === 0 && proposal.state === "idle" && (
@@ -53,27 +64,29 @@ export function Steward() {
             );
           if (event.type === "say")
             return (
-              <p key={i} className="text-sm whitespace-pre-wrap">
+              <p key={i} className="min-w-0 break-words text-sm whitespace-pre-wrap">
                 {event.text}
               </p>
             );
           if (event.type === "call")
             return (
-              <div key={i} className="font-mono text-sm">
+              <div key={i} className="min-w-0 break-all font-mono text-sm">
                 → {event.name} <span className="text-muted-foreground">{JSON.stringify(event.input)}</span>
               </div>
             );
           // Book reads are long JSON: keep them folded.
-          return event.result.startsWith("{") ? (
-            <details key={i} className="rounded-xl bg-muted/60 px-4 py-2 text-xs">
-              <summary className="cursor-pointer text-muted-foreground">{event.name} result</summary>
+          if (event.result.startsWith("{")) return (
+            <details key={i} className="min-w-0 rounded-xl bg-muted/60 px-4 text-xs">
+              <summary className="min-h-11 cursor-pointer py-3 text-muted-foreground">{event.name} result</summary>
               <pre className="mt-2 overflow-x-auto font-mono">{JSON.stringify(JSON.parse(event.result), null, 2)}</pre>
             </details>
-          ) : (
-            <div key={i}>
-              <Badge tone={resultTone(event.result)}>
-                <span className="font-mono">{event.result}</span>
-              </Badge>
+          );
+          const status = event.result.match(/^(REFUSED|ERROR|NOT PROPOSED|ALREADY|PROPOSED)\b/)?.[0];
+          const detail = status ? event.result.slice(status.length).replace(/^[:\s]+/, "") : event.result;
+          return (
+            <div key={i} className="flex min-w-0 flex-wrap items-start gap-2">
+              {status && <Badge tone={resultTone(event.result)}>{status}</Badge>}
+              {detail && <p className="min-w-0 break-all text-sm whitespace-pre-wrap">{detail}</p>}
             </div>
           );
         })}
@@ -114,12 +127,13 @@ export function Steward() {
         <span className="text-sm text-muted-foreground">
           {proposal.state === "done" && !plan && "Nothing proposed: nothing to execute."}
         </span>
-        <div className="flex gap-3">
-          <Button variant="outline" disabled={busy} onClick={() => proposal.run({ instruction })}>
+        <div className="flex flex-wrap gap-3">
+          <Button variant="outline" disabled={busy || !canPropose} onClick={() => proposal.run({ instruction })}>
             {proposal.state === "running" ? <Spinner /> : null}
             Propose
           </Button>
           <ConfirmButton
+            path="executePlan"
             label={execution.state === "running" ? <><Spinner /> Executing</> : "Execute plan"}
             disabled={busy || !plan || executed}
             title="Execute this plan on mainnet?"

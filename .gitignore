@@ -19,3 +19,5 @@ web/dist/
 .evidence
 .agreements/
 .notify/
+.work-orders/
+.hosted/

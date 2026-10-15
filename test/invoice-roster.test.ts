@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { runtimeImports } from "./fixtures/source-analysis.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -15,8 +16,9 @@ function reachable(entry: string): Map<string, string> {
     if (seen.has(file)) continue;
     const source = readFileSync(file, "utf8");
     seen.set(file, source);
-    for (const [, spec] of source.matchAll(/(?:from|import)\s*\(?\s*"(\.{1,2}\/[^"]+)"/g))
-      stack.push(join(dirname(file), spec!.replace(/\.js$/, ".ts")));
+    for (const spec of runtimeImports(source, file)) {
+      if (spec.startsWith(".")) stack.push(join(dirname(file), spec.replace(/\.js$/, ".ts")));
+    }
   }
   return seen;
 }
@@ -31,7 +33,8 @@ const ROLE_READS = /\b(daoPolicy|describeTreasury|council|permits|groupOf)\(|get
  */
 test("nothing the invoice host loads reads the DAO's roles", () => {
   const modules = reachable("src/invoice-http.ts");
-  assert.ok(modules.size > 10, "the import walk found the invoice host's modules");
+  for (const file of ["src/invoices.ts", "src/invoice-store.ts"])
+    assert.ok(modules.has(join(root, file)), `The import walk must reach ${file}`);
   const offenders = [...modules]
     .map(([file, source]) => [relative(root, file), source] as const)
     .filter(([name, source]) => name !== "src/chain.ts" && (/gateway\/roles\.ts$/.test(name) || ROLE_READS.test(source)))

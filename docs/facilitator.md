@@ -5,6 +5,10 @@ confidential balance, and files every payment for the DAO's vote. Requesters dea
 page, never with members. Mainnet: `agentic.sputnik-dao.near`, its payout agent, and
 https://invoices.multiagency.ai.
 
+The [Agent Connect audit and delivery plan](agent-connect-audit.md) maps briefs 01 and 03 to
+Payables and brief 02 to Portfolio, and specifies the isolated work-order and
+supplier-settlement workflows. Requirement stages below remain the canonical coverage record.
+
 ## How each requirement is counted
 
 Every requirement is one of its brief's use cases or outcomes in the Agent Connect experiment catalog, in
@@ -57,16 +61,16 @@ These are catalog targets, not established guarantees. Evidence stages describe 
 - Approval timing is public; providers can see the payout mapping. Confidential transfers do not establish protection against every form of tracing.
 - Invoice ceilings and deadlines are shown to voters, not automatically enforced.
 
-## 03 Purchase orders (roadmap)
+## 03 Work orders (roadmap)
 
 These are catalog targets, not established guarantees. Evidence stages describe the supporting observations or tests; known limitations still apply.
 
 | Type | Requirement | Control or limitation | Evidence stage | Evidence |
 |---|---|---|---|---|
-| Capability target | Each order is its own agent and grant: created, funded, paid, expired | — | Not yet | Not built: an offer records a payee, a ceiling and a deadline, but there is no agent or grant per order |
-| Safety target | Supplier payments can't be traced to the business | The signed policy | Tested offline | Payouts are confidential transfers under the policy (test/authorize.test.ts); no order paid on mainnet |
+| Capability target | Each work order has a dedicated agent and expiring grant, with owner-approved invoice payment | — | Tested offline | Buyer flow implemented in Payables and the invoice portal. Offline tests cover fixed policy/grant requests, process isolation, authenticated intake, concurrent filing and restart identity (test/work-order-*.test.ts; test/browser/work-orders.cjs). Funding and settlement on a deployed work-order agent remain unobserved; residual-fund return is not built |
+| Safety target | Work-order payments are confidential; business-supplier unlinkability remains unverified | The signed policy | Tested offline | The work-order policy and request require a confidential transfer (test/work-order-binding.test.ts). Provider visibility, timing and public approvals can reveal relationships. No work order paid on mainnet |
 | Capability target | Inbound payments are swapped to stables and forwarded to the supplier's treasury | — | Not yet | Not built |
-| Safety target | A tampered order (wrong supplier, changed amount, late) is refused | Nothing yet | Not yet | Not built per order: a wrong payee is refused by the destination list, but an amount over the order or a late invoice only shows a badge to voters |
+| Safety target | A tampered order (wrong supplier, changed amount, late) is refused | Our server | Tested offline | Work-order dispatch locally binds the exact invoice identity, payee, asset, amount, policy digest and grant deadline. Offline tests refuse altered terms and expiry during final reads (test/work-order-binding.test.ts). No work-order refusal observed on mainnet; accepted payments may finish after the deadline |
 
 ## 17 Campaign payouts (roadmap)
 

@@ -1,19 +1,20 @@
-import { accessDenied, ReadFailure } from "../../shared/read-failure";
 import { queriesFor } from "../../shared/queries";
 import { useFleet, type AgentState } from "./workspace-observations";
-import { Proposals } from "./proposals";
+import { ProposalRecords } from "./proposals";
+import { WorkspaceHistory } from "./history";
+import { gatewayQueries } from "../../app/queries";
 import { ArrowRight } from "@phosphor-icons/react";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { type Attention, attentionOf, attentionHref } from "./attention";
 import type { Kind } from "../evidence/beats";
-import { useEffect, useState } from "react";
-import { Row, isProbe } from "../activity/activity";
+import { useEffect } from "react";
 import { areaName } from "../../app/workspace";
 import { ago, clientFor, kindOf } from "../../shared/lib";
 import { AGENT_NAME, namer } from "../../shared/names";
 import { type Gateway, type GatewayAgent, ownersOf } from "../../app/session";
-import { Badge, Button, Card, Loading, QueryError, Section, type Tone } from "../../shared/ui";
-import { deniedAt, recheckAccess, useAccessState } from "../../shared/access";
+import { Badge, Button, Card, Details, LoadingRecords, QueryError, Section, type Tone } from "../../shared/ui";
+import { Empty, EmptyContent } from "@/components/ui/empty";
+import { recheckAccess, useAccessState, visibleProposals } from "../../shared/access";
 
 /**
  * The hosted dashboard's home: the agents this viewer may see and, for each DAO among their owners,
@@ -30,21 +31,27 @@ const itemsOf = (name: string, d: AgentState, nameOf: (account: string) => strin
 const namesOf = (states: (AgentState | undefined)[]) =>
   namer(new Map(states.flatMap((d) => (d?.setup?.wallet && d.overview ? [[d.setup.wallet, AGENT_NAME[kindOf(d.overview) as Kind]] as const] : []))));
 
-function NeedsAttention({ results }: { results: ReturnType<typeof useFleet> }) {
+function NeedsAttention({ results, daos }: { results: ReturnType<typeof useFleet>; daos: string[] }) {
+  const access = useAccessState();
+  const proposals = useQueries({ queries: daos.map(dao => gatewayQueries.proposals(dao)) });
   const incomplete = results.filter(r => r.denied || r.incomplete.length > 0);
   const nameOf = namesOf(results.map((r) => r.data));
   const items = results.flatMap(result => itemsOf(result.name, result.data, nameOf));
   const rank: Record<Tone, number> = { destructive: 0, warning: 1, info: 2, success: 3, neutral: 4 };
   items.sort((a, b) => rank[a.tone] - rank[b.tone]);
+  const noOpenProposals = proposals.every(query => query.isSuccess && !query.error && !visibleProposals(query.data, access).some(p => p.status === "InProgress"));
   return (
     <Section title="Needs attention" description="Decisions and exceptions across the agents you can access.">
       <Card>
         <ul className="flex flex-col divide-y">
-            {!items.length && !incomplete.length && <li className="text-sm text-muted-foreground">No items need attention in the records checked.</li>}
+            {!items.length && !incomplete.length && noOpenProposals && <li><Empty className="items-start border-0 px-0 py-3"><EmptyContent className="items-start text-left">
+              <p>No decisions or exceptions in the records checked.</p>
+              <a href="/#activity" className="inline-flex min-h-11 items-center underline">View activity</a>
+            </EmptyContent></Empty></li>}
             {incomplete.map((result) => (
               <li key={`incomplete-${result.name}`} className="flex flex-col gap-2 py-3 text-sm first:pt-0 last:pb-0">
-                <p className="text-warning-muted-foreground">{result.denied ? `${result.name}: access is unavailable. Private records are hidden.` : `${result.name}: checks are incomplete (${result.incomplete.join(", ")}). Known items remain below; cached items may be out of date.`}</p>
-                {result.isPending && <Loading label={`Checking ${result.name}…`} />}
+                {(result.denied || result.error || !result.isPending) && <p className="text-warning-muted-foreground">{result.denied ? `${result.name}: access is unavailable. Private records are hidden.` : `${result.name}: checks are incomplete (${result.incomplete.join(", ")}). Known items remain below; cached items may be out of date.`}</p>}
+                {result.isPending && !result.denied && <LoadingRecords label={`Checking ${result.name}…`} rows={1} />}
                 {result.denied ? <Button variant="outline" className="self-start" onClick={recheckAccess}>Check access again</Button> : result.error && <QueryError error={result.error} retry={() => void result.refetch()} />}
               </li>
             ))}
@@ -61,6 +68,9 @@ function NeedsAttention({ results }: { results: ReturnType<typeof useFleet> }) {
             ))}
 
           </ul>
+          {daos.map((dao, index) => proposals[index]!.isPending
+            ? <LoadingRecords key={dao} label={`Checking proposals for ${dao}…`} rows={1} />
+            : <ProposalRecords key={dao} dao={dao} data={proposals[index]!.data} error={proposals[index]!.error} />)}
       </Card>
     </Section>
   );
@@ -84,19 +94,25 @@ function AgentStatus({ result }: { result: ReturnType<typeof useFleet>[number] }
 function LatestRun({ name }: { name: string }) {
   const evidence = useQuery({ ...queriesFor(clientFor(`/a/${name}`), ["fleet", name]).runs, retry: false, refetchInterval: 30_000 });
   const latest = evidence.data?.ticks.at(-1);
+  const incomplete = Boolean(evidence.data?.corrupt?.length);
   return <div className="text-sm">
-    {evidence.isPending && <Loading label="Loading latest run…" />}
+    {evidence.isPending && <LoadingRecords label="Loading latest run…" rows={1} />}
     {evidence.error && <QueryError error={evidence.error} retry={() => evidence.refetch()} />}
+    {incomplete && <p className="text-warning-muted-foreground">Some run records could not be read. The available history is incomplete.</p>}
     {!evidence.error && latest && <><p>Latest run · {ago(latest.at)}</p><p>{latest.end?.outcome ?? "No end recorded: the run may still be active, interrupted, or its outcome unknown."}</p>
       <a className="underline" href={`/a/${name}/follow/run?run=${encodeURIComponent(latest.id)}`}>Inspect latest run</a></>}
-    {evidence.isSuccess && !latest && <p>No run found in the retained records.</p>}
+    {evidence.isSuccess && !latest && (incomplete
+      ? <Button variant="outline" onClick={() => evidence.refetch()}>Check again</Button>
+      : <div className="flex flex-col items-start gap-2"><p>No run found in the retained records.</p><a className="inline-flex min-h-11 items-center underline" href={`/a/${name}/automations`}>Strategy and schedule</a></div>)}
   </div>;
 }
 
 /** Compact operating status, with direct links to the work rather than entry cards. */
 function AreaStatus({ agents, results }: { agents: GatewayAgent[]; results: ReturnType<typeof useFleet> }) {
   return <Section title="Current status" description="Each agent has its own policy, grant and balance.">
-    {!agents.length && <p>No agents are available to this account.</p>}
+    {!agents.length && <Empty className="items-start"><EmptyContent className="items-start text-left">
+      <p>No agents are available to this account.</p><Button variant="outline" onClick={recheckAccess}>Check access again</Button>
+    </EmptyContent></Empty>}
     {agents.map((agent, i) => {
       const result = results[i]!;
       const d = result.data;
@@ -105,48 +121,23 @@ function AreaStatus({ agents, results }: { agents: GatewayAgent[]; results: Retu
         <h3 className="text-lg font-semibold">{treasury === null ? areaName(agent) : treasury ? "Portfolio" : "Payables"}</h3>
         <p className="break-all text-sm text-muted-foreground">{agent.owner} · {agent.name}</p>
         <AgentStatus result={result} />
+        {result.reads.overview.isPending && !result.denied && <LoadingRecords label={`Loading ${areaName(agent)} status…`} rows={1} />}
         {treasury && <LatestRun name={agent.name} />}
         <div className="flex flex-wrap gap-4 text-sm">
           <a className="underline" href={`/a/${agent.name}/`}>{treasury === null ? "Review agent" : treasury ? "Review allocation" : "Review payments"}</a>
-          {treasury !== null && <a className="underline" href={`/a/${agent.name}/${treasury ? "follow/run" : "payees"}`}>{treasury ? "Review runs" : "Review agreements"}</a>}
+          {treasury !== null && <a className="underline" href={treasury ? "/#activity" : `/a/${agent.name}/payees`}>{treasury ? "Review history" : "Review agreements"}</a>}
           <a className="underline" href={`/a/${agent.name}/policy`}>Policy and permissions</a>
         </div>
+        <Details summary="Guided walkthrough"><p className="text-sm text-muted-foreground">Use this agent’s real funds with the existing confirmations and owner approvals.</p><a className="inline-flex min-h-11 items-center text-sm underline" href={`/a/${agent.name}/demo`}>Run with real funds</a></Details>
       </div>;
     })}
-  </Section>;
-}
-
-function AgentHistory({ agent }: { agent: GatewayAgent }) {
-  const access = useAccessState();
-  const client = clientFor(`/a/${agent.name}`);
-  const reads = queriesFor(client, ["fleet", agent.name]);
-  const activity = useQuery({ ...reads.activity, retry: false, refetchInterval: 30_000 });
-  const owners = useQuery({ ...reads.ownerActions, retry: false, refetchInterval: 30_000 });
-  const overview = useQuery({ ...reads.overview, refetchInterval: false, retry: false, staleTime: 30_000 });
-  const denied = Boolean(deniedAt(access, `/a/${agent.name}`)) || [activity.error, owners.error, overview.error].some(accessDenied);
-  const rows = denied ? [] : activity.data?.filter(op => !isProbe(op)) ?? [];
-  return <Section title={areaName(agent)} description={`${agent.owner} · ${agent.name}`}>
-    <a href={`/a/${agent.name}/activity`} className="self-start text-sm underline">Review full history and unresolved operations</a>
-    {overview.error && <p className="text-sm text-warning-muted-foreground">Asset display data unavailable; amounts may appear in raw units.</p>}
-    {activity.error && <ReadFailure label="Activity" error={activity.error} retry={() => activity.refetch()} retained={activity.data !== undefined} updatedAt={activity.dataUpdatedAt} />}
-    {activity.isPending && <Loading label="Loading activity…" />}
-    {!denied && activity.isSuccess && !rows.length && <p className="text-sm text-muted-foreground">No money actions recorded on this instance.</p>}
-    <ol>{rows.slice(0, 10).map((op, i) => <Row key={`${op.at}-${i}`} op={op} idPrefix={`${agent.name}-`} book={overview.data?.book ?? []} nameOf={a => a} />)}</ol>
-    <h3 className="font-medium">Owner actions</h3>
-    {owners.error && <ReadFailure label="Owner actions" error={owners.error} retry={() => owners.refetch()} retained={owners.data !== undefined} updatedAt={owners.dataUpdatedAt} />}
-    {owners.isPending && <Loading label="Loading owner actions…" />}
-    {!denied && owners.isSuccess && !owners.data.length && <p className="text-sm text-muted-foreground">No owner actions recorded on this instance.</p>}
-    {!denied && owners.data?.slice(0, 5).map(action => <p key={action.correlationId} className="text-sm">
-      <a href={`/a/${agent.name}/activity#owner-${encodeURIComponent(action.correlationId)}`} className="underline">{action.type.replaceAll("_", " ")}</a> · {action.stage}. Owner approval and payment settlement are separate outcomes.
-    </p>)}
   </Section>;
 }
 
 function WorkspaceOverview({ agents, daos }: { agents: GatewayAgent[]; daos: string[] }) {
   const results = useFleet(agents);
   return <>
-    <NeedsAttention results={results} />
-    {daos.map(dao => <Proposals key={dao} dao={dao} />)}
+    {agents.length > 0 && <NeedsAttention results={results} daos={daos} />}
     <AreaStatus agents={agents} results={results} />
   </>;
 }
@@ -154,22 +145,13 @@ function WorkspaceOverview({ agents, daos }: { agents: GatewayAgent[]; daos: str
 export function DaoHome({ gateway, activity = false }: { gateway: Gateway; activity?: boolean }) {
   const { agents } = gateway;
   const daos = ownersOf(agents.filter(a => a.dao));
-  const [filter, setFilter] = useState("");
   useEffect(() => {
     document.title = `${activity ? "Activity" : "Home"} · Agentic Treasury`;
     document.getElementById("workspace-main")?.focus();
   }, [activity]);
   return <main id="workspace-main" tabIndex={-1} className="mx-auto flex max-w-5xl flex-col gap-8 px-4 py-8 sm:px-8">
     <div><h1 className="text-2xl font-semibold">{activity ? "Activity" : "Home"}</h1>
-      <p className="mt-2 text-sm text-muted-foreground">{activity ? "Recent records, grouped by agent. Each instance retains its own history." : "Payments to review and treasury operations to follow."}</p></div>
-    {activity ? <>
-      <div className="flex flex-col items-start gap-2 text-sm"><label htmlFor="activity-area">Area</label>
-        <select id="activity-area" value={filter} onChange={e => setFilter(e.target.value)} className="max-w-full rounded-lg border bg-background p-3">
-          <option value="">All areas</option>{agents.map(a => <option key={a.name} value={a.name}>{areaName(a)} · {a.owner}</option>)}
-        </select>
-      </div>
-      {agents.filter(a => !filter || a.name === filter).map(agent => <AgentHistory key={agent.name} agent={agent} />)}
-      {!agents.length && <p>No agents are available to this account.</p>}
-    </> : <WorkspaceOverview agents={agents} daos={daos} />}
+      <p className="mt-2 text-sm text-muted-foreground">{activity ? "Retained history, grouped by agent. Each instance retains its own records; missing records are not proof of an outcome." : "Payments to review and treasury operations to follow."}</p></div>
+    {activity ? <WorkspaceHistory agents={agents} /> : <WorkspaceOverview agents={agents} daos={daos} />}
   </main>;
 }

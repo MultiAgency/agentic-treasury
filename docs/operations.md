@@ -4,9 +4,36 @@ These instructions describe the repository configuration. Deploys, restarts and 
 performed by the owner. For the product and recorded results, see [README](../README.md).
 
 Preserve the complete state when moving an executor: `.ops/`, `.invoices/` (including SQLite journals),
-`.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`, `.agreements/`, `.notify/` (which alerts were sent: losing it re-sends them), any legacy `.intake/` files, and its
+`.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`, `.agreements/`, `.work-orders/`, `.notify/` (which alerts were sent: losing it re-sends them), any legacy `.intake/` files, and its
 settings file. Stop writers before copying state; never start the destination before stopping the
 source. The lease coordinates processes on one host only.
+
+## Work-order executors
+
+Work-order support is locally implemented and offline-tested, not deployed or mainnet-observed.
+The payout executor hosts one private subprocess per opened order; the dashboard accesses it using
+the existing `AGREEMENTS_URL` and `AGREEMENTS_SECRET`. The bridge also verifies the configured parent
+agent ID. An approve-only process never substitutes itself if that bridge is missing or unavailable.
+The invoice host authenticates the payee and routes only to that payee's recorded work order.
+
+The additive version-1 records live in `.work-orders/<parent-agent>/<order-id>.json`. Each immutable
+record has a companion `work-<parent-hash>-<order-id>.env` and `.initialized` marker. Preserve all
+three with the corresponding `.owner-intents/<settings-basename>.json` and the child agent's state
+in the directories listed above. The invoice container's working directory is the `/data` volume.
+No existing-record conversion is required. Stop the parent and its children before backup, migration
+or rollout; preserve corrupt records for investigation rather than replacing identities. A missing
+initialized settings file refuses recovery.
+
+On restart, retained agent and owner-action records resume their own subprocesses. Failed creation,
+attempted signatures and uncertain payments retain their original identity; no automatic replacement
+is created. Existing owner-intent and invoice recovery rules apply. The pre-creation instance lock
+has a 30-second stale threshold, followed by the existing per-agent executor lease once created.
+This coordinates processes on one host only, not across hosts or volumes.
+
+`MAX_WORK_ORDER_EXECUTORS` defaults to 8 and accepts 1–64. Open subprocesses remain active for the
+parent's lifetime; reaching capacity refuses another start without substituting the shared payout
+agent. Review capacity before rollout. Automatic process retirement, archival and residual-fund
+return are not implemented. Revoking the grant stops new work but cannot undo an accepted payment.
 
 ## Settings and record-read hardening
 
@@ -80,12 +107,18 @@ alone does not update the public invoice page. Preserve `AGREEMENTS_URL` and mat
 agreements; do not copy its store to the dashboard as a substitute.
 
 Invoice refreshes display only the latest requested read. Superseded responses cannot restore old
-invoice controls or clear a newer read failure (`test/browser/invoice-focus.cjs`, offline fixtures).
+invoice controls or clear a newer read failure (`test/browser/invoices.cjs`, offline fixtures).
 
 The subsequent [live run view](live-run.md) integrates automatic AG-UI snapshot refresh into recent run timelines in the
 dashboard, using the existing private recording endpoint. It introduces no stream endpoint or
 state migration. The shared FastNear helper now reports read failures explicitly and rejects
 malformed JSON; ship that correction to both services with the same reviewed candidate.
+
+The recording adapter now exports envelope version 3 with AG-UI protocol 1.0 lifecycle validation.
+The dashboard continues to read archived versions 1/2. Exports are derived from existing records;
+this envelope change needs no stored-record conversion and adds no directory. Preserve the run
+progress and evidence stores described below. Verify the reader and exporter together from the
+same candidate; this compatibility is offline-tested, not a deployed-host observation.
 
 ### FastNear access for this candidate
 
@@ -121,7 +154,7 @@ change to recovery or authorization separately.
   unreviewed changes/enablement and combined change-and-enable requests. A stale settings form
   may therefore fail even when its button says Turn off: refresh and use the new stop control.
 - `owner/actions`, `paymentHistory` and `autopilot/log` are private member reads. Strategy writes
-  and schedule controls remain operator-only; approve-only instances refuse strategy changes
+  require settings permission; enabling scheduling requires execution permission. Approve-only instances refuse strategy changes
   and recording export. Owner-action history is local to its instance; payout discovery is bounded
   to 250 provider records from the past day and reports incomplete scans. Missing reads are not
   proof that no payout or owner action exists.
@@ -196,8 +229,16 @@ resuming schedules are separate owner decisions. `pnpm test:live` requires separ
 `/data`). One container runs the public gateway (`src/gateway/server.ts`) and, on loopback beside it,
 each agent server listed in `deploy/dashboard.json`. An agent with `"executor": false` runs approve-only.
 Each agent names its `owner` (a Sputnik DAO, whose members sign in, or a wallet account, which signs in
-itself) and its `operators`. The gateway closes an agent whose own server reports a different owner, so
+itself). Dashboard permissions come from that owner or the DAO's policy; legacy `operators` fields are
+ignored and should be removed from configuration. The gateway closes an agent whose own server reports a different owner, so
 a wrong `owner` locks the agent rather than opening it.
+Ownership verification uses the agent server's `ownerIdentity` read. Deploy matching gateway and
+agent-server code together, or update agent servers first; older servers without that read deny
+access when the gateway has no cached ownership evidence. This change needs no state migration.
+Ship the capability-based gateway with its matching frontend. Old cached frontends have no compatible
+role response and must be reloaded; server checks still deny unauthorized calls. A previously configured
+DAO operator needs actual group membership and the relevant onchain permissions. Existing schedules
+continue under their current signed policy and grant; removing dashboard access does not stop them.
 All state lives on the volume in `/data/state`; the app stays in `/app`.
 
 1. Create the service and attach a volume at `/data`. Point it at its Dockerfile with the variable
@@ -336,14 +377,14 @@ schedule, or manual recovery? It says nothing about custody guarantees or econom
   - Every log here appends through one function (`src/synced.ts`). After a torn final line, the next
     record starts its own line, so a crash mid-append loses only the torn line (offline-tested,
     `test/synced.test.ts`).
-- **Interventions:** the gateway records every operator call beyond a member's reads in
+- **Interventions:** the gateway records every call classified by `isIntervention` in
   `.evidence/interventions.jsonl` (account, agent, procedure, time) before forwarding it. If the record
   can't be written, the call isn't run. Calls made on a host directly (CLI, shell) are not in this record.
   An unreadable line in the record is counted and fails the "no operator interventions" criterion, since
   it may have been a call. Builds up to c25b61b skipped such lines instead; `pnpm run-report` refuses a
   gateway that doesn't count them.
 - **Reading the records:** `autopilot/evidence` on the treasury agent server, and `/gw/interventions`
-  (operator-only). In the build under observation (fe3330c), `autopilot/evidence` is operator-only too, so
+  (execution or settings permission). In the build under observation (fe3330c), `autopilot/evidence` is operator-only too, so
   the gateway records each read of it in the intervention record; the report lists those reads separately as
   operator reads, not interventions. Later builds make it a member read, which the gateway doesn't record.
 - **The report:** `pnpm run-report` (src/run-report.ts, logic in src/report.ts, tests in
@@ -392,7 +433,7 @@ src/evidence.ts runs on `dao`.
   segments still counts for its own configuration.
 
 ### Generating the report
-Sign in to the dashboard as an operator in a browser. Save the `dao_session` cookie to a 0600 file, never
+Sign in to the dashboard with execution or settings permission. Save the `dao_session` cookie to a 0600 file, never
 pasted anywhere. Then run:
 
     DASHBOARD_URL=https://proto.multiagency.ai REPORT_COOKIE_FILE=<file> \
@@ -461,3 +502,30 @@ requests; deployment, restarts and hosted verification remain separate owner act
 An inherited `EXECUTOR=off` remains a process-lifetime restriction even if the instance settings file
 contains `EXECUTOR=on` or settings are saved at runtime. Changing executor ownership requires the
 existing stopped-executor procedure; instance-file loading cannot lift that restriction.
+
+
+### Self-service walkthrough deployment (prepared, not deployed)
+
+The prepared `deploy/dashboard.json` enables `walkthroughs` and `selfService`. The first selects
+sign-in and real-funds guided walkthroughs as the entry; the second admits verified wallets to
+reserve their own agent setup. Disabling new self-service setup does not delete existing reservations;
+the gateway still loads and starts their instances. Keep one gateway replica on this host.
+
+Preserve `.hosted/registry.json` and every `.hosted/own-*.env` file with the existing `.ops/`,
+`.invoices/`, `.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`, `.agreements/`,
+`.notify/` and `.work-orders/` directories on `/data`. The registry and settings are private state,
+never release artifacts. Back up and restore them together with stopped executors. Existing records
+need no conversion: this is additive state. A missing settings file, corrupt registry, conflicting
+port or orphan settings file requires recovery of original state; do not delete it to retry creation.
+
+Each reservation uses a distinct loopback port from 9000–9999, excluding configured agent ports.
+Keep this range available. Capacity is 32 reservations, with one per owner and area. There is no
+self-service deletion or automated cleanup; retain incomplete setup for recovery. The host operator
+can read all instance state. Single-host leases do not provide distributed fencing or isolation
+from a hostile host. Load capacity and admission abuse resistance remain unverified.
+
+New agents start with autopilot off and no grant, and inherit no existing owner’s notification or invoice destinations. Setup requires an explicit wallet signature or
+DAO proposal, then the existing policy/grant/funding checks. New Payables agents use manual
+payments; their supplier invoice intake is not provisioned. The existing payout executor and its
+invoice service keep their current roles. Offline tests cover reservations, restart, ownership
+binding and browser setup; real wallet/Trezu creation must be separately observed after user deployment.

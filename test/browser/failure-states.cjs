@@ -8,13 +8,22 @@ const root = require('node:path').resolve(process.argv[2] || 'web/dist');
  try {
  async function open(path, options = {}) {
   const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
+  if (options.clipboard) await page.addInitScript(() => {
+   window.clipboardDenied = true;
+   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+    writeText: async text => {
+     if (window.clipboardDenied) throw new Error('Clipboard denied by fixture');
+     window.copiedText = text;
+    },
+   } });
+  });
   await page.clock.install(); page.setDefaultTimeout(10000);
   const state = { error: null, denied: null }, calls = [], errors = [];
   page.on('pageerror', e => errors.push(e.message));
   await page.route('**/*', async route => {
    const { hostname, pathname: p } = new URL(route.request().url());
    if (hostname !== 'frontend.test') return route.abort();
-   if (p === '/gw/me') return route.fulfill({ json: { agents: [{ name: 'treasury', owner: 'owner.near', dao: false }], viewer: { account: 'owner.near', access: { treasury: { role: options.member ? 'member' : 'operator', canPropose: true, canVote: true } } } } });
+   if (p === '/gw/me') return route.fulfill({ json: { agents: [{ name: 'treasury', owner: 'owner.near', dao: false }], viewer: { account: 'owner.near', access: { treasury: { canSign: !options.member, canPropose: !options.member, canVote: !options.member, canExecute: !options.member, canManage: !options.member } } } } });
    if (p.includes('/rpc/')) {
     const method = p.split('/rpc/')[1]; calls.push(method);
     if (method === state.denied) return route.fulfill({ status: options.denialStatus || 403, json: { error: 'Access denied' } });
@@ -25,7 +34,7 @@ const root = require('node:path').resolve(process.argv[2] || 'web/dist');
      overview: { agentId: 'fixture', area: options.payables ? 'payables' : 'treasury', book: [], unmanaged: [], target: {}, rebalance: { minLegUsd: 1, maxCostBps: 100 }, grants: [], agreed: [], notInForce: null, policy: { policy: { actions: ['swap'], destinations: { mode: 'only', list: [] } } } },
      'treasury/get': null, 'autopilot/get': { on: true, everyMin: 60, maxUsd: 10 },
      activity: [{ at: options.payables ? new Date().toISOString() : '2026-10-01T00:00:00Z', kind: 'payout', request: { recipient: 'payee.near', amount: '1000000', asset: 'usdc' }, correlationId: 'payment-fixture', status: 'SUCCESS', policyRevision: 1, policyDigest: 'fixture-digest' }],
-     'owner/actions': options.ownerAction ? [{ correlationId: 'owner-fixture', type: 'approval_vote', stage: 'submitted' }] : [], 'owner/pending': [], held: [], unresolved: options.unresolved ? [{ key: 'unresolved-fixture', kind: 'payout', at: '2026-10-01T00:00:00Z', status: 'PROCESSING', sent: true }] : [], 'inbox/list': [], 'agreements/list': [], invoices: [], reconcileBooks: [],
+     'owner/actions': options.ownerAction ? [{ correlationId: 'owner-fixture', type: 'approval_vote', stage: 'submitted' }] : [], 'owner/pending': [], held: [], unresolved: options.unresolved ? [{ key: 'unresolved-fixture', kind: 'payout', at: '2026-10-01T00:00:00Z', status: 'PROCESSING', sent: true }] : [], 'inbox/list': [], 'workOrders/list': [], 'agreements/list': [], invoices: [], reconcileBooks: [],
      paymentHistory: { items: [], complete: true }, paymentStatus: { status: options.outcome || 'PROCESSING', request: { recipient: 'payee.near', asset: 'usdc', amount: '1000000' }, approvalId: null },
      'strategy/get': null, 'autopilot/evidence': { ticks: [] },
     };
@@ -45,9 +54,10 @@ const root = require('node:path').resolve(process.argv[2] || 'web/dist');
    { path: '/#activity', method: 'owner/actions', text: 'approval vote' },
    { path: '/a/treasury/follow/payment?payment=payment-fixture', method: 'paymentStatus', text: 'payee.near', cold: true },
    { path: '/a/treasury/follow/payment?payment=payment-fixture', method: 'paymentStatus', text: 'payee.near' },
-   { path: '/a/treasury/follow/payment', method: 'activity', text: 'payee.near' },
+   { path: '/a/treasury/follow/payment', method: 'activity', text: 'payee.near', allRecords: true },
   ]) {
    const { page, state } = await open(scenario.path, { ownerAction: true, cold: scenario.cold, payables: scenario.payables, denialStatus });
+   if (scenario.allRecords) await page.getByRole('radiogroup', { name: 'Show payments', exact: true }).getByRole('radio', { name: /^All records/ }).click();
    const record = scenario.selector ? page.locator(scenario.selector) : page.getByText(scenario.text, { exact: false }).first();
    await record.waitFor();
    state.denied = scenario.method;
@@ -97,22 +107,36 @@ const root = require('node:path').resolve(process.argv[2] || 'web/dist');
   await page.locator('#treasury-operation-payment-fixture').waitFor();
   state.error = 'owner/actions'; await page.clock.fastForward(31000); await page.clock.runFor(100);
   await page.getByText(/Owner actions could not be refreshed/).waitFor();
-  await page.getByRole('link', { name: 'approval vote', exact: true }).waitFor();
+  const owner = page.locator('#treasury-owner-owner-fixture');
+  await owner.waitFor();
+  assert.match(await owner.innerText(), /approval vote[\s\S]*Submission attempted.*Do not sign again/);
+  await owner.getByText('Owner action reference', { exact: true }).click();
+  assert.equal(await owner.getByRole('link', { name: 'Open this owner action', exact: true }).getAttribute('href'), '/a/treasury/activity#owner-owner-fixture');
   await page.close(); console.log('PASS shared Activity retains independent money and owner records');
  }
  {
-  const { page, state, calls } = await open('/a/treasury/activity', { unresolved: true });
-  await page.getByRole('button', { name: 'Check status', exact: true }).waitFor();
+  const { page, state, calls } = await open('/a/treasury/activity', { unresolved: true, clipboard: true });
+  await page.getByRole('button', { name: 'Check operation outcomes', exact: true }).waitFor();
+  const copy = page.getByRole('button', { name: 'Copy', exact: true }).first();
+  await copy.click();
+  await page.getByRole('status').filter({ hasText: /Could not copy/ }).waitFor();
+  assert.equal(await copy.isEnabled(), true, 'clipboard failure leaves a retry available');
+  await page.evaluate(() => { window.clipboardDenied = false; });
+  await copy.click();
+  await page.getByRole('status').filter({ hasText: /^Copied\.$/ }).waitFor();
+  assert.deepEqual(JSON.parse(await page.evaluate(() => window.copiedText)), {
+   agent: 'fixture', unresolved: [{ key: 'unresolved-fixture', status: 'PROCESSING', at: '2026-10-01T00:00:00Z' }],
+  });
   state.error = 'unresolved'; await page.clock.fastForward(31000); await page.clock.runFor(10000);
   await page.getByText(/Unresolved operations could not be refreshed/).waitFor();
   await page.getByText(/unresolved-fixture/).waitFor();
-  assert.equal(await page.getByRole('button', { name: 'Check status', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Check operation outcomes', exact: true }).count(), 0);
   assert.ok(!calls.includes('recover'));
   await page.close(); console.log('PASS stale unresolved references remain visible without recovery actions');
  }
  for (const options of [{ member: true }, { approveOnly: true }]) {
   const { page, calls } = await open('/a/treasury/automations', { cold: true, ...options });
-  await page.getByText(options.member ? 'Only an operator can stop the schedule.' : 'Stop the schedule on the executor; this instance is approve-only.', { exact: true }).waitFor();
+  await page.getByText(options.member ? 'Your account cannot stop the schedule.' : 'Stop the schedule on the executor; this instance is approve-only.', { exact: true }).waitFor();
   assert.ok(await page.getByRole('button', { name: 'Turn off', exact: true }).isDisabled());
   assert.ok(!calls.includes('autopilot/stop'));
   await page.close(); console.log('PASS recovery stop explains the required permission or executor');

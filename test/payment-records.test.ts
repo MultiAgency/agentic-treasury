@@ -31,3 +31,19 @@ test("held observations enrich one identity without fabricating an outcome", () 
   assert.deepEqual(records, [["payment", { at, request, approvalId: "approval" }], ["unknown", { at: "" }]]);
   assert.ok(records.every(([, record]) => !("status" in record)));
 });
+
+test("invoices join discovery only through an actual provider correlation ID", () => {
+  const records = paymentRecords({ invoices: [
+    { at, operation: { request } },
+    { at, operation: { correlationId: "invoice-payment", request } },
+  ], history: { items: [{ correlationId: "invoice-payment", at }] } }, new Map(), 0);
+  assert.deepEqual(records, [["invoice-payment", { at, request }]]);
+  assert.ok(records.every(([, record]) => !("status" in record)), "invoice discovery does not prove settlement");
+});
+
+test("current held details take priority over retained invoice terms", () => {
+  const heldRequest = { ...request, amount: "2000000" };
+  const records = paymentRecords({ invoices: [{ at, operation: { correlationId: "invoice-payment", request } }],
+    held: [{ correlationId: "invoice-payment", at, request: heldRequest, approvalId: "approval" }] }, new Map(), 0);
+  assert.deepEqual(records, [["invoice-payment", { at, request: heldRequest, approvalId: "approval" }]]);
+});

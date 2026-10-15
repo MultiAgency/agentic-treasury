@@ -7,6 +7,7 @@ import { ASSETS, outputAssetRefusal } from "./policy.js";
 import { grantApproves, type Strategy, strategyDigest } from "./strategy-digest.js";
 import { costBps } from "./value.js";
 import { tokenUsd } from "./valuation.js";
+import { withinRunCeiling } from "./strategy-value.js";
 
 /**
  * The one authorization rule every money action passes before it is sent. The provider enforces the
@@ -45,8 +46,8 @@ type Funds = { available: string };
 
 export type Facts = {
   treasury: TreasuryFacts;
-  /** Gross recorded value of earlier submitted swaps in this plan; null when unknown. */
-  autopilot: TreasuryFacts & { submittedSwapUsd: number | null };
+  /** Each earlier submitted swap's recorded value; unknown values remain explicit. */
+  autopilot: TreasuryFacts & { submittedSwapValues: readonly (number | null | undefined)[] | null };
   payout: Common & Funds & { heldPayouts: Transfer[] };
   invoice: Common & Funds;
   approval: Common;
@@ -154,10 +155,11 @@ export function authorize(action: Action, c: Case): Refusal | null {
         if (!Number.isFinite(cost) || cost > strategy.maxCostBps)
           return refuse("swap_cost_exceeded", "The swap's output floor exceeds the strategy's cost limit");
         if (c.purpose === "autopilot") {
-          const prior = c.facts.submittedSwapUsd;
-          if (prior === null || !Number.isFinite(prior) || prior < 0 || !Number.isFinite(prior + usdIn))
+          const prior = c.facts.submittedSwapValues;
+          const within = Array.isArray(prior) ? withinRunCeiling([...prior, usdIn], strategy.autopilot.maxUsd) : null;
+          if (within === null)
             return refuse("valuation_unavailable", "The value of this plan's submitted swaps is unavailable");
-          if (prior + usdIn > strategy.autopilot.maxUsd)
+          if (!within)
             return refuse("autopilot_limit_exceeded", "The plan's submitted swaps plus this swap exceed the auto-execute limit");
         }
       }

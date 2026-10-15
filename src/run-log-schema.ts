@@ -1,9 +1,11 @@
 import { EventSchemas } from "@ag-ui/core/schemas";
+import { PROTOCOL_VERSION } from "@ag-ui/core";
 import { z } from "zod";
 import { StepNameSchema, SubmissionSchema } from "./run-progress-schema.js";
 
 /** Private, observational format. No field in this module may authorize an operation. */
 export const AGUI_VERSION = "1.0.2";
+export const AGUI_PROTOCOL_VERSION = PROTOCOL_VERSION;
 export const MAX_RECORDING_BYTES = 2_000_000;
 export const text = z.string().max(4096);
 export const id = z.string().min(1).max(200);
@@ -44,6 +46,8 @@ export const PlanSchema = z.object({ id, usd: number, legs: z.array(z.object({
 })).max(500) });
 export const DisplaySchema = z.object({ asOf: iso, assets: z.array(z.object({ asset: id, symbol: z.string().min(1).max(80), decimals: z.number().int().min(0).max(255) })).max(500) });
 const result = z.strictObject({ outcome: text, refusal: text.nullable(), rejected: z.array(text).max(500) });
+/** The current tick recorder's explicit failure marker; provider operation statuses are independent. */
+export const recordedTickFailed = (value: z.infer<typeof result>) => value.refusal === null && value.outcome.startsWith("Failed: ");
 const provenance = z.strictObject({
   eventId: text, source: z.literal("tick"), recordRef: text, recordedAt: iso.nullable(),
   observedAt: iso.nullable(), timing: z.enum(["recorded", "observed", "unknown"]),
@@ -65,16 +69,18 @@ const base = { timestamp: z.number().finite().optional(), metadata: provenance }
 const EventSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("STEP_STARTED"), stepName: StepNameSchema, ...base }),
   z.strictObject({ type: z.literal("STEP_FINISHED"), stepName: StepNameSchema, ...base }),
-  z.strictObject({ type: z.literal("RUN_STARTED"), threadId: text, runId: id, ...base }),
+  z.strictObject({ type: z.literal("RUN_STARTED"), threadId: text, runId: id, protocolVersion: z.literal(AGUI_PROTOCOL_VERSION).optional(), ...base }),
   z.strictObject({ type: z.literal("CUSTOM"), name: z.literal("treasury.observation"), value: payload, ...base }),
   z.strictObject({ type: z.literal("RUN_FINISHED"), threadId: text, runId: id, result, ...base }),
+  z.strictObject({ type: z.literal("RUN_ERROR"), message: text, code: z.enum(["tick_failed", "progress_incomplete"]),
+    timestamp: base.timestamp, metadata: provenance.extend({ tickResult: result }) }),
 ]).superRefine((event, ctx) => {
   if (!EventSchemas.safeParse(event).success) ctx.addIssue({ code: "custom", message: "Invalid AG-UI 1.0.2 event" });
 });
 export type RunLogEvent = z.infer<typeof EventSchema>;
 
 export const RecordingSchema = z.strictObject({
-  schemaVersion: z.union([z.literal(1), z.literal(2)]), aguiVersion: z.literal(AGUI_VERSION), agentId: id, tickId: id, exportedAt: iso,
+  schemaVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]), aguiVersion: z.literal(AGUI_VERSION), agentId: id, tickId: id, exportedAt: iso,
   completion: z.enum(["recorded-end", "no-recorded-end"]), context: StartSchema, display: DisplaySchema,
   gaps: z.array(GapSchema).max(25_000), events: z.array(EventSchema).min(1).max(2000),
   laterObservations: z.array(z.strictObject({ correlationId: id, source: z.literal("journal"), record: JournalRecordSchema })).max(20_000),
@@ -83,6 +89,10 @@ export const RecordingSchema = z.strictObject({
   if (recording.agentId !== recording.context.agentId || recording.tickId !== recording.context.id) fail("Recording identity mismatch");
   const events = recording.events;
   if (events[0]?.type !== "RUN_STARTED") fail("Missing run start");
+  const current = recording.schemaVersion === 3;
+  // v1/v2 are retained archives, not retroactively certified protocol streams.
+  if (current && events[0]?.type === "RUN_STARTED" && events[0].protocolVersion !== AGUI_PROTOCOL_VERSION) fail("Missing protocol version");
+  if (!current && events.some(event => event.type === "RUN_ERROR" || (event.type === "RUN_STARTED" && event.protocolVersion !== undefined))) fail("Lifecycle fields require recording version 3");
   const isProgress = (event: RunLogEvent) => event.type === "STEP_STARTED" || event.type === "STEP_FINISHED" || (event.type === "CUSTOM" && event.value.stage === "submission");
   if (recording.schemaVersion === 1 && events.some(isProgress)) fail("Progress requires recording version 2");
   if (recording.completion === "no-recorded-end" && (events.slice(1).some(e => !isProgress(e)) || recording.laterObservations.length)) fail("Incomplete tick has inferred events");
@@ -99,15 +109,24 @@ export const RecordingSchema = z.strictObject({
       finished.add(event.stepName);
     }
   }
-  if (recording.completion === "recorded-end" && events.at(-1)?.type !== "RUN_FINISHED") fail("Missing recorded end");
   const end = events.at(-1);
-  if (end?.type === "RUN_FINISHED" && events.filter(isProgress).some(event => event.timestamp! > end.timestamp!)) fail("Progress recorded after run end");
+  const terminal = end?.type === "RUN_FINISHED" || end?.type === "RUN_ERROR";
+  if (recording.completion === "recorded-end" && !terminal) fail("Missing recorded end");
+  if (terminal && events.filter(isProgress).some(event => event.timestamp! > end.timestamp!)) fail("Progress recorded after run end");
+  if (current && end?.type === "RUN_FINISHED") {
+    if (active.size) fail("Run finished with open stages");
+    if (recordedTickFailed(end.result)) fail("Recorded failure requires run error");
+  }
+  if (end?.type === "RUN_ERROR") {
+    if (end.code === "tick_failed" && !recordedTickFailed(end.metadata.tickResult)) fail("Run error lacks recorded failure");
+    if (end.code === "progress_incomplete" && !active.size) fail("Progress error has no open stage");
+  }
   const ids = new Set<string>();
   for (const [i, event] of events.entries()) {
     if (ids.has(event.metadata.eventId)) fail("Duplicate event identity");
     ids.add(event.metadata.eventId);
     if (event.type === "RUN_STARTED" && i !== 0) fail("Unexpected run start");
-    if (event.type === "RUN_FINISHED" && i !== events.length - 1) fail("Unexpected run end");
+    if ((event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") && i !== events.length - 1) fail("Unexpected run end");
     if ((event.type === "RUN_STARTED" || event.type === "RUN_FINISHED") && (event.runId !== recording.tickId || event.threadId !== `tick:${recording.agentId}:${recording.tickId}`)) fail("Event identity mismatch");
     const time = event.metadata.timing === "recorded" ? event.metadata.recordedAt : event.metadata.observedAt;
     if (event.metadata.timing === "unknown" ? event.timestamp !== undefined : !time || event.timestamp !== Date.parse(time)) fail("Event timing mismatch");

@@ -140,22 +140,22 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
       },
       {
         catalog: "03",
-        title: "Purchase orders",
+        title: "Work orders",
         requirements: [
           {
             type: "capability",
-            text: "Each order is its own agent and grant: created, funded, paid, expired",
-            known: "not-yet",
+            text: "Each work order has a dedicated agent and expiring grant, with owner-approved invoice payment",
+            known: "offline",
             evidence:
-              "Not built: an offer records a payee, a ceiling and a deadline, but there is no agent or grant per order",
+              "Buyer flow implemented in Payables and the invoice portal. Offline tests cover fixed policy/grant requests, process isolation, authenticated intake, concurrent filing and restart identity (test/work-order-*.test.ts; test/browser/work-orders.cjs). Funding and settlement on a deployed work-order agent remain unobserved; residual-fund return is not built",
           },
           {
             type: "guarantee",
-            text: "Supplier payments can't be traced to the business",
+            text: "Work-order payments are confidential; business-supplier unlinkability remains unverified",
             stoppedBy: "policy",
             known: "offline",
             evidence:
-              "Payouts are confidential transfers under the policy (test/authorize.test.ts); no order paid on mainnet",
+              "The work-order policy and request require a confidential transfer (test/work-order-binding.test.ts). Provider visibility, timing and public approvals can reveal relationships. No work order paid on mainnet",
           },
           {
             type: "capability",
@@ -167,10 +167,10 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
           {
             type: "guarantee",
             text: "A tampered order (wrong supplier, changed amount, late) is refused",
-            stoppedBy: "nothing",
-            known: "not-yet",
+            stoppedBy: "server",
+            known: "offline",
             evidence:
-              "Not built per order: a wrong payee is refused by the destination list, but an amount over the order or a late invoice only shows a badge to voters",
+              "Work-order dispatch locally binds the exact invoice identity, payee, asset, amount, policy digest and grant deadline. Offline tests refuse altered terms and expiry during final reads (test/work-order-binding.test.ts). No work-order refusal observed on mainnet; accepted payments may finish after the deadline",
           },
         ],
       },

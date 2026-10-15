@@ -1,7 +1,7 @@
 import type { ProgressRecord } from "./run-progress-schema.js";
 import type { Tick } from "./evidence.js";
-import { AGUI_VERSION, BudgetSchema, DisplaySchema, JournalHistorySchema, MAX_RECORDING_BYTES, PlanSchema,
-  RecordingSchema, SeenSchema, StartSchema, iso, type Gap, type JournalHistory, type JournalRecord,
+import { AGUI_PROTOCOL_VERSION, AGUI_VERSION, BudgetSchema, DisplaySchema, JournalHistorySchema, MAX_RECORDING_BYTES, PlanSchema,
+  RecordingSchema, SeenSchema, StartSchema, iso, recordedTickFailed, type Gap, type JournalHistory, type JournalRecord,
   type Recording, type RunLogEvent } from "./run-log-schema.js";
 
 type Options = { exportedAt: string; display: Recording["display"]; progress?: ProgressRecord[]; progressGaps?: Gap[] };
@@ -22,10 +22,14 @@ export function tickLog(tick: Tick, history: JournalHistory, options: Options): 
   const metadata = (ref: string, recordedAt: string | null, observedAt: string | null, timing: "recorded" | "observed" | "unknown") => ({
     eventId: `${threadId}:${ref}`, source: "tick" as const, recordRef: `${context.id}/${ref}`, recordedAt, observedAt, timing,
   });
-  events.push({ type: "RUN_STARTED", threadId, runId: context.id, timestamp: Date.parse(context.at), metadata: metadata("start", context.at, null, "recorded") });
+  events.push({ type: "RUN_STARTED", threadId, runId: context.id, protocolVersion: AGUI_PROTOCOL_VERSION,
+    timestamp: Date.parse(context.at), metadata: metadata("start", context.at, null, "recorded") });
+  const activeStages = new Set<string>();
   for (const row of options.progress ?? []) {
     if (row.agentId !== context.agentId || row.tickId !== context.id) throw new Error("Progress identity mismatch");
     events.push({ ...row.event, timestamp: Date.parse(row.at), metadata: metadata(`progress:${row.sequence}`, row.at, null, "recorded") });
+    if (row.event.type === "STEP_STARTED") activeStages.add(row.event.stepName);
+    if (row.event.type === "STEP_FINISHED") activeStages.delete(row.event.stepName);
   }
   if (endAt && Date.parse(endAt) < Date.parse(context.at)) gap("clock_inconsistent", "end");
 
@@ -109,8 +113,19 @@ export function tickLog(tick: Tick, history: JournalHistory, options: Options): 
       joinHistory(submission.correlationId, submission.method, ref);
     }
     observation("after", end.after);
-    events.push({ type: "RUN_FINISHED", threadId, runId: context.id, timestamp: Date.parse(endAt!),
-      result: { outcome: end.outcome, refusal: end.refusal, rejected: end.rejected }, metadata: metadata("end", endAt, null, "recorded") });
+    const result = { outcome: end.outcome, refusal: end.refusal, rejected: end.rejected };
+    const failed = recordedTickFailed(result);
+    if (activeStages.size && !gaps.some(g => g.code === "progress_incomplete")) gap("progress_incomplete", "end");
+    if (failed || activeStages.size) {
+      // A run error ends open protocol spans; it never invents a recorded stage return.
+      // The original tick result remains evidence, separate from every operation's outcome.
+      events.push({ type: "RUN_ERROR", code: failed ? "tick_failed" : "progress_incomplete",
+        message: failed ? end.outcome : "Run end recorded, but one or more stage returns are missing.",
+        timestamp: Date.parse(endAt!), metadata: { ...metadata("end", endAt, null, "recorded"), tickResult: result } });
+    } else {
+      events.push({ type: "RUN_FINISHED", threadId, runId: context.id, timestamp: Date.parse(endAt!),
+        result, metadata: metadata("end", endAt, null, "recorded") });
+    }
   }
   const assets = new Set(display.assets.map((a) => a.asset));
   if (tick.end) {
@@ -119,7 +134,7 @@ export function tickLog(tick: Tick, history: JournalHistory, options: Options): 
     for (const asset of needed) if (!assets.has(asset)) gap("asset_display_missing", asset);
   }
   if (assets.size !== display.assets.length) throw new Error("Duplicate asset display identity");
-  const recording = RecordingSchema.parse({ schemaVersion: context.progressVersion || options.progress?.length ? 2 : 1, aguiVersion: AGUI_VERSION, agentId: context.agentId, tickId: context.id,
+  const recording = RecordingSchema.parse({ schemaVersion: 3, aguiVersion: AGUI_VERSION, agentId: context.agentId, tickId: context.id,
     exportedAt, completion: endAt ? "recorded-end" : "no-recorded-end", context, display, gaps, events,
     laterObservations: laterObservations.sort((a, b) => a.record.line - b.record.line) });
   bounded(JSON.stringify(recording)); // Already validated; bound the expanded payload once.

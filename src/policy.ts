@@ -8,11 +8,9 @@ export const ASSETS = {
 } as const;
 
 /**
- * The exposure envelope: swap among three assets inside per-asset caps and a cross-asset USD
- * budget. No destinations: funds never leave the account. Every window is rolling (the provider
- * enforces the per-asset hour/day/month caps, the API the 24 h / 7 d / 30 d USD budget), and the
- * short windows bound how fast a runaway agent can burn through the long ones: about $10 an hour
- * and $25 a day per asset, and $25 a day across all of them.
+ * Treasury spending policy: swaps, configured per-asset caps and a shared USD budget, with no
+ * external destinations. Enforcement and window semantics depend on the Agent API and OutLayer;
+ * see docs/enforcement.md. These caps do not bound portfolio exposure.
  */
 export const treasuryPolicy: Policy = {
   frozen: false,
@@ -45,9 +43,8 @@ export const treasuryPolicy: Policy = {
 
 /**
  * Why `policy` should not let this action through, beyond what the API checks; null when nothing.
- * The provider checks `assets` against what a swap spends, not what it buys, so a swap into an
- * unlisted asset executes and the agent can't sell it back. Refused here until the wallet
- * enforces it; the wallet stays the boundary for everything else.
+ * The provider's asset list restricts what a swap spends. This application additionally refuses
+ * swaps that buy an unlisted asset, which the agent otherwise could not sell under the same policy.
  */
 export function outputAssetRefusal(action: Action, policy: Policy): string | null {
   if (action.method !== "swap") return null;
@@ -57,9 +54,9 @@ export function outputAssetRefusal(action: Action, policy: Policy): string | nul
 export const mayBuy = (assets: Policy["assets"], asset: string) => assets === "any" || assets.includes(asset);
 
 /**
- * The payout envelope: transfers only, confidential, each waiting for the owner's approval, and
- * only to the agreed payees. Limits are checked before a payout can wait for a vote, so the caps
- * hold even against an approval given by mistake: at most 25 USDC a payout, 50 a day, 200 a month.
+ * Payout policy: confidential USDC transfers to agreed payees, each requiring owner approval,
+ * with configured per-transaction, daily and monthly caps. Enforcement and approval-time rechecks
+ * rely on the Agent API and OutLayer; see docs/enforcement.md.
  */
 export function payoutPolicy(payees: string[]): Policy {
   return {

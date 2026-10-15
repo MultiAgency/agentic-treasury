@@ -30,7 +30,7 @@ function HeldList({ data, setup }: { data: Overview; setup: Setup }) {
   const [voting, setVoting] = useState<string>();
   const nameOf = useNameOf();
   // A member who may propose and vote files and approves in one wallet confirmation.
-  const oneClick = viewer?.canPropose && viewer.canVote;
+  const oneClick = viewer?.access?.canPropose && viewer.access.canVote;
   if (held.isPending) return <Section title="Held payouts"><Loading label="Checking held payouts…" /></Section>;
   if (!held.error && held.data?.length === 0) return null;
 
@@ -90,11 +90,11 @@ function HeldList({ data, setup }: { data: Overview; setup: Setup }) {
               </div>
               <div className="flex items-center gap-2">
                 {voting === item.correlationId && action.label && <span className="text-sm text-muted-foreground">{action.label}</span>}
-                <ConfirmButton ownerAction disabled={action.busy || !canSign || blocked(item.correlationId)}
+                <ConfirmButton path="owner/prepare" disabled={action.busy || !canSign || blocked(item.correlationId)}
                   label={viaDao ? oneClick ? "File proposal and vote" : "File approval proposal" : "Sign approval"}
                   title="Approve this held payout?" description={`${exactPayment(item.request, data.book)}. Successful approval releases this payout for processing; it is not proof of completed payment.${viaDao ? " A proposal and your vote do not prove the DAO threshold passed." : ""}`}
                   confirm="Continue to approval" onConfirm={() => vote(item, "approve")} />
-                <ConfirmButton ownerAction disabled={action.busy || !canSign || blocked(item.correlationId)} label={viaDao ? "Propose rejection" : "Sign rejection"}
+                <ConfirmButton path="owner/prepare" disabled={action.busy || !canSign || blocked(item.correlationId)} label={viaDao ? "Propose rejection" : "Sign rejection"}
                   title="Reject this held payout?" description={`Reject ${exactPayment(item.request, data.book)}. Rejection releases no payment.`}
                   confirm="Continue to rejection" onConfirm={() => vote(item, "reject")} />
               </div>

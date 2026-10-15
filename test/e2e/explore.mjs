@@ -8,7 +8,7 @@ import { OWNER, PAYEE, listen } from './provider.mjs';
 
 // Same local services and wallet boundary as the deterministic tests. Agent-browser attaches via CDP.
 const directory = join(process.env.PROTO_E2E_ARTIFACTS, 'exploration'); mkdirSync(directory);
-const stack = await environment(join(directory, 'environment'));
+const stack = await environment(join(directory, 'environment'), { workspace: process.argv.includes('--workspace') });
 const probe = createServer(), port = await listen(probe);
 await new Promise(resolve => probe.close(resolve));
 let context;

@@ -9,6 +9,7 @@ import { acquireExecutorLease } from "./executor-lease.js";
 import { createExecutorLifecycle } from "./executor-lifecycle.js";
 import { crossSite, serveStatic } from "./http.js";
 import { resumeOwnerIntents, setAgentCreationHandler } from "./owner-intents.js";
+import { closeWorkOrders, resumeWorkOrders } from "./work-order-pool.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 
@@ -30,6 +31,7 @@ const executor = createExecutorLifecycle({
 });
 setAgentCreationHandler(id => executor.activate(id, true));
 await executor.activate(process.env.AGENT_ID);
+if (executes() && process.env.AGENT_ID) resumeWorkOrders(process.env.AGENT_ID);
 const invoices = process.env.INVOICES_PORT ? (await import("./invoice-http.js")).startInvoiceServer() : undefined;
 
 // This process holds the agent's grant: answer only same-origin requests on loopback.
@@ -68,6 +70,7 @@ async function serveDashboard(req: IncomingMessage, res: ServerResponse) {
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, async () => {
   dashboard.close(); invoices?.close();
+  await closeWorkOrders();
   await executor.close();
   process.exit(0);
 });

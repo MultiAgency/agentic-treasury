@@ -72,11 +72,12 @@ test("retries retain identity and another signed-in payee cannot read it", async
   assert.ok(!text.includes("correlation") && !text.includes("ngt_") && !text.includes("idempotency"));
 });
 
-test("invoice review and cancellation are operator-only at the gateway", () => {
-  for (const path of ["invoices", "cancelPreparedInvoice"]) {
-    assert.equal(mayCall("member", path), false);
-    assert.equal(mayCall("operator", path), true);
-  }
+test("members may review invoices; cancellation requires execution or management permission", () => {
+  const reader = { canSign: false, canPropose: false, canVote: false, canExecute: false, canManage: false };
+  assert.equal(mayCall(reader, "invoices"), true);
+  assert.equal(mayCall(reader, "cancelPreparedInvoice"), false);
+  assert.equal(mayCall({ ...reader, canExecute: true }, "cancelPreparedInvoice"), true);
+  assert.equal(mayCall({ ...reader, canManage: true }, "cancelPreparedInvoice"), true);
 });
 
 const request = { submission: "cccccccc-dddd-eeee-ffff-000000000001", amount: "2.5", note: "Bounty: docs" };

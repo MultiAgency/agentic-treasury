@@ -6,7 +6,7 @@ import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { BASE, kindOf, type Overview } from "../shared/lib";
 import { type Kind, AREA_NAMES } from "../features/evidence/beats";
 import { ViewerBadge } from "./session";
-import { useViewer, useIsOperator } from "./viewer";
+import { useViewer, useCanCall } from "./viewer";
 import { Onboarding } from "./onboarding";
 import { ownerName, type Setup, WalletButton } from "../features/owner/owner";
 import type { Treasury } from "../features/funding/treasury";
@@ -19,6 +19,7 @@ import { AREA_NAV as NAV, areaPageTitle } from "./navigation";
 
 import { AgentContext } from "./agent-context";
 import { SetupNextStep } from "./setup-progress";
+import { useGateway } from "./gateway-context";
 /** Detail and legacy routes remain accessible without adding duplicate menu entries. */
 const OFF_NAV: Record<Kind, LinkProps["to"][]> = { facilitator: ["/automations", "/follow/payment"], treasury: ["/follow/payment", "/steward"] };
 
@@ -122,7 +123,7 @@ function IndependentTask({ pathname }: { pathname: string }) {
   if (pathname.endsWith("/follow/run")) return <RunTimeline />;
   if (pathname.endsWith("/automations")) return <StopSchedule />;
   if (pathname.endsWith("/activity")) return <RecoveryActivity />;
-  return <Link to="/activity" className="underline">Review existing records in Activity</Link>;
+  return <Link to="/activity" className="underline">Review existing operation records</Link>;
 }
 
 function Notice({ children }: { children: ReactNode }) {
@@ -148,7 +149,8 @@ function Page({ data }: { data: Overview }) {
  * agent exists, onboarding is the only screen. Missing grants must not hide existing records.
  */
 export function AgentTaskBoundary() {
-  const operator = useIsOperator();
+  const guided = useGateway()?.walkthroughs;
+  const canStop = useCanCall("autopilot/stop");
   const workspace = useWorkspace();
   const viewer = useViewer();
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -174,7 +176,7 @@ export function AgentTaskBoundary() {
   const treasury = useQuery({ ...queries.treasury, enabled: ready && (pathname.replace(/\/$/, "") === BASE || ["/funding", "/payees"].some(path => pathname.endsWith(path))) });
   const error = setup.error ?? overview.error ?? treasury.error;
   const name = overview.data && AREA_NAMES[kindOf(overview.data)];
-  const pageTitle = overview.data ? areaPageTitle(kindOf(overview.data), pathname) : "Agent";
+  const pageTitle = pathname.replace(/\/$/, "").endsWith("/activity") ? "Operation status" : guided && (pathname.replace(/\/$/, "") === BASE || pathname === "/") ? "Guided walkthrough" : overview.data ? areaPageTitle(kindOf(overview.data), pathname) : "Agent";
   useEffect(() => {
     if (name) document.title = `${name} · ${pageTitle}`;
   }, [name, pageTitle]);
@@ -184,7 +186,7 @@ export function AgentTaskBoundary() {
       <main id="agent-main" tabIndex={-1} className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-10 sm:px-8">
         <Brand />
         {!workspace && <Nav className="flex flex-wrap gap-2" />}
-        <h1 className="text-2xl font-semibold">Agent recovery</h1>
+        <h1 className="text-2xl font-semibold">Available records</h1>
         <div className="flex flex-col items-start gap-3 rounded-2xl bg-destructive-muted p-6 text-sm text-destructive-muted-foreground">
           <p role="alert">Setup unavailable</p>
           <p>Retained records can still be reviewed when access is authorized. Setup, balances, policy and grant status are not confirmed here.</p>
@@ -213,7 +215,7 @@ export function AgentTaskBoundary() {
   if (!ready)
     return (
       <main id="agent-main" tabIndex={-1} className="mx-auto flex max-w-4xl flex-col gap-12 px-4 py-10 sm:px-8">
-        <header className="flex items-center justify-between gap-4">
+        <header className="flex min-w-0 flex-wrap items-center justify-between gap-4">
           <Brand />
           <WalletButton />
         </header>
@@ -222,7 +224,14 @@ export function AgentTaskBoundary() {
     );
 
   const refresh = (
-    <Button variant="ghost" size="sm" onClick={() => overview.refetch()} disabled={overview.isFetching} aria-label="Refresh">
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={() => { if (!overview.isFetching) void overview.refetch(); }}
+      aria-disabled={overview.isFetching}
+      aria-busy={overview.isFetching}
+      aria-label="Refresh"
+    >
       {overview.isFetching ? <Spinner /> : <ArrowClockwise size={16} />}
     </Button>
   );
@@ -243,7 +252,7 @@ export function AgentTaskBoundary() {
           )}
           {overview.data && <Identity setup={setup.data} data={overview.data} />}
           <ViewerBadge />
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
             <WalletButton />
             {refresh}
           </div>
@@ -253,7 +262,7 @@ export function AgentTaskBoundary() {
       {!workspace && <header className="sticky top-0 z-10 flex flex-col gap-3 border-b bg-background/90 px-4 pt-4 backdrop-blur lg:hidden">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Brand data={overview.data} />
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
             {refresh}
             <WalletButton />
           </div>
@@ -267,18 +276,24 @@ export function AgentTaskBoundary() {
       </header>}
 
       <main id="agent-main" tabIndex={-1} className="scroll-mt-48 mx-auto flex w-full max-w-5xl flex-col gap-8 px-4 py-8 sm:px-8 lg:py-10">
-        {workspace && <><div className="flex flex-wrap items-center justify-between gap-4"><div className="min-w-0"><p className="break-all text-sm text-muted-foreground">{name ?? "Agent"} · {ownerName(setup.data)}</p>{overview.data && <Details summary="Agent details"><Identity setup={setup.data} data={overview.data} /></Details>}</div><div className="flex items-center gap-2"><WalletButton />{refresh}</div></div></>}
-        <h1 className="text-2xl font-semibold">{name ?? "Agentic Treasury"} · {pageTitle}</h1>
+        {workspace ? <header className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex min-w-0 flex-col gap-2">
+            <h1 className="text-2xl font-semibold">{name ?? "Agentic Treasury"} · {pageTitle}</h1>
+            <p className="break-all text-sm text-muted-foreground">{ownerName(setup.data)}</p>
+            {overview.data && <Details summary="Agent details"><Identity setup={setup.data} data={overview.data} /></Details>}
+          </div>
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2"><WalletButton />{refresh}</div>
+        </header> : <h1 className="text-2xl font-semibold">{name ?? "Agentic Treasury"} · {pageTitle}</h1>}
         <SetupNextStep setup={setup.data} overview={overview.error ? undefined : overview.data} />
-        {error && <><p className="text-sm">{overview.data ? "Refresh failed. Showing previously loaded records; check again before acting." : "Some agent details could not be loaded. Activity remains available for read-only recovery."}</p><QueryError error={error} retry={() => { void setup.refetch(); void overview.refetch(); void treasury.refetch(); }} /></>}
-        {error && operator && setup.data.executor === true && !["/automations", "/follow/run"].some(path => pathname.replace(/\/$/, "").endsWith(path)) && <StopSchedule />}
+        {error && <><p className="text-sm">{overview.data ? "Refresh failed. Showing previously loaded records; check again before acting." : "Some agent details could not be loaded. Operation status remains available for retained records."}</p><QueryError error={error} retry={() => { void setup.refetch(); void overview.refetch(); void treasury.refetch(); }} /></>}
+        {error && canStop && setup.data.executor === true && !["/automations", "/follow/run"].some(path => pathname.replace(/\/$/, "").endsWith(path)) && <StopSchedule />}
         {overview.data ? (
           <AgentContext.Provider value={{ setup: setup.data, data: overview.data, treasury: treasury.data ?? null }}>
             <Page data={overview.data} />
           </AgentContext.Provider>
         ) : isIndependentTask(pathname) ? <IndependentTask pathname={pathname.replace(/\/$/, "")} /> : (
           <Notice>
-            {error ? <Link to="/activity" className="underline">Review existing records in Activity</Link> : <><Spinner /> Loading the book…</>}
+            {error ? <Link to="/activity" className="underline">Review existing operation records</Link> : <><Spinner /> Loading the book…</>}
           </Notice>
         )}
       </main>

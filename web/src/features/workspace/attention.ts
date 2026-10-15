@@ -40,11 +40,14 @@ export function attentionOf({ setup, overview, held = [], unresolved = [], inbox
     items.push({ tone: "destructive", to: "/policy", action: "Review", text: "The agent is frozen. Nothing moves until the owner unfreezes it." });
   else if (overview?.notInForce)
     items.push({ tone: "destructive", to: "/policy", action: "Review", text: `The policy isn't in force: ${overview.notInForce}. Nothing moves until it is.` });
-  const grant = setup?.grant;
-  const grantPage = overview && kindOf(overview) === "treasury" ? "/automations" : "/policy";
-  if (setup && !grant) items.push({ tone: "destructive", to: grantPage, hash: grantPage === "/policy" ? "grants" : undefined, action: "Issue", text: "No live grant: the agent can't send." });
-  else if (grant && Date.parse(grant.expiresAt) - Date.now() < GRANT_WARNING_DAYS * 86_400_000)
-    items.push({ tone: "warning", to: grantPage, hash: grantPage === "/policy" ? "grants" : undefined, action: "Renew", text: `The agent's grant expires ${ago(grant.expiresAt)}. The owner can review a new grant before it expires.` });
+  // Approve-only instances can review existing held payouts without a send grant.
+  if (setup && setup.executor !== false) {
+    const grant = setup.grant;
+    const grantPage = overview && kindOf(overview) === "treasury" ? "/automations" : "/policy";
+    if (!grant) items.push({ tone: "destructive", to: grantPage, hash: grantPage === "/policy" ? "grants" : undefined, action: "Issue", text: "No live grant: the agent can't send." });
+    else if (Date.parse(grant.expiresAt) - Date.now() < GRANT_WARNING_DAYS * 86_400_000)
+      items.push({ tone: "warning", to: grantPage, hash: grantPage === "/policy" ? "grants" : undefined, action: "Renew", text: `The agent's grant expires ${ago(grant.expiresAt)}. The owner can review a new grant before it expires.` });
+  }
   for (const h of held) {
     const r = h.request as { amount?: string; asset?: string; recipient?: string };
     items.push({ tone: "warning", to: "/follow/payment", payment: h.correlationId, action: "Review payment",

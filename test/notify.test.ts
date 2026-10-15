@@ -1,11 +1,12 @@
+import { temporaryDirectories } from "./fixtures/harness.js";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, mock, test } from "node:test";
+import { after, afterEach, beforeEach, mock, test } from "node:test";
 import { dismiss, post } from "../src/inbox.js";
 import { notifyOnce, pending, startNotifications } from "../src/notify.js";
 import { record } from "../src/ops.js";
+
+const scratch = temporaryDirectories();
 
 /** Telegram notifications from an executor's own state: once per open item, never amounts or payees. */
 
@@ -15,7 +16,7 @@ let sent: string[];
 const send = async (text: string) => { sent.push(text); };
 
 beforeEach(() => {
-  process.chdir(mkdtempSync(join(tmpdir(), "notify-")));
+  process.chdir(scratch.create("notify"));
   process.env.AGENT_ID = "a".repeat(64);
   process.env.NOTIFY_NAME = "Payout agent";
   process.env.NOTIFY_LINK = "https://proto.example/a/payout/";
@@ -78,3 +79,6 @@ test("a money action still settling isn't announced; one without an outcome afte
   assert.equal(await notifyOnce(send), 1);
   assert.match(sent.at(-1)!, /no proven outcome/);
 });
+
+// Remove state only after this suite has released its locks and stopped its processes.
+after(scratch.cleanup);

@@ -18,8 +18,12 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 freshDirectory("money-lock");
 
 /** Runs the fixture in another process in the current directory; returns what it printed. */
-const child = (mode: string) =>
-  spawnSync(TSX, [FIXTURE, mode], { cwd: process.cwd(), encoding: "utf8" }).stdout.trim();
+const child = (mode: string) => {
+  const result = spawnSync(TSX, [FIXTURE, mode], { cwd: process.cwd(), encoding: "utf8", timeout: 15_000 });
+  assert.equal(result.error, undefined, `${mode}: ${result.error ?? result.stderr}`);
+  if (mode !== "crash-after-log") assert.equal(result.status, 0, `${mode}: ${result.stderr}`);
+  return result.stdout.trim();
+};
 
 test("another process can't take the lock while it is held", async () => {
   const lock = await acquireMoneyLock();

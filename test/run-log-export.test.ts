@@ -117,7 +117,7 @@ const progress = (id: string, rows: { at: string; event: unknown }[]) => {
 };
 
 test("accepted submission without a final step exports later reconciliation and preserves the failed run", async () => {
-  evidence([{ ...start("accepted"), progressVersion: 1 }, { ...end("accepted", 3), outcome: "status unavailable" }]);
+  evidence([{ ...start("accepted"), progressVersion: 1 }, { ...end("accepted", 3), outcome: "Failed: status unavailable" }]);
   progress("accepted", [{ at: at(2), event: { type: "CUSTOM", name: "treasury.observation",
     value: { stage: "submission", method: "shield", correlationId: "accepted-op" } } }]);
   mkdirSync(".ops", { recursive: true });
@@ -130,7 +130,9 @@ test("accepted submission without a final step exports later reconciliation and 
   const recording = await client.autopilot.log({});
   assert.deepEqual(recording.laterObservations.map(row => row.record.status), ["SUCCESS"]);
   const finish = recording.events.at(-1)!;
-  assert.equal(finish.type === "RUN_FINISHED" && finish.result.outcome, "status unavailable");
+  assert.ok(finish.type === "RUN_ERROR");
+  assert.equal(finish.code, "tick_failed");
+  assert.equal(finish.metadata.tickResult.outcome, "Failed: status unavailable");
   assert.equal(recording.events.some(row => row.type === "CUSTOM" && row.value.stage === "shield"), false);
   assert.equal(readFileSync(`.ops/${agent}.jsonl`, "utf8"), journal);
 });
@@ -158,7 +160,9 @@ test("clock quarantine preserves a recorded end and never associates a discarded
   ]);
   const recording = await client.autopilot.log({});
   assert.equal(recording.completion, "recorded-end");
-  assert.equal(recording.events.at(-1)?.type, "RUN_FINISHED");
+  const terminal = recording.events.at(-1)!;
+  assert.ok(terminal.type === "RUN_ERROR");
+  assert.equal(terminal.code, "progress_incomplete");
   assert.ok(recording.gaps.some(row => row.code === "clock_inconsistent"));
   assert.doesNotMatch(JSON.stringify(recording), /discarded-op/);
   const imported = structuredClone(recording);

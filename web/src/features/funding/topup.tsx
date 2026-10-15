@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ASSETS } from "../../../../src/policy.js";
+import { mayCall } from "../../../../src/gateway/allowlist.js";
 import { type client, clientFor, toUnits, useAttempt } from "../../shared/lib";
 import { useSiblings } from "../../shared/names";
 import { PaymentReview, type PaymentReviewData, PayoutResult } from "../payables/payout";
@@ -10,7 +11,7 @@ import { Button, ErrorBox, input } from "../../shared/ui";
 /**
  * On the payout agent's dashboard behind the hosted gateway: the treasury agent pays this wallet through
  * its own `pay`, the one send path, under its own policy and caps. Offered only when that
- * policy lists this wallet, since the provider would refuse anything else; operators of the treasury agent only.
+ * policy lists this wallet, since the provider would refuse anything else; requires treasury execution permission.
  */
 export function TopUp() {
   const { setup } = useAgent();
@@ -23,8 +24,9 @@ export function TopUp() {
   const treasury = siblings.find((s) => s.kind === "treasury");
   const wallet = setup.wallet;
   if (!hosted || !treasury || !wallet) return null;
-  // The payment is the treasury agent's, so it takes operator access to that agent, not to this page's.
-  if (access[treasury.name]?.role !== "operator") return <span className="text-sm text-muted-foreground">Operators can top up from the treasury.</span>;
+  // The payment uses the treasury agent's authority, independently of access to this page's agent.
+  const canPayFrom = (name: string) => Boolean(access[name] && mayCall(access[name], "pay"));
+  if (!canPayFrom(treasury.name)) return <span className="text-sm text-muted-foreground">Your account cannot send a top-up from the treasury.</span>;
   const destination = treasury.overview.policy.policy?.destinations.list.find((d) => d.action === "transfer" && d.address === wallet);
   if (!destination || destination.action !== "transfer")
     return (
@@ -60,7 +62,7 @@ export function TopUp() {
       </div>
       {review && <PaymentReview payment={review.payment}
         currentPolicy={review.agentName === treasury.name && !treasury.overview.notInForce ? reviewedPolicyOf(treasury.overview) : undefined}
-        permitted={access[review.agentName]?.role === "operator"}
+        permitted={canPayFrom(review.agentName)}
         onClose={() => setReview(undefined)} onConfirm={(request) => send.attempt(async () => {
           setResult(undefined);
           setResult(await clientFor(`/a/${review.agentName}`).pay(request));

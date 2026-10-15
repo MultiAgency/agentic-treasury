@@ -1,4 +1,7 @@
+const assert = require('node:assert/strict');
+const { assertResponsive } = require('./fixtures/layout.cjs');
 const { rpcValue } = require('./fixtures/rpc.cjs');
+const { openWorkspaceNavigation } = require('./fixtures/navigation.cjs');
 /**
  * Offline UI regressions. Every request is fulfilled locally or aborted; no executor runs.
  * Build with pnpm build:web. Then run this file with Playwright installed externally:
@@ -8,34 +11,88 @@ const { rpcValue } = require('./fixtures/rpc.cjs');
 const {chromium}=require('./fixtures/browser.cjs');
 const root=require('node:path').resolve(process.argv[2]||'web/dist');
 const results=[];
+let pageErrors=[];
 const budget=Object.fromEntries(['daily','weekly','monthly'].map(p=>[p,{limit_usd:'100',remaining_usd:'90',spent_usd:'10'}]));
 const setup={executor:true,agentId:'fixture',wallet:'agent.near',owner:{type:'near',account_id:'owner.near'},grant:{id:'grant',label:'treasury',expiresAt:'2030-01-01T00:00:00Z'},dao:{id:'owner.sputnik-dao.near',owner:{account_id:'owner.near'}}};
 const overview=kind=>({agentId:'fixture',digest:'sha256:'+'a'.repeat(64),grants:[],rebalance:{minLegUsd:1,maxCostBps:100},notInForce:null,agreed:['payee.near'],unmanaged:[],target:{usdc:1},book:[{asset:'usdc',symbol:'USDC',decimals:6,public:'0',confidential:'10000000',usd:10,price:1}],policy:{status:'APPLIED',revision:1,policy:{actions:kind==='treasury'?['swap','transfer']:['transfer'],owner_approval:false,frozen:false,destinations:{mode:'only',list:[{action:'transfer',address:'payee.near',confidential:true},{action:'transfer',address:'treasury.near',confidential:true}]},assets:'any',budget:{},limits:{}},usage:{budget},cooldowns:{}}});
 (async()=>{const browser=await chromium.launch({headless:true,executablePath:process.env.BROWSER_EXECUTABLE});
-async function pageFor(path,options={}){const page=await browser.newPage({viewport:{width:options.width||390,height:900},reducedMotion:'reduce'});page.setDefaultTimeout(5000);if(options.clock)await page.clock.install();const calls=[];const requests=[];let failedGateway=!!options.gatewayError;let releaseDelayed;const delayed=new Promise(resolve=>{releaseDelayed=resolve;});
+async function pageFor(path,options={}){const page=await browser.newPage({viewport:{width:options.width||390,height:900},reducedMotion:'reduce'});page.setDefaultTimeout(5000);page.on('pageerror',error=>pageErrors.push(error.message));if(options.clock)await page.clock.install();const calls=[];const requests=[];let failedGateway=!!options.gatewayError;let releaseDelayed;const delayed=new Promise(resolve=>{releaseDelayed=resolve;});
 await page.route('**/*',async r=>{const u=new URL(r.request().url()),p=u.pathname;if(u.hostname!=='frontend.test')return r.abort();
-if(p==='/gw/me'){if(options.gatewayDelay)await new Promise(ok=>setTimeout(ok,1200));if(failedGateway)return r.fulfill({status:503,json:{error:'Fixture gateway unavailable'}});return r.fulfill({json:{agents:options.public?[]:[{name:'treasury',area:'treasury',owner:'owner.near',dao:false},{name:'payables',area:'payables',owner:'owner.near',dao:false}],invoices:null,viewer:options.public?null:{account:'owner.near',access:{treasury:{role:'operator',canPropose:true,canVote:true},payables:{role:'operator',canPropose:true,canVote:true}}}}});}
-if(p.includes('/rpc/')){const m=p.split('/rpc/')[1];calls.push(m);requests.push({method:m,body:r.request().postDataJSON()});if(options.hold===m)await delayed;if(options.delay===m)await new Promise(ok=>setTimeout(ok,1200));if(options.error===m)return r.fulfill({status:500,json:{json:{defined:false,code:'INTERNAL_SERVER_ERROR',message:'Fixture read unavailable'}}});const values={get instance() { return { agentId: this.setup?.agentId ?? null, executor: this.setup?.executor !== false }; }, setup,overview:overview(path.includes('payables')?'payables':'treasury'),'treasury/get':options.linked?{accountId:'treasury.near',dao:null,confidential:false,balances:{near:'0',usdc:'0'},payees:[]}:null,held:[],unresolved:[],'inbox/list':[],'agreements/list':options.agreements?[{id:'a',payee:'payee.near',amount:'1000000',status:'requested',origin:'payee',at:new Date().toISOString()}]:[],activity:[],'owner/pending':[],'owner/actions':[],policyHistory:[],'autopilot/get':{on:false,everyMin:60,maxUsd:10},'autopilot/evidence':{ticks:[]},'strategy/get':options.ready?{strategy:{targetBps:{usdc:10000},minLegUsd:1,maxCostBps:100,autopilot:{everyMin:60,maxUsd:10}},digest:'fixture-strategy',grantSuffix:'fixture',executor:true,on:false,grantMatches:true,unresolved:0,grant:setup.grant,observedAt:new Date().toISOString(),readiness:{state:'off',canEnable:true,reasons:[]}}:{},pay:{outcome:'sent',status:'PENDING_APPROVAL'},'treasury/unlink':null,'agreements/decline':null};if(options.notInForce)values.overview.notInForce=options.notInForce;if(options.policy)values.overview.policy.policy={...values.overview.policy.policy,...options.policy};if(options.revision)values.overview.policy.revision=options.revision;if(options.digest)values.overview.digest=options.digest;if(options.approvalUnknown)values.overview.policy.policy.owner_approval=undefined;return r.fulfill({json:{json:rpcValue(values, m)}});}
-if(p.startsWith('/static/'))return r.fulfill({path:root+p,contentType:p.endsWith('.js')?'application/javascript':p.endsWith('.css')?'text/css':'font/woff2'});return r.fulfill({path:root+'/index.html',contentType:'text/html'});});await page.goto('http://frontend.test'+path);await page.waitForTimeout(options.fast?150:500);return {page,calls,requests,release:()=>releaseDelayed(),recover:()=>failedGateway=false};}
+if(p==='/gw/me'){if(options.gatewayDelay)await new Promise(ok=>setTimeout(ok,1200));if(failedGateway)return r.fulfill({status:503,json:{error:'Fixture gateway unavailable'}});return r.fulfill({json:{agents:options.public?[]:[{name:'treasury',area:'treasury',owner:'owner.near',dao:false},{name:'payables',area:'payables',owner:options.dao?setup.dao.id:'owner.near',dao:!!options.dao}],invoices:null,viewer:options.public?null:{account:'owner.near',access:{treasury:{canSign:true,canPropose:true,canVote:true,canExecute:true,canManage:true},payables:{canSign:!options.dao,canPropose:true,canVote:true,canExecute:true,canManage:true}}}}});}
+if(p==='/gw/proposals')return r.fulfill({json:[]});
+if(p.includes('/rpc/')){const m=p.split('/rpc/')[1];calls.push(m);requests.push({method:m,body:r.request().postDataJSON()});if(options.hold===m)await delayed;if(options.delay===m)await new Promise(ok=>setTimeout(ok,1200));if(options.error===m)return r.fulfill({status:500,json:{json:{defined:false,code:'INTERNAL_SERVER_ERROR',message:'Fixture read unavailable'}}});const values={get instance() { return { agentId: this.setup?.agentId ?? null, executor: this.setup?.executor !== false }; }, setup,overview:overview(path.includes('payables')?'payables':'treasury'),'treasury/get':options.linked?{accountId:'treasury.near',dao:null,confidential:false,balances:{near:'0',usdc:'0'},payees:[]}:null,held:[],unresolved:[],'inbox/list':[],'workOrders/list': [], 'agreements/list':options.agreements?[{id:'a',payee:'payee.near',amount:'1000000',status:'requested',origin:'payee',at:new Date().toISOString()}]:[],activity:[],'owner/pending':[],'owner/actions':[],policyHistory:[],'autopilot/get':{on:false,everyMin:60,maxUsd:10},'autopilot/evidence':{ticks:[]},'strategy/get':options.ready?{strategy:{targetBps:{usdc:10000},minLegUsd:1,maxCostBps:100,autopilot:{everyMin:60,maxUsd:10}},digest:'fixture-strategy',grantSuffix:'fixture',executor:true,on:false,grantMatches:true,unresolved:0,grant:setup.grant,observedAt:new Date().toISOString(),readiness:{state:'off',canEnable:true,reasons:[]}}:{},pay:{outcome:'sent',status:'PENDING_APPROVAL'},'treasury/unlink':null,'agreements/decline':null};if(options.values)Object.assign(values,options.values);if(options.notInForce)values.overview.notInForce=options.notInForce;if(options.policy)values.overview.policy.policy={...values.overview.policy.policy,...options.policy};if(options.revision)values.overview.policy.revision=options.revision;if(options.digest)values.overview.digest=options.digest;if(options.approvalUnknown)values.overview.policy.policy.owner_approval=undefined;return r.fulfill({json:{json:rpcValue(values, m)}});}
+if(p.startsWith('/static/'))return r.fulfill({path:root+p,contentType:p.endsWith('.js')?'application/javascript':p.endsWith('.css')?'text/css':'font/woff2'});return r.fulfill({path:root+'/index.html',contentType:'text/html'});});await page.goto('http://frontend.test'+path);if(options.gatewayError)await page.getByRole('alert').waitFor();else if(!options.fast)await page.getByRole('heading',{level:1}).waitFor();return {page,calls,requests,release:()=>releaseDelayed(),recover:()=>failedGateway=false};}
 async function recipient(page) {
  const summary=page.locator('summary').filter({hasText:/^Send money to a payee$/});
  await summary.waitFor();
  if(!await summary.evaluate(e=>e.parentElement.open))await summary.click();
  return page.getByLabel("Recipient’s NEAR account", {exact:true});
 }
-async function check(name,work){if(process.env.WIG_CASE&&!new RegExp(process.env.WIG_CASE).test(name))return;try{const detail=await work();results.push({name,pass:detail===true,detail});}catch(e){results.push({name,pass:false,detail:e.message.split('\n')[0]});}}
-await check('1 payment review',async()=>{const {page,calls}=await pageFor('/a/treasury/funding');await (await recipient(page)).fill('payee.near');await page.getByPlaceholder('Amount',{exact:true}).fill('1.234567');await page.getByRole('button',{name:/^(Pay|Review payment)$/}).click();return !calls.includes('pay')&&await page.getByRole('dialog').count()===1;});
-await check('2 form labels',async()=>{const {page}=await pageFor('/a/payables/payees');return page.locator('input,select,textarea').evaluateAll(xs=>xs.every(x=>x.labels?.length||x.getAttribute('aria-label')||x.getAttribute('aria-labelledby')));});
-await check('3 error announcements',async()=>{const {page}=await pageFor('/',{gatewayError:true});return await page.getByRole('alert').count()>0;});
+async function check(name,work){
+ if(process.env.WIG_CASE&&!new RegExp(process.env.WIG_CASE).test(name))return;
+ pageErrors=[];
+ try{const detail=await work();assert.deepEqual(pageErrors,[], 'Unexpected browser error');results.push({name,pass:detail===true,detail});}
+ catch(e){results.push({name,pass:false,detail:e.message});}
+ finally{for(const context of browser.contexts())await context.close();}
+}
+await check('agreement forms expose labelled controls',async()=>{
+ const {page}=await pageFor('/a/payables/payees');
+ await page.getByText('Offer terms (a bounty, grant award or service agreement)',{exact:true}).click();
+ await page.getByText('Add a payee without agreement terms',{exact:true}).click();
+ await page.locator('[name=offer-payee]').waitFor();
+ return page.locator('input,select,textarea').evaluateAll(controls=>{
+  const visible=controls.filter(control=>control.getClientRects().length>0);
+  return visible.length>0&&visible.every(control=>[...(control.labels||[])].some(label=>label.textContent.trim())||control.getAttribute('aria-label')?.trim()||control.getAttribute('aria-labelledby')?.split(/\s+/).some(id=>document.getElementById(id)?.textContent.trim()));
+ });
+});
+await check('Steward instructions keep their label and guidance after typing',async()=>{
+ const {page,calls}=await pageFor('/a/treasury/steward',{width:320});
+ const field=page.getByRole('textbox',{name:'Instructions (optional)',exact:true});await field.fill('Review the current allocation.');
+ return await field.evaluate(element=>element.labels?.[0]?.textContent==='Instructions (optional)'&&document.getElementById(element.getAttribute('aria-describedby'))?.textContent.includes('Leave empty for a routine review')&&element.getBoundingClientRect().height>=44)
+  &&!calls.some(method=>/steward|executePlan/.test(method))&&await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth);
+});
 await check('4 decline confirmation',async()=>{const {page,calls}=await pageFor('/a/payables/payees',{agreements:true});await page.getByRole('button',{name:'Decline',exact:true}).click();return !calls.includes('agreements/decline')&&await page.getByRole('dialog').count()===1;});
 await check('5 named modal and cancel focus',async()=>{const {page}=await pageFor('/a/treasury/automations',{ready:true});await page.getByRole('button',{name:'Turn on',exact:true}).first().click();const d=page.getByRole('dialog',{name:'Let the agent act on its own?'});return await d.count()===1&&await page.evaluate(()=>document.activeElement.textContent==='Cancel');});
-await check('6 input contrast',async()=>{const {page}=await pageFor('/a/payables/payees');return page.locator('input').first().evaluate(e=>{const s=getComputedStyle(e),c=document.createElement('canvas'),x=c.getContext('2d');function lum(col){x.fillStyle='white';x.fillRect(0,0,1,1);x.fillStyle=col;x.fillRect(0,0,1,1);const a=[...x.getImageData(0,0,1,1).data].slice(0,3).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4});return a[0]*.2126+a[1]*.7152+a[2]*.0722;}return 1.05/(lum(s.borderColor)+.05)>=3;});});
+await check('narrow DAO confirmation keeps both actions visible and cancellation restores focus',async()=>{
+ const at=new Date().toISOString(),request={amount:'1000000',asset:'usdc',recipient:'payee.near',confidential:true};
+ const {page,calls}=await pageFor('/a/payables/follow/payment?payment=payment-one',{width:320,dao:true,values:{
+  held:[{correlationId:'payment-one',approvalId:'approval-one',at,request}],invoices:[],
+  paymentHistory:{items:[{correlationId:'payment-one',at}],complete:true},
+  paymentStatus:{status:'PENDING_APPROVAL',request,approvalId:'approval-one',createdAt:at,expiresAt:'2030-01-01T00:00:00Z'},
+ }});
+ const trigger=page.getByRole('button',{name:'Propose rejection',exact:true});await trigger.click();
+ const modal=page.getByRole('dialog',{name:'Reject this held payout?',exact:true});await modal.waitFor();
+ const cancel=modal.getByRole('button',{name:'Cancel',exact:true});
+ if(!await cancel.evaluate(e=>e===document.activeElement))throw Error('Cancel did not receive initial focus');
+ await modal.getByRole('button',{name:'Continue to DAO rejection',exact:true}).waitFor();
+ const geometry=await modal.evaluate(dialog=>{const d=dialog.getBoundingClientRect();return [...dialog.querySelectorAll('button')].map(button=>{const b=button.getBoundingClientRect();return {label:button.textContent,left:b.left,right:b.right,height:b.height,inside:b.left>=d.left&&b.right<=d.right};});});
+ if(geometry.some(button=>!button.inside||button.height<44))return geometry;
+ await page.keyboard.press('Escape');await modal.waitFor({state:'hidden'});
+ await page.waitForFunction(()=>document.activeElement?.textContent==='Propose rejection');
+ await trigger.click();await cancel.click();await modal.waitFor({state:'hidden'});
+ return await trigger.evaluate(e=>e===document.activeElement)&&!calls.some(method=>/^owner\/(prepare|submit)$/.test(method));
+});
+await check('long failure code wraps outside its short status badge',async()=>{
+ const failureCode='PROVIDER_REPORTED_A_FAILURE_WITH_AN_UNBROKEN_REFERENCE_'+ 'x'.repeat(100);
+ const {page}=await pageFor('/a/treasury/funding',{width:320,values:{pay:{outcome:'sent',status:'FAILED',failureCode}}});
+ await (await recipient(page)).fill('payee.near');await page.getByLabel('Amount',{exact:true}).fill('1');
+ await page.getByRole('button',{name:'Review payment',exact:true}).click();
+ await page.getByRole('dialog',{name:'Review payment'}).getByRole('button',{name:'Send payment',exact:true}).click();
+ const code=page.getByText(failureCode,{exact:true});await code.waitFor();
+ if(await code.evaluate(e=>Boolean(e.closest('[data-slot="badge"]'))))throw Error('failure detail is trapped inside a badge');
+ return await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth);
+});
 await check('7 date validation',async()=>{const {page,calls}=await pageFor('/a/payables/payees',{agreements:true});await page.getByLabel('Terms hold until',{exact:true}).fill('');await page.getByRole('button',{name:'Agree to these terms'}).click();return !calls.includes('agreements/propose')&&await page.locator('input[type=date][aria-invalid=true]').count()>0;});
-await check('8 autopilot loading',async()=>{const {page}=await pageFor('/a/treasury/automations',{delay:'autopilot/get',fast:true});await page.getByText('Checking autopilot settings…',{exact:true}).waitFor();return true;});
-await check('9 payout wraps',async()=>{const {page}=await pageFor('/a/treasury/funding',{width:320});await (await recipient(page)).fill('payee.near');await page.getByPlaceholder('Amount',{exact:true}).fill('1');await page.getByRole('button',{name:/^(Pay|Review payment)$/}).click();if(await page.getByRole('dialog').count())await page.getByRole('dialog').getByRole('button',{name:/Send|Pay/}).click();await page.waitForTimeout(150);const overflow=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,elements:[...document.querySelectorAll('body *')].filter(e=>e.getBoundingClientRect().right>innerWidth+1).map(e=>({tag:e.tagName,cls:e.className,text:e.textContent.slice(0,90),right:e.getBoundingClientRect().right})).slice(-15)}));return overflow.scroll<=overflow.width||overflow;});
-await check('10 draft guard',async()=>{const {page}=await pageFor('/a/payables/payees');const draftInput=await page.locator('[name=offer-payee]').count()?page.locator('[name=offer-payee]'):page.getByPlaceholder("Payee's NEAR account").first();await draftInput.fill('draft.near');let guarded=false;page.on('dialog',async d=>{guarded=true;await d.dismiss();});await page.getByRole('button',{name:'Menu',exact:true}).click();await page.getByRole('link',{name:'Balances & funding',exact:true}).filter({visible:true}).last().click();await page.waitForTimeout(100);return guarded&&/\/payees\/?$/.test(page.url())||{guarded,url:page.url()};});
-await check('11 public main and privacy',async()=>{const {page,calls}=await pageFor('/',{public:true});return await page.getByRole('main').count()===1&&calls.length===0;});
-await check('12 bootstrap retry',async()=>{const {page,recover}=await pageFor('/',{gatewayError:true,public:true});const retry=page.getByRole('button',{name:'Retry',exact:true});if(!await retry.count())return false;recover();await retry.click();await page.getByRole('heading',{level:1}).waitFor();return true;});
+await check('10 draft guard',async()=>{const {page}=await pageFor('/a/payables/payees');await page.getByText('Offer terms (a bounty, grant award or service agreement)',{exact:true}).click();const draftInput=page.locator('[name=offer-payee]');await draftInput.fill('draft.near');let guarded=false;page.on('dialog',async d=>{guarded=true;await d.dismiss();});await page.getByRole('navigation',{name:'Area utilities',exact:true}).getByRole('link',{name:'Balances & funding',exact:true}).click();await page.waitForTimeout(100);return guarded&&/\/payees\/?$/.test(page.url())||{guarded,url:page.url()};});
+await check('bootstrap failure is announced and retry restores the public page',async()=>{
+ const {page,recover}=await pageFor('/',{gatewayError:true,public:true});
+ await page.getByRole('alert').waitFor();
+ const retry=page.getByRole('button',{name:'Retry',exact:true});await retry.waitFor();
+ const refreshed=page.waitForResponse(response=>new URL(response.url()).pathname==='/gw/me'&&response.ok());
+ recover();await retry.click();await refreshed;
+ await page.getByRole('alert').filter({hasText:'Fixture gateway unavailable'}).waitFor({state:'hidden'});
+ await page.getByRole('heading',{level:1}).waitFor();return true;
+});
 await check('13 reduced motion',async()=>{const {page,release}=await pageFor('/a/treasury/automations',{hold:'autopilot/get',fast:true});await page.getByText('Checking autopilot settings…',{exact:true}).waitFor();const stopped=await page.locator('.animate-spin').evaluateAll(xs=>xs.length>0&&xs.every(x=>getComputedStyle(x).animationName==='none'));release();return stopped;});
 
 await check('payment review: Enter, exact terms, focus trap, Escape and one submission',async()=>{
@@ -55,6 +112,7 @@ await check('payment review: Enter, exact terms, focus trap, Escape and one subm
  await page.waitForFunction(()=>document.activeElement.textContent.includes('Review payment'));if(!await page.getByRole('button',{name:'Review payment',exact:true}).evaluate(e=>e===document.activeElement))throw Error('trigger focus');
  await page.getByRole('button',{name:'Review payment',exact:true}).click();await modal.getByRole('button',{name:'Send payment'}).click();
  await page.getByText('Held payout',{exact:true}).waitFor();
+ await assertResponsive(page, 'confirmed payment');
  const sent=requests.filter(x=>x.method==='pay');return sent.length===1&&sent[0].body.json.amount==='1234567'&&sent[0].body.json.recipient==='payee.near'||sent;
 });
 await check('return review and unlink cancellation do not submit',async()=>{
@@ -68,7 +126,7 @@ await check('return review and unlink cancellation do not submit',async()=>{
  return !calls.includes('pay')&&!calls.includes('treasury/unlink');
 });
 await check('validation focuses the first field and names the error',async()=>{
- const {page,calls}=await pageFor('/a/payables/payees');await page.getByRole('button',{name:'Offer',exact:true}).click();
+ const {page,calls}=await pageFor('/a/payables/payees');await page.getByText('Offer terms (a bounty, grant award or service agreement)',{exact:true}).click();await page.getByRole('button',{name:'Offer',exact:true}).click();
  const payee=page.locator('[name=offer-payee]');await page.waitForFunction(()=>document.activeElement.getAttribute('name')==='offer-payee');
  return !calls.includes('agreements/offer')&&await payee.evaluate(e=>e===document.activeElement&&e.getAttribute('aria-invalid')==='true'&&Boolean(document.getElementById(e.getAttribute('aria-describedby'))?.textContent));
 });
@@ -80,18 +138,19 @@ await check('policy caps: labels, inline errors, dirty cancel',async()=>{
  let prompted=false;page.on('dialog',async d=>{prompted=true;await d.dismiss();});await page.getByRole('button',{name:'Cancel',exact:true}).click();
  return prompted&&await cap.inputValue()==='invalid';
 });
-await check('navigation focuses main; public disclosures make no private requests',async()=>{
- const {page}=await pageFor('/a/treasury/funding');await page.getByRole('button',{name:'Menu',exact:true}).click();await page.getByRole('link',{name:'Strategy',exact:true}).filter({visible:true}).last().click();
+await check('navigation focuses main; sign-in entry is keyboard accessible and makes no private requests',async()=>{
+ const {page}=await pageFor('/a/treasury/funding');await page.getByRole('navigation',{name:'Area',exact:true}).getByRole('link',{name:'Strategy',exact:true}).click();
  await page.waitForTimeout(100);if(!await page.getByRole('main').evaluate(e=>e===document.activeElement))return false;
- const pub=await pageFor('/',{public:true});await pub.page.keyboard.press('Tab');if(!await pub.page.getByRole('link',{name:'Skip to main content'}).evaluate(e=>e===document.activeElement))return false;
- await pub.page.keyboard.press('Enter');if(!await pub.page.getByRole('main').evaluate(e=>e===document.activeElement))return false;
- await pub.page.getByText('View requirements',{exact:true}).first().click();return pub.calls.length===0;
+ const pub=await pageFor('/',{public:true});await pub.page.keyboard.press('Tab');
+ if(!await pub.page.getByRole('button',{name:'Connect wallet',exact:true}).evaluate(e=>e===document.activeElement))return false;
+ return await pub.page.getByRole('main').count()===1&&await pub.page.getByText('View requirements',{exact:true}).count()===0&&pub.calls.length===0;
 });
 await check('startup announces loading before the gateway responds',async()=>{
- const {page}=await pageFor('/',{public:true,gatewayDelay:true,fast:true});return await page.getByRole('status').getByText('Loading dashboard…',{exact:true}).count()===1;
+ const {page}=await pageFor('/',{public:true,gatewayDelay:true,fast:true});await page.getByRole('status').getByText('Loading dashboard…',{exact:true}).waitFor();return true;
 });
 await check('light/dark input and focus contrast',async()=>{
  const {page}=await pageFor('/a/payables/payees');
+ await page.getByText('Offer terms (a bounty, grant award or service agreement)',{exact:true}).click();
  for(const scheme of ['light','dark']){
   await page.emulateMedia({colorScheme:scheme});await page.waitForTimeout(50);
   const field=page.locator('[name=offer-payee]');await field.focus();
@@ -104,12 +163,13 @@ await check('light/dark input and focus contrast',async()=>{
   });if(ratios.border<3||ratios.focus<3||ratios.text<4.5)return {scheme,...ratios};
  }return true;
 });
-await check('responsive forms and public page at 320/390/1280',async()=>{
- for(const width of [320,390,1280])for(const path of ['/','/a/payables/payees','/a/treasury/funding','/a/treasury/policy']){
-  const {page}=await pageFor(path,{width,public:path==='/'});
+await check('expanded agreement, funding and policy forms fit mobile and desktop',async()=>{
+ for(const path of ['/a/payables/payees','/a/treasury/funding','/a/treasury/policy']){
+  const {page}=await pageFor(path);
+  if(path.endsWith('/payees'))await page.getByText('Offer terms (a bounty, grant award or service agreement)',{exact:true}).click();
+  if(path.endsWith('/funding'))await recipient(page);
   if(path.endsWith('/policy'))await page.getByRole('button',{name:'Edit',exact:true}).click();
-  if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))return {width,path};
-  if(process.env.SCREENSHOT_DIR&&width===390&&path==='/a/payables/payees')await page.screenshot({path:require('node:path').join(process.env.SCREENSHOT_DIR,'agreements.png'),fullPage:true});
+  await assertResponsive(page,path);
   await page.close();
  }return true;
 });

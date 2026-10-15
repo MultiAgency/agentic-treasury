@@ -7,6 +7,10 @@ import { getInvoice } from "./invoice-store.js";
 import { agreed, file, mine, validate } from "./invoices.js";
 import { BadRequest, readJson, SECURITY_HEADERS, sendFailure, sendJson as send } from "./http.js";
 import { chainKeyLookup, challengeAnswer, clientAddress, hourlyLimit, parseSignIn, sessions, verifySignIn } from "./signin.js";
+import { getWorkOrder, listWorkOrders } from "./work-order-store.js";
+import { callWorkOrder } from "./work-order-pool.js";
+import { publicWorkOrder } from "./work-order-protocol.js";
+import { localWorkOrders, workOrderRequest } from "./work-orders.js";
 
 /**
  * The public invoice listener in the payout executor process. It uses the same grant, database,
@@ -65,7 +69,7 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
     // Same-origin writes only: with a SameSite cookie this closes cross-site requests outright.
     if (req.method === "POST" && req.headers.origin && req.headers.origin !== ORIGIN) return send(res, 403, { error: "Wrong origin." });
 
-    if (url.pathname.startsWith("/internal/agreements")) return await internal(req, res, url.pathname);
+    if (url.pathname.startsWith("/internal/agreements") || url.pathname === "/internal/work-orders") return await internal(req, res, url.pathname);
 
     if (req.method === "GET" && url.pathname === "/api/session") {
       const account = session.account(req);
@@ -93,6 +97,27 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
 
     const payee = session.account(req);
     if (url.pathname.startsWith("/api/") && !payee) return send(res, 401, { error: "Sign in with the account being paid." });
+
+    if (req.method === "GET" && url.pathname === "/api/work-orders") {
+      const orders = listWorkOrders(agentId()).filter(order => order.payee === payee);
+      return send(res, 200, { orders: orders.map(({ id, amount, note, until, createdAt }) => ({ id, amount, note, until, createdAt })) });
+    }
+    const workOrder = url.pathname.match(/^\/api\/work-orders\/([0-9a-f-]{36})(\/file)?$/);
+    if (workOrder && (req.method === "GET" || req.method === "POST")) {
+      const id = workOrder[1]!;
+      const order = listWorkOrders(agentId()).find(order => order.id === id && order.payee === payee);
+      if (!order) return send(res, 404, { error: "Work order not found." });
+      if (req.method === "GET" && !workOrder[2])
+        return send(res, 200, publicWorkOrder(await callWorkOrder(agentId(), id, { type: "snapshot" })));
+      if (req.method === "POST" && workOrder[2]) {
+        if (!allowed("file", payee!)) return send(res, 429, { error: "Too many attempts. Try again later." });
+        // The authenticated account and durable order determine every term. Body overrides are rejected.
+        const body = await readJson(req);
+        if (Object.keys(body).length) return send(res, 400, { error: "Work order terms cannot be changed when filing an invoice." });
+        getWorkOrder(agentId(), id);
+        return send(res, 200, await callWorkOrder(agentId(), id, { type: "file", payee: payee! }));
+      }
+    }
 
     // Files the confirmed invoice once, always paying the signed-in account; an account the owner
     // hasn't agreed to pay files an agreement request instead, and nothing is paid.
@@ -140,6 +165,11 @@ async function internal(req: IncomingMessage, res: ServerResponse, path: string)
   if (req.method === "GET" && path === "/internal/agreements") return send(res, 200, { agreements: await store.list() });
   if (req.method !== "POST") return send(res, 404, { error: "Not found." });
   try {
+    if (path === "/internal/work-orders") {
+      const body = await readJson(req) as Record<string, unknown>;
+      if (body.parentAgentId !== agentId()) throw new BadRequest("Work order parent does not match this executor.");
+      return send(res, 200, { result: await localWorkOrders(agentId(), workOrderRequest.parse(body.request)) });
+    }
     return await answerInternal(res, path, (await readJson(req)) as Record<string, unknown>);
   } catch (error) {
     // The caller is this agent's own dashboard: it sees why, unlike a payee.

@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { completeSigning, signingRequest } from "../src/dao-owner.js";
-import { TSX } from "./fixtures/harness.js";
+import { temporaryDirectories, TSX } from "./fixtures/harness.js";
 import { preparedForWallet } from "./fixtures/wallet-signature.js";
+
+const scratch = temporaryDirectories();
 
 const FIXTURE = fileURLToPath(new URL("./fixtures/owner-intents.ts", import.meta.url));
 // A grant the Agent API generated on mainnet, and the hash the DAO's MPC key signed for it.
@@ -35,7 +36,7 @@ test("the DAO's signature completes the signed data in either standard", async (
 });
 
 test("a restarted server still follows a DAO vote in progress, and drops intents whose window closed", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "owner-intents-"));
+  const dir = scratch.create("owner-intents");
   const file = join(dir, ".owner-intents", ".env.json");
   const at = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
   const dao = await signingRequest(intent, owner);
@@ -49,7 +50,7 @@ test("a restarted server still follows a DAO vote in progress, and drops intents
     }),
   );
 
-  const result = spawnSync(TSX, [FIXTURE, "voting", "closed", "unsigned"], { cwd: dir, env: { ...process.env, ENV_FILE: "" }, encoding: "utf8" });
+  const result = spawnSync(TSX, [FIXTURE, "voting", "closed", "unsigned"], { cwd: dir, env: { ...process.env, ENV_FILE: "" }, encoding: "utf8", timeout: 15_000 });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), ["voting", "expired", "unknown"]);
   // Only the live intent is kept, its grant token and signing data intact, in a file only the owner reads.
@@ -61,7 +62,7 @@ test("a restarted server still follows a DAO vote in progress, and drops intents
 });
 
 test("a restarted server keeps a grant token only while its grant is still waiting to be issued", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "owner-intents-"));
+  const dir = scratch.create("owner-intents");
   const file = join(dir, ".owner-intents", ".env.json");
   const at = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
   const dao = await signingRequest(intent, owner);
@@ -74,7 +75,7 @@ test("a restarted server keeps a grant token only while its grant is still waiti
       settled: { type: "grant_issue", expiresAt: at(-60), grantToken: "ngt_settled", stage: "settled", result: { status: "SUCCESS" }, dao },
     }),
   );
-  const result = spawnSync(TSX, [FIXTURE, "waiting"], { cwd: dir, env: { ...process.env, ENV_FILE: "" }, encoding: "utf8" });
+  const result = spawnSync(TSX, [FIXTURE, "waiting"], { cwd: dir, env: { ...process.env, ENV_FILE: "" }, encoding: "utf8", timeout: 15_000 });
   assert.equal(result.status, 0, result.stderr);
   const kept = JSON.parse(readFileSync(file, "utf8"));
   assert.equal(kept.waiting.grantToken, "ngt_waiting");
@@ -87,7 +88,7 @@ const SUBMIT = fileURLToPath(new URL("./fixtures/submit.ts", import.meta.url));
 
 /** A directory where a grant was prepared, its token not yet in use, and the pending file it needs. */
 function preparedGrant() {
-  const dir = mkdtempSync(join(tmpdir(), "owner-submit-"));
+  const dir = scratch.create("owner-submit");
   mkdirSync(join(dir, ".owner-intents"));
   const grant = { type: "grant_issue", expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(), grantToken: "ngt_new", wallet: preparedForWallet };
   writeFileSync(join(dir, ".owner-intents", ".env.json"), JSON.stringify({ grant }));
@@ -97,7 +98,7 @@ function preparedGrant() {
 
 function submitIn(dir: string, answer: "lost" | "refused" | "accepted" | "recover" | "timeout" | "uncertain" | "unreached" | "late" | "forged") {
   const creating = JSON.parse(readFileSync(join(dir, ".owner-intents", ".env.json"), "utf8")).grant.type === "agent_create";
-  const result = spawnSync(TSX, [SUBMIT, answer], { cwd: dir, env: { ...process.env, ENV_FILE: "", ...(creating && { AGENT_ID: "" }) }, encoding: "utf8" });
+  const result = spawnSync(TSX, [SUBMIT, answer], { cwd: dir, env: { ...process.env, ENV_FILE: "", ...(creating && { AGENT_ID: "" }) }, encoding: "utf8", timeout: 15_000 });
   assert.equal(result.status, 0, result.stderr);
   const pending = Object.keys(JSON.parse(readFileSync(join(dir, ".owner-intents", ".env.json"), "utf8")));
   return { outcome: JSON.parse(result.stdout), pending, env: readFileSync(join(dir, ".env"), "utf8") };
@@ -205,3 +206,6 @@ test("once the window closes, a submission the API never received ends as expire
   assert.equal(JSON.parse(readFileSync(file, "utf8")).grant.stage, "settled");
   assert.match(closed.env, /^AGENT_GRANT_TOKEN=ngt_old$/m);
 });
+
+// Remove state only after this suite has released its locks and stopped its processes.
+after(scratch.cleanup);
