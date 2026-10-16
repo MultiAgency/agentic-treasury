@@ -7,6 +7,7 @@ export const workOrderRoutes = { workOrders: {
   list: os.handler(() => workOrders.list()),
   create: os.input(newWorkOrder).handler(({ input }) => workOrders.create(input)),
   get: os.input(z.object({ id: workOrderId })).handler(({ input }) => workOrders.get(input.id)),
+  file: os.input(z.object({ id: workOrderId }).strict()).handler(({ input }) => workOrders.file(input.id)),
   deposit: os.input(z.object({ id: workOrderId })).handler(({ input }) => workOrders.deposit(input.id)),
   prepare: os.input(z.object({ id: workOrderId, action: z.enum(["create", "grant", "approve", "reject", "revoke"]), signer: z.enum(["wallet", "dao"]) }))
     .handler(({ input }) => workOrders.prepare(input.id, input.action, input.signer)),

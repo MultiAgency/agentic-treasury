@@ -290,6 +290,12 @@ a manual payout matching an existing held payout; provider replay deduplication 
   but not yet verified on a deployed host. It reuses the authenticated payee’s stored terms and operation
   identity; revised or submission-attempted invoices are refused. It does not resolve unknown outcomes.
 
+- Supplier work-order selection now retains the selected order in the URL across reloads;
+  **Check work orders** retries that exact record after an initial read failure
+  (offline browser-tested, not deployed). An exact live owner-to-supplier work-order journey
+  and fresh supplier-wallet sign-in remain unverified; see the
+  [bounded journey check](docs/shared-frontend-integration.md#bounded-payables-journey-check--2026-10-16-utc).
+
 - The AG-UI run-log adapter, private dashboard export and read-only recording inspector are offline-tested
   ([Treasury](docs/treasury.md#run-log-adapter-and-export-offline-tested)). The inspector steps through
   recorded observations, with each recorded stage's start and return grouped together and individual

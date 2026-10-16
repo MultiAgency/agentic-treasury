@@ -16,17 +16,17 @@ function paths(node: object, prefix = ""): string[] {
 }
 
 /** What every admitted member may read. */
-const READS = ["instance", "setup", "overview", "policyHistory", "treasury/get", "activity", "unresolved", "held", "autopilot/get", "autopilot/evidence",
+const READS = ["compensation/list", "instance", "setup", "overview", "policyHistory", "treasury/get", "activity", "unresolved", "held", "autopilot/get", "autopilot/evidence",
   "autopilot/log", "strategy/get", "inbox/list", "ledger", "ledgerCsv", "reconcileBooks", "owner/status", "owner/pending", "owner/actions", "paymentHistory", "agreements/list", "paymentStatus", "invoices",
-  "workOrders/list", "workOrders/get", "workOrders/status"];
+  "workOrders/list", "workOrders/get", "workOrders/status", "demoGuide/compose"];
 /**
  * Preparations require FunctionCall proposal permission. None executes money or replaces the
  * owner's signature. The first three retain their historical non-intervention classification.
  */
 const PROPOSES = ["owner/prepare", "agreements/propose", "agreements/offer", "rebalance", "externalPlan", "steward/propose", "deposit", "treasury/fund",
   "workOrders/create", "workOrders/prepare", "workOrders/deposit"];
-const EXECUTES = ["pay", "sweep", "executePlan", "autopilot/tick", "autopilot/enable"];
-const MANAGES = ["strategy/save", "treasury/link", "treasury/unlink", "treasury/setConfidential", "agreements/decline"];
+const EXECUTES = ["compensation/prepare", "compensation/send", "compensation/review", "workOrders/file", "pay", "sweep", "executePlan", "autopilot/tick", "autopilot/enable"];
+const MANAGES = ["compensation/agreement", "strategy/save", "treasury/link", "treasury/unlink", "treasury/setConfidential", "agreements/decline"];
 const MAINTAINS = ["autopilot/stop", "recover", "inbox/dismiss", "cancelPreparedInvoice"];
 
 const policy = {
@@ -51,7 +51,7 @@ test("every procedure is explicitly assigned, with the internal ownership read d
   const wallet = accessOf("owner.near", { account: "owner.near", policy: null, signer: "owner.near" })!;
   for (const path of all) assert.equal(mayCall(wallet, path), path !== "ownerIdentity", path);
   for (const granted of [wallet, access("council")])
-    for (const path of ["futureProcedure", "workOrders/file"])
+    for (const path of ["futureProcedure"])
       assert.equal(mayCall(granted, path), false, `${path} is not a browser procedure`);
 });
 

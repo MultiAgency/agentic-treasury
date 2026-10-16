@@ -7,7 +7,7 @@ function snapshot(): WorkOrderSnapshot {
     payee: "alice.near", amount: "1250000", note: "Design work", asset: "usdc-test",
     owner: { type: "near", account_id: "private-owner.near", public_key: "private-owner-key" },
     until: new Date(Date.now() + 86_400_000).toISOString(), createdAt: new Date().toISOString() },
-    agentId: "private-agent", wallet: "private-wallet.near", balance: "2000000", policyReady: true,
+    agentId: "private-agent", wallet: "private-wallet.near", balance: "1250000", policyReady: true,
     grant: { id: "private-grant", expiresAt: new Date(Date.now() + 86_400_000).toISOString() },
     ownerActions: [], approval: { correlationId: "private-correlation", approvalId: "private-approval" },
     invoice: null, error: null };
@@ -36,4 +36,25 @@ test("private commands cannot override order terms, route to an arbitrary agent 
   assert.equal(workOrderCommand.safeParse({ type: "file", payee: "alice.near", agentId: "other-agent" }).success, false);
   assert.equal(workOrderCommand.safeParse({ type: "prepare", action: "approve", signer: "wallet", approvalId: "other" }).success, false);
   assert.equal(workOrderCommand.safeParse({ type: "send", method: "transfer" }).success, false);
+});
+
+test("expiry, residual funds and unknown outcomes never advertise a closed or replacement payout", async () => {
+  const { workOrderProgress } = await import("../src/work-order-protocol.js");
+  const base = snapshot(), now = Date.parse(base.order.until);
+  assert.equal(workOrderProgress(base, now).stage, "expired");
+  assert.equal(workOrderProgress(base, now).residual, "1250000");
+  assert.equal(workOrderProgress({ ...base, error: "unavailable" }, now).stage, "unavailable");
+  const invoice = { id: "retained", amount: base.order.amount, note: base.order.note, filedAt: base.order.createdAt, status: "unknown" as const, revisionConflict: false };
+  assert.equal(workOrderProgress({ ...base, invoice }, now).stage, "unknown");
+  assert.equal(workOrderProgress({ ...base, invoice: { ...invoice, status: "waiting" } }, now).stage, "waiting");
+  assert.equal(workOrderProgress({ ...base, balance: "0", invoice: { ...invoice, status: "paid" } }, now).stage, "paid");
+});
+
+test("only exact observed funding advertises submission readiness", async () => {
+  const { workOrderProgress } = await import("../src/work-order-protocol.js");
+  const base = snapshot();
+  assert.equal(workOrderProgress(base).stage, "submit");
+  assert.equal(workOrderProgress({ ...base, balance: "1250001" }).stage, "funding_review");
+  assert.equal(publicWorkOrder({ ...base, balance: "1250001" }).ready, false);
+  assert.equal(workOrderProgress({ ...base, balance: "1" }).stage, "fund");
 });

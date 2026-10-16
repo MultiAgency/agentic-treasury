@@ -112,4 +112,61 @@ async function payeeWorkOrder(browser) {
   }
 }
 
-runTask([ownerWorkOrder, payeeWorkOrder]);
+async function selectedWorkOrderSurvivesReload(browser) {
+  const second = { ...order, id: '22345678-1234-4234-8234-123456789abc', note: 'Second work order' };
+  for (const entry of ['/submit', '/i/own-' + 'a'.repeat(24) + '/']) {
+    const page = await browser.newPage();
+    await page.clock.install();
+    const base = entry.startsWith('/i/') ? entry.slice(0, -1) : '';
+    const writes = [], reads = [];
+    let unavailable = true;
+    await page.route('**/*', route => {
+      const request = route.request(), url = new URL(request.url());
+      if (url.hostname === 'cdn.jsdelivr.net') return route.fulfill({ contentType: 'text/javascript', body: 'export class NearConnector {}' });
+      if (url.hostname !== 'invoice.test') return route.abort();
+      if (request.method() !== 'GET') writes.push(url.pathname);
+      if (url.pathname === entry) return route.fulfill({ contentType: 'text/html', body: html.replace('from "/invoice-browser.js"', 'from "' + base + '/invoice-browser.js"') });
+      const path = url.pathname.slice(base.length);
+      if (path === '/invoice-browser.js') return route.fulfill({ contentType: 'text/javascript', body: script });
+      if (path === '/api/session') return route.fulfill({ json: { account: 'payee.near', agreed: true } });
+      if (path === '/api/invoices') return route.fulfill({ json: { invoices: [], agreements: [], agreed: true } });
+      if (path === '/api/work-orders') return route.fulfill({ json: { orders: [order, second] } });
+      const selected = [order, second].find(item => path === '/api/work-orders/' + item.id);
+      assert.ok(selected, 'unexpected request: ' + url.pathname);
+      reads.push(selected.id);
+      if (unavailable) return route.fulfill({ status: 503, json: { error: 'Work order status unavailable.' } });
+      return route.fulfill({ json: { ...selected, ready: false, unavailable: false,
+        invoice: { id: 'invoice-' + selected.id, status: 'unknown', amount: selected.amount, filedAt: selected.createdAt } } });
+    });
+    await page.goto('https://invoice.test' + entry + '?source=owner&workOrder=' + id + '#status');
+    await page.getByText('Work order status unavailable.', { exact: true }).waitFor();
+    // Await the complete handler with polling paused: manual recovery must retry the exact link.
+    await page.evaluate(() => document.getElementById('work-orders-check').onclick());
+    assert.deepEqual(reads, [id, id], 'manual check must retry a selected order that has never loaded');
+    assert.equal(await page.locator('#work-order-error').innerText(), 'Work order status unavailable.');
+    assert.ok(await page.locator('#work-order-file').isDisabled());
+    unavailable = false;
+    await page.getByRole('button', { name: 'Check work orders', exact: true }).click();
+    await page.locator('#work-order-note').filter({ hasText: order.note }).waitFor();
+    assert.equal(await page.locator('#work-order-error').innerText(), '');
+    await page.getByRole('button', { name: 'Check work orders', exact: true }).click();
+    await page.getByRole('button', { name: 'Review work order', exact: true }).nth(1).click();
+    await page.locator('#work-order-note').filter({ hasText: second.note }).waitFor();
+    const selectedUrl = new URL(page.url());
+    assert.equal(selectedUrl.searchParams.get('workOrder'), second.id, 'the address must identify the displayed work order');
+    assert.equal(selectedUrl.pathname, entry);
+    assert.equal(selectedUrl.searchParams.get('source'), 'owner');
+    assert.equal(selectedUrl.hash, '#status');
+    reads.length = 0;
+    await page.reload();
+    await page.locator('#work-order-note').filter({ hasText: second.note }).waitFor();
+    assert.match(await page.locator('#work-order-status').innerText(), /outcome is unknown/);
+    assert.ok(await page.locator('#work-order-file').isDisabled());
+    assert.deepEqual(reads, [second.id]);
+    assert.deepEqual(writes, [], 'selection and reload must not submit');
+    await page.close();
+  }
+  console.log('PASS selected supplier work order survives reload with scoped entry and unknown outcome retained');
+}
+
+runTask([ownerWorkOrder, payeeWorkOrder, selectedWorkOrderSurvivesReload]);

@@ -25,6 +25,7 @@ export const AREA_NAV: Record<Kind, { to: "/" | "/payees" | "/funding" | "/polic
 
 export function areaPageTitle(kind: Kind, pathname: string) {
   const path = pathname.replace(/\/$/, "");
+  if (path.endsWith("/demos/payables/play")) return "Interactive demo";
   if (/\/(demos|walkthrough)\/(treasury|payables|invoices)$/.test(path)) return "Guided walkthrough";
   if (path.endsWith("/follow/payment")) return "Payment";
   if (path.endsWith("/steward")) return "Steward";

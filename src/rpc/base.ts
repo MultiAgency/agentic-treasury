@@ -1,3 +1,4 @@
+import { CompensationError } from "../compensation-store.js";
 import { AgentApiError } from "@near-intents-agent-api/sdk";
 import { ORPCError, os as base } from "@orpc/server";
 import { refusalDetails } from "../provider-display.js";
@@ -8,6 +9,7 @@ import { PublicError } from "../public-error.js";
  * Provider codes and validated refusal metadata remain available for UI recovery guidance.
  */
 function toClientError(error: unknown) {
+  if (error instanceof CompensationError) return new ORPCError(error.code === "not_found" ? "NOT_FOUND" : "CONFLICT", { message: error.message, data: { code: error.code } });
   if (error instanceof ORPCError) return error;
   if (error instanceof PublicError) return new ORPCError("BAD_REQUEST", { message: error.message });
   if (error instanceof AgentApiError)
@@ -15,7 +17,7 @@ function toClientError(error: unknown) {
   return new ORPCError("INTERNAL_SERVER_ERROR", { message: "The request could not be completed. Check existing records before retrying an action." });
 }
 
-export const os = base.use(async ({ next }) => {
+export const os = base.$context<{ actor?: string }>().use(async ({ next }) => {
   try {
     const result = await next();
     const output: unknown = result.output;

@@ -11,6 +11,7 @@ export const newWorkOrder = workOrderInput.pick({ id: true, payee: true, amount:
 export const workOrderRequest = z.discriminatedUnion("type", [
   z.object({ type: z.literal("list") }).strict(),
   z.object({ type: z.literal("create"), input: newWorkOrder }).strict(),
+  z.object({ type: z.literal("file"), id: workOrderId }).strict(),
   z.object({ type: z.literal("command"), id: workOrderId, command: workOrderCommand }).strict(),
 ]);
 type Request = z.infer<typeof workOrderRequest>;
@@ -33,6 +34,7 @@ export async function localWorkOrders(parent: string, raw: Request) {
     return createWorkOrder(parent, { ...request.input, asset: ASSETS.USDC, owner: agent.owner, ...(dao && { dao }) });
   }
   getWorkOrder(parent, request.id);
+  if (request.type === "file") return callWorkOrder(parent, request.id, { type: "file", payee: getWorkOrder(parent, request.id).payee });
   return callWorkOrder(parent, request.id, request.command);
 }
 
@@ -52,6 +54,7 @@ async function requestWorkOrders(request: Request): Promise<unknown> {
 export const workOrders = {
   list: () => requestWorkOrders({ type: "list" }) as Promise<ReturnType<typeof listWorkOrders>>,
   create: (input: z.infer<typeof newWorkOrder>) => requestWorkOrders({ type: "create", input }) as Promise<ReturnType<typeof createWorkOrder>>,
+  file: (id: string) => requestWorkOrders({ type: "file", id }) as Promise<WorkOrderReply["file"]>,
   get: (id: string) => requestWorkOrders({ type: "command", id, command: { type: "snapshot" } }) as Promise<WorkOrderReply["snapshot"]>,
   deposit: (id: string) => requestWorkOrders({ type: "command", id, command: { type: "deposit" } }) as Promise<WorkOrderReply["deposit"]>,
   prepare: (id: string, action: Extract<z.infer<typeof workOrderCommand>, { type: "prepare" }>["action"], signer: "wallet" | "dao") =>

@@ -347,11 +347,20 @@ export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
       syncRows($("work-orders-list"), orders, order => {
         const item = row(order.note, usdc(order.amount), "", order.until);
         const button = document.createElement("button"); button.textContent = "Review work order";
-        button.onclick = () => { if (workOrderFiling) return; selectedOrder = null; $("work-order-detail").hidden = true; void refreshWorkOrder(order.id); };
+        button.onclick = () => {
+          if (workOrderFiling) return;
+          // Reload and shared links must follow the order selected here, including after a failed read.
+          const url = new URL(location.href);
+          url.searchParams.set("workOrder", order.id);
+          history.replaceState(history.state, "", url);
+          selectedOrder = null; $("work-order-detail").hidden = true;
+          void refreshWorkOrder(order.id);
+        };
         item.append(button); return item;
       });
       $("work-order-error").textContent = orders.length ? "" : "No work orders for this signed-in account.";
-      if (selectedOrder) await refreshWorkOrder(selectedOrder.id);
+      const id = selectedOrder?.id ?? new URL(location.href).searchParams.get("workOrder");
+      if (id && /^[0-9a-f-]{36}$/.test(id)) await refreshWorkOrder(id);
     } catch (e) { if (session === sessionVersion) $("work-order-error").textContent = e instanceof Error ? e.message : "Work orders unavailable."; }
   };
   $("work-order-file").onclick = async () => {

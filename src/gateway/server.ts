@@ -1,3 +1,4 @@
+import { serveSupplierFrontend } from "./supplier-frontend.js";
 import { accessFrontend } from "./access-frontend.js";
 import { resolveMachineManagement } from "./machine-authority.js";
 import { machineRoutes } from "./machine-routes.js";
@@ -110,8 +111,10 @@ const server = createServer(async (req, res) => {
       const agent = route && selected.find(a => a.name === route.name && "kind" in a && a.area === "payables");
       if (!route || !agent) return json(res, 404, { error: "Supplier entry not found" });
       if (route.path === "/" && !["GET", "HEAD"].includes(req.method ?? "")) return json(res, 405, { error: "Use the invoice API" });
+      if (req.method === "GET" && await serveSupplierFrontend(res, route.path)) return;
       return forwardInvoice(req, res, `http://127.0.0.1:${agent.port}`, `/supplier${route.path}${url.search}`, request as typeof import("node:https").request, supplierCookie(agent.name));
     }
+    if (site?.demo === "invoices" && (config.invoiceUpstream || pathname.startsWith("/invoice-ui/static/")) && req.method === "GET" && await serveSupplierFrontend(res, pathname)) return;
     // Supplier entry and retained work-order identities stay with the existing Payables executor.
     const intake = invoiceRoute(site?.demo, url, req.method ?? "");
     if (intake !== null) {
@@ -218,7 +221,7 @@ const server = createServer(async (req, res) => {
           return json(res, 503, { error: "The action could not be recorded, so it was not run" });
         }
       }
-      return forwardRpc(req, res, agent, `${call[2]!}${url.search}`);
+      return forwardRpc(req, res, agent, `${call[2]!}${url.search}`, undefined, undefined, account);
     }
 
     const scoped = pathname.match(/^\/a\/([a-z0-9-]+)(?:\/|$)/);

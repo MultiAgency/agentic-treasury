@@ -12,6 +12,7 @@ import { PaymentTimeline } from "../features/payables/timeline-payment";
 import { RunTimeline } from "../features/portfolio/timeline-run";
 import { Walkthrough } from "../features/demo/walkthrough";
 import { LiveDemo } from "../features/demo/live-demo";
+import { PayablesPlayer } from "../features/demo/payables-player";
 import { useGateway } from "./gateway-context";
 
 const root = createRootRoute({ component: Shell });
@@ -28,6 +29,7 @@ export const router = createRouter({
     page("/demo", LiveDemo),
     page("/demos/treasury", () => <Walkthrough workflow="treasury" short />),
     page("/demos/payables", () => <Walkthrough workflow="payables" short />),
+    page("/demos/payables/play", PayablesPlayer),
     page("/demos/invoices", () => <Walkthrough workflow="invoices" short />),
     page("/walkthrough/treasury", () => <Walkthrough workflow="treasury" />),
     page("/walkthrough/payables", () => <Walkthrough workflow="payables" />),

@@ -5,12 +5,13 @@ import type { AgentEntry } from "./config.js";
 export const RPC_IDLE_TIMEOUT_MS = 15 * 60_000;
 
 /** Forwards a call to an agent server on loopback, streaming both ways (some procedures stream events). */
-export function forwardRpc(req: IncomingMessage, res: ServerResponse, agent: AgentEntry, path: string, timeoutMs = RPC_IDLE_TIMEOUT_MS, body?: string) {
+export function forwardRpc(req: IncomingMessage, res: ServerResponse, agent: AgentEntry, path: string, timeoutMs = RPC_IDLE_TIMEOUT_MS, body?: string, actor?: string) {
   const headers: import("node:http").OutgoingHttpHeaders = { ...req.headers, host: `127.0.0.1:${agent.port}` };
   delete headers.origin;
   delete headers.cookie;
   delete headers.authorization;
   for (const key of Object.keys(headers)) if (key.startsWith("x-gateway")) delete headers[key];
+  if (actor) headers["x-gateway-actor"] = actor;
   if (body !== undefined) {
     delete headers["transfer-encoding"];
     headers["content-length"] = String(Buffer.byteLength(body));

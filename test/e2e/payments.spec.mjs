@@ -144,7 +144,7 @@ test('accepted transfer with lost response stays unresolved after restart and bl
   }, { payee: PAYEE, asset: stack.simulated.transfers[0].body.asset });
   expect(stack.simulated.transfers, 'E2E_APPROVE_ONLY_NO_SEND').toHaveLength(1);
   expect(result.ok).toBe(false);
-  expect(result.text).toContain('only approves');
+  expect(result.text).toContain('Check existing records before retrying an action.');
   expect(stack.simulated.transfers).toHaveLength(1);
 });
 
@@ -191,4 +191,40 @@ test('lost owner signature response survives reviewer restart without signing or
   expect(ownerSignatures.filter(s => s.recipient === 'local-provider')).toHaveLength(1);
   expect(stack.simulated.requests.filter(r => r.path === '/v1/submit-intent')).toHaveLength(1);
   expect(stack.simulated.transfers).toHaveLength(1);
+});
+
+test('standalone contributor report and work-order requests retain identities across owner review', async ({ stack, people }) => {
+  test.skip(!process.env.PROTO_E2E_INVOICES_DIST, 'Requires the independently built Invoices consumer');
+  const { owner, payee } = people;
+  await signInOwner(owner, stack);
+  const rpc = async (method, input) => owner.evaluate(async ({method,input}) => {
+    const response = await fetch(`/a/payout/rpc/${method}`, {method:'POST',headers:{'content-type':'application/json','x-gateway-actor':'forged.near'},body:JSON.stringify({json:input})});
+    const value = await response.json(); if(!response.ok) throw new Error(JSON.stringify(value)); return value.json;
+  }, {method,input});
+  const uuid = () => globalThis.crypto.randomUUID();
+  const agreementId = uuid();
+  await rpc('compensation/agreement', {commandId:uuid(),id:agreementId,expectedVersion:0,terms:{payee:PAYEE,title:'Standalone report',document:'https://example.test/agreement',signedOn:'2026-10-01',start:'2026-10-01',end:'2026-10-31',ceiling:'10000000',openingApproved:'0',scope:'Offline integration'}});
+  const view = await rpc('compensation/list');
+  expect(view.agreements[0].recordedBy).toBe(OWNER);
+  await signInPayee(payee, stack);
+  await payee.getByLabel('Describe the work').fill('Requested work');
+  await payee.getByLabel('Work order total (USDC)').fill('2');
+  await payee.getByLabel('Deadline (UTC)').fill(new Date(Date.now()+86400000*2).toISOString().slice(0,10));
+  await payee.getByRole('button',{name:'Send work order request',exact:true}).click();
+  await expect.poll(async()=>(await rpc('workOrders/list')).length).toBe(1);
+  expect(stack.simulated.transfers).toHaveLength(0);
+  await payee.goto(stack.invoices+'/report');
+  await payee.getByRole('button',{name:'New report',exact:true}).click();
+  await payee.getByLabel('Contributions',{exact:true}).fill('Extracted supplier frontend');
+  await payee.getByLabel('Assessment',{exact:true}).fill('Validated locally');
+  await payee.getByRole('button',{name:'Submit',exact:true}).click();
+  await expect(payee.getByText('Compensation in review',{exact:true})).toBeVisible();
+  const submitted=(await rpc('compensation/list')).requests[0];
+  expect(submitted.payee).toBe(PAYEE);
+  await rpc('compensation/review',{commandId:uuid(),id:submitted.id,expectedVersion:submitted.version,decision:'approved',approvedAmount:'2000000',feedback:'Reviewed the extracted app'});
+  await payee.reload();
+  await payee.getByRole('button',{name:/Standalone report/}).click();
+  await expect(payee.getByText('2 USDC',{exact:true})).toBeVisible();
+  expect(stack.simulated.transfers).toHaveLength(0);
+  expect((await rpc('compensation/list')).requests[0].id).toBe(submitted.id);
 });

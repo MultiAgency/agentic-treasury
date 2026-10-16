@@ -40,7 +40,20 @@ export function publicWorkOrder(snapshot: WorkOrderSnapshot) {
   return { id: order.id, amount: order.amount, note: order.note, until: order.until, createdAt: order.createdAt,
     invoice, ready: (!invoice || invoice.status === "prepared" && !invoice.revisionConflict) &&
       !snapshot.error && snapshot.policyReady && Boolean(snapshot.grant) &&
-      snapshot.balance !== null && BigInt(snapshot.balance) >= BigInt(order.amount) && Date.parse(order.until) > Date.now(),
+      snapshot.balance !== null && BigInt(snapshot.balance) === BigInt(order.amount) && Date.parse(order.until) > Date.now(),
     unavailable: Boolean(snapshot.error) };
 }
 export type PublicWorkOrder = ReturnType<typeof publicWorkOrder>;
+
+
+/** Read-only progress: expiry never overwrites an accepted or unresolved payment. */
+export function workOrderProgress(snapshot: WorkOrderSnapshot, now = Date.now()) {
+  const expired = now >= Date.parse(snapshot.order.until);
+  const residual = snapshot.balance !== null && BigInt(snapshot.balance) > 0n ? snapshot.balance : null;
+  const stage = snapshot.error ? "unavailable" : snapshot.invoice && snapshot.invoice.status !== "prepared" ? snapshot.invoice.status
+    : expired ? "expired" : !snapshot.agentId ? "authorize" : !snapshot.policyReady ? "policy"
+    : !snapshot.grant ? "grant" : snapshot.balance === null ? "unavailable"
+    : BigInt(snapshot.balance) < BigInt(snapshot.order.amount) ? "fund" : BigInt(snapshot.balance) > BigInt(snapshot.order.amount) ? "funding_review" : "submit";
+  return { stage, expired, residual, excess: snapshot.balance !== null && BigInt(snapshot.balance) > BigInt(snapshot.order.amount)
+    ? (BigInt(snapshot.balance) - BigInt(snapshot.order.amount)).toString() : null };
+}

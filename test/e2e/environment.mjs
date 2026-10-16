@@ -41,9 +41,18 @@ export async function environment(directory, { workspace = false, portfolioOwner
   }
   const dashboard = `https://127.0.0.1:${await proxy(gatewayPort, '127.0.0.1')}`;
   const invoices = `https://localhost:${await proxy(invoicePort, '::1')}`;
+  let supplierFrontend;
+  if (process.env.PROTO_E2E_INVOICES_DIST) {
+    const assets = httpServer((req,res) => {
+      const path = new URL(req.url, 'http://assets').pathname;
+      try { res.end(readFileSync(join(process.env.PROTO_E2E_INVOICES_DIST, path))); }
+      catch { res.writeHead(404).end(); }
+    });
+    proxies.push(assets); supplierFrontend = `http://127.0.0.1:${await listen(assets)}`;
+  }
   const common = { ...offlineEnvironment(), NODE_OPTIONS: `--require ${JSON.stringify(join(root, 'test/fixtures/offline-network.cjs'))}`, AGENT_ID: simulated.id, AGENT_GRANT_TOKEN: simulated.token,
     NEAR_INTENTS_AGENT_API_URL: simulated.url, NEAR_RPC_URL: `${simulated.url}/chain`, AUTOPILOT: 'off',
-    SESSION_SECRET: 'local-only-session-secret-with-more-than-32-characters', DASHBOARD_AREA: 'payables' };
+    SESSION_SECRET: 'local-only-session-secret-with-more-than-32-characters', DASHBOARD_AREA: 'payables', ...(supplierFrontend && { INVOICES_FRONTEND_URL: supplierFrontend }) };
   async function start(name, cwd, entry, env, ready) {
     const child = spawn(process.execPath, ['--import', 'tsx', join(root, entry)], { cwd, env: { ...common, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
     services.push(child);

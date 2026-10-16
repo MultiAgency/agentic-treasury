@@ -15,6 +15,16 @@ for (const name of ['src', 'web', 'evidence', 'scripts', 'test/e2e', 'test/offli
 symlinkSync(join(root, 'node_modules'), join(snapshot, 'node_modules'), 'dir');
 // Explicit consumer input: snapshot the actual Treasury skill, never maintain a second copy here.
 const args = process.argv.slice(2);
+const invoicesIndex = args.indexOf('--invoices-dist');
+let invoicesDist;
+if (invoicesIndex !== -1) {
+  const input = args[invoicesIndex + 1];
+  if (!input || input.startsWith('--')) throw new Error('--invoices-dist requires a built frontend directory');
+  invoicesDist = join(snapshot, '.consumer-fixtures/invoices');
+  mkdirSync(invoicesDist, { recursive: true });
+  for (const name of ['index.html', 'contributor.html', 'invoice-browser.js', 'contract.json', 'static']) cpSync(join(resolve(input), name), join(invoicesDist, name), { recursive: true });
+  args.splice(invoicesIndex, 2);
+}
 const consumerIndex = args.indexOf('--treasury-skill');
 let consumer;
 if (consumerIndex !== -1) {
@@ -35,6 +45,7 @@ if (consumerIndex !== -1) {
 const env = { ...offlineEnvironment(), NODE_ENV: 'production', PROTO_E2E_ISOLATED: '1', PROTO_E2E_ARTIFACTS: artifacts,
   NODE_OPTIONS: `--require ${JSON.stringify(join(snapshot, 'test/fixtures/offline-network.cjs'))}` };
 if (consumer) env.PROTO_E2E_TREASURY_SKILL = consumer;
+if (invoicesDist) env.PROTO_E2E_INVOICES_DIST = invoicesDist;
 for (const key of ['BROWSER_EXECUTABLE', 'PLAYWRIGHT_BROWSERS_PATH']) if (process.env[key]) env[key] = process.env[key];
 function digest(dir) {
   const hash = createHash('sha256');
@@ -51,7 +62,7 @@ const run = (command, args) => spawnSync(command, args, { cwd: snapshot, env, st
 console.log(`Isolated E2E release and evidence: ${artifacts}`);
 const build = run(join(root, 'node_modules/.bin/rsbuild'), ['build', '--root', 'web']);
 if (build.status !== 0) process.exit(build.status ?? 1);
-writeFileSync(join(artifacts, 'manifest.json'), JSON.stringify({ node: process.version, treasurySkill: consumer ? digest(consumer) : null, source: digest(join(snapshot, 'src')),
+writeFileSync(join(artifacts, 'manifest.json'), JSON.stringify({ node: process.version, invoicesFrontend: invoicesDist ? digest(invoicesDist) : null, treasurySkill: consumer ? digest(consumer) : null, source: digest(join(snapshot, 'src')),
   frontend: digest(join(snapshot, 'web/src')), evidence: digest(join(snapshot, 'evidence')), assets: digest(join(snapshot, 'web/dist')), tests: digest(join(snapshot, 'test/e2e')),
   playwright: JSON.parse(readFileSync(join(root, 'node_modules/@playwright/test/package.json'))).version,
   lockfile: createHash('sha256').update(readFileSync(join(snapshot, 'pnpm-lock.yaml'))).digest('hex'), scope: 'offline application E2E; simulated provider, chain, and wallet' }, null, 2));

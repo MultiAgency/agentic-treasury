@@ -21,6 +21,6 @@ export function supplierRoute(pathname: string) {
   const match = pathname.match(/^\/i\/(own-[a-f0-9]{24})(\/.*)?$/);
   if (!match) return null;
   const path = match[2] || "/";
-  if (path !== "/" && path !== "/invoice-browser.js" && !path.startsWith("/api/")) return null;
+  if (path !== "/" && path !== "/invoice-browser.js" && path !== "/report" && path !== "/report/" && !path.startsWith("/api/")) return null;
   return { name: match[1]!, path };
 }

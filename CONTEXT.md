@@ -277,6 +277,11 @@ wallet owner signs directly. Sputnik DAO members sign in with their own accounts
 applicable permissions; the DAO’s proposals and votes authorize its owner actions. The agency DAO
 is an initial experiment, not an admission allowlist.
 
+**Proto product direction**: Proto is both the shared infrastructure and the home for walkthroughs
+and demos across all prototypes. It is evolving toward an integrated agentic treasury MVP. The
+focused Treasury, Payables and supplier experiences use that foundation; their agents, funds and
+authority remain separately scoped. This is product direction, not a claim that the MVP is complete.
+
 **Scoped supplier entry**: `/i/<instance>/` on the supplier host routes to one registered Payables
 executor. It has its own supplier session key, cookie name and browser draft namespace. Invoice and
 work-order identities remain scoped to that agent. An unknown instance never falls back to the
@@ -290,6 +295,28 @@ versioned UI observation, explicitly not an executor run, authority or payment s
 The current guide is deterministic; it does not invoke an LLM. A selected plan or payment stays
 exact, and reload never infers a selection from the latest record. Work-order identities remain
 with the existing per-order controls. These are local candidate behaviors, not mainnet observations.
+
+**Interactive Payables demo**: The signed-in `/a/<agent>/demos/payables/play` experience has
+Watch and Try modes with fictional records, plus **Use my agent**, which mounts the existing
+live payment review controls. Watch plays a scripted example; Try branches into approval,
+rejection or an unresolved outcome. Simulation progress is neither evidence nor authority and
+is never passed to live controls. Reload restarts the rehearsal. An explicit question can ask
+NEAR AI Cloud to compose an explanation and select validated catalog panels and suggested
+actions, delivered as an AG-UI CUSTOM event. Generated UI contains no executable code,
+destinations or signing payloads. The existing owner-intent flow supplies real messages to sign.
+Generation and verification failures leave the scripted guide usable. The implementation and
+mocked model integration are offline-tested; live inference and hosted behavior of this new demo
+remain unverified. See `docs/payables-generative-guide.md`.
+
+**Signing walkthrough chapters**: All three scoped short and complete walkthroughs embed existing
+live controls beneath a four-chapter guide. Policy, agreement and strategy reviews open in place;
+wallet signatures and DAO proposals use the existing owner-action flow. Chapter selection never
+prepares an action or establishes completion. Opened reviews and exact payment/order selections
+remain mounted through chapter changes. Work-order owner actions stay with the selected order’s
+agent, never the parent’s owner-action history. The Payables player uses this same guide in live
+mode. These interactions are offline-tested with mocked wallets and provider responses, not
+hosted/mainnet observations. Treasury and Invoices chapter narration is authored, not AI-generated.
+
 
 **Machine credential**:
 A private bearer secret issued through Proto's shared owner access screen, delegating independent read,
@@ -309,3 +336,11 @@ checks policy, strategy, output floors and aggregate feasibility before saving t
 requires saved-plan execution authority and uses the existing guarded dispatch path. Allocation-based
 `rebalance` is not a substitute for chosen swaps. The shared integration and Treasury skill/client
 are offline-tested candidates, not deployed or mainnet-observed.
+
+**Standalone Invoices frontend**:
+An independently built supplier experience for invoice submission/status, work-order requests and
+contribution reports. Its source is in the local DAO workspace's `invoices/` repository; Proto retains
+supplier sessions, scoped routing, compensation and invoice records, owner review authorization and
+guarded execution. A compatible frontend release can change without restarting Proto after the shared
+backend integration is installed. This extraction is a locally tested, undeployed candidate; the existing
+hosted Invoices experience remains unchanged. See docs/invoices-extraction.md.

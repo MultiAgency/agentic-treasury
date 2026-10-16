@@ -96,3 +96,15 @@ test("an interrupted order payment stays on its original unresolved identity", a
   assert.equal(sends.length, 1);
   assert.equal(getInvoice(invoiceId(input))!.operation.idempotencyKey, sends[0]);
 });
+
+test("owner submission requires exact observed funding and follows the original invoice after replenishment", async () => {
+  const { handleWorkOrderCommand } = await import("../src/work-order-runtime.js");
+  Object.assign(api, { getBalances: async (_id: string, { source }: { source: string }) => ({ source, balances: [{ asset_id: order.asset, balance_raw: "2000000" }] }) });
+  await assert.rejects(handleWorkOrderCommand({ type: "file", payee: order.payee }), /exactly the approved funding/);
+  assert.equal(sends.length, 0);
+  Object.assign(api, { getBalances: async (_id: string, { source }: { source: string }) => ({ source, balances: [{ asset_id: order.asset, balance_raw: order.amount }] }) });
+  assert.equal((await handleWorkOrderCommand({ type: "file", payee: order.payee }) as { status: string }).status, "waiting");
+  Object.assign(api, { getBalances: async (_id: string, { source }: { source: string }) => ({ source, balances: [{ asset_id: order.asset, balance_raw: "9000000" }] }) });
+  await handleWorkOrderCommand({ type: "file", payee: order.payee });
+  assert.equal(sends.length, 1);
+});

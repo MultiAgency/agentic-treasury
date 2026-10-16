@@ -81,8 +81,8 @@ export async function handleWorkOrderCommand(raw: WorkOrderCommand) {
       return file({ payee: record.payee, amount: record.amount, note: record.note, submission: record.id }, command.payee);
     const input = workOrderInvoice(record, command.payee);
     const snapshot = await workOrderSnapshot();
-    if (snapshot.error || !snapshot.policyReady || !snapshot.grant || snapshot.balance === null || BigInt(snapshot.balance) < BigInt(record.amount))
-      throw new Error("This work order is not ready for an invoice. Ask the owner to finish authorization and funding.");
+    if (snapshot.error || !snapshot.policyReady || !snapshot.grant || snapshot.balance === null || BigInt(snapshot.balance) !== BigInt(record.amount))
+      throw new Error("This payout is not ready: it requires signed authorization and exactly the approved funding. Review current records; do not add funds or create a replacement.");
     return file(input, command.payee);
   }
   if (command.signer === "dao" && !record.dao) throw new Error("This work order has no DAO owner.");

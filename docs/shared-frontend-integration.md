@@ -186,3 +186,48 @@ r2 Payables artifact. All 28 frozen Payables files were rechecked against `revie
 and match. The current Payables build was refused by the narrowed frontend preflight on
 `compensation` before browser startup. These observations establish neither a new build's
 provenance nor deployed behavior.
+
+## Bounded Payables journey check — 2026-10-16 UTC
+
+The starting checkout was clean at `e38a7bd` (`lifecycle`), which contains the local
+infrastructure hardening. The recorded deployed baseline remains r2
+`09bf2aa6-d805-400a-97a8-7e55b7f131fa`; this check did not re-verify runtime hashes.
+
+| Journey step | Evidence and limit |
+| --- | --- |
+| Owner entry and selection | Existing authenticated hosted Agreements rendered; prior r2 records cover Payments and owner admission. No work order was created. |
+| Exact supplier link | Hosted Agreements opened its advertised `/submit` entry. Exact work-order query forwarding is covered by `static-supplier-route.test.ts` and the frozen consumer contract, not a live order. |
+| Supplier request and status | The existing browser session rendered the authenticated supplier interface; its read-only work-order check returned no orders for that account. This establishes retained access, not fresh wallet sign-in. `invoices.cjs` covers synthetic request, agreement, held payout and subsequent outcomes. |
+| Owner review | Existing work-order UI separates authorization, funding and held-payout approval. Browser and protocol tests cover those boundaries; no live owner signature or approval was attempted. |
+| Recovery | `work-orders.cjs` reproduced selecting order B while the address retained order A. Reload could therefore return to the previous order. Store/restart tests separately retain the payment identity. |
+
+The selected improvement fixes that demonstrated navigation failure in Proto's existing
+`src/invoice-browser.js`: selecting **Review work order** replaces the URL's `workOrder`
+parameter before reading the selected record. It preserves the supplier path, other query
+fields and fragment. It neither submits an invoice nor changes payment identity. This is
+a narrow correction to the served supplier runtime; Payables retains product ownership,
+and no sibling source or compensation implementation was copied or changed.
+
+The new two-order browser regression failed before the fix and passed afterward for both
+`/submit` and managed `/i/<instance>/` entry. Reload reads only the selected order, retains
+its unknown outcome with filing disabled, and sends no mutation. Invoice and scoped-supplier
+browser regressions also passed. These synthetic observations do not establish an exact live
+owner-to-supplier work-order journey, which remains unverified. The hosted visual inspection
+also showed generic invoice guidance above work-order content; that is a usability judgment,
+whereas the lost selection was reproducible and directly obstructed following an existing payment.
+
+A follow-up offline regression reproduced another recovery failure: after the exact order's
+initial read failed, **Check work orders** refreshed the list and cleared the error without
+retrying the selected record. The handler now uses the validated URL reference when no order
+has loaded. With polling paused, the test verifies an explicit retry, a persistent error while
+the read still fails, and recovery to the same order when the read succeeds. Both supplier
+entry forms retain the unknown outcome and issue no mutation. This is local browser evidence;
+no hosted outage or production recovery is claimed.
+
+No deployment, production restart, wallet signature or money action occurred. Money-path files,
+executor assignments and state formats were unchanged. The frozen r2 artifact was not modified.
+
+Validation: `pnpm typecheck`, all 775 offline tests, `pnpm evidence:check`, the three targeted
+browser suites (`work-orders.cjs`, `invoices.cjs`, `hosted-supplier.cjs`) and `git diff --check`
+passed. Browser/IPC checks required execution outside the filesystem sandbox; offline test
+network restrictions remained enabled. The initial sandbox failures are not passing evidence.

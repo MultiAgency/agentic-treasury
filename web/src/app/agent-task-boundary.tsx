@@ -21,7 +21,7 @@ import { AgentContext } from "./agent-context";
 import { SetupNextStep } from "./setup-progress";
 import { useGateway } from "./gateway-context";
 /** Detail and legacy routes remain accessible without adding duplicate menu entries. */
-const OFF_NAV: Record<Kind, LinkProps["to"][]> = { facilitator: ["/workspace", "/demos/payables", "/demos/invoices", "/walkthrough/payables", "/walkthrough/invoices", "/automations", "/follow/payment"], treasury: ["/workspace", "/demos/treasury", "/walkthrough/treasury", "/follow/payment", "/steward"] };
+const OFF_NAV: Record<Kind, LinkProps["to"][]> = { facilitator: ["/workspace", "/demos/payables", "/demos/payables/play", "/demos/invoices", "/walkthrough/payables", "/walkthrough/invoices", "/automations", "/follow/payment"], treasury: ["/workspace", "/demos/treasury", "/walkthrough/treasury", "/follow/payment", "/steward"] };
 
 /** The mark, drawn as the favicon is (web/rsbuild.config.ts): a safe in the logo blue, a tick cut from its dial. */
 function Logo() {

@@ -8,7 +8,7 @@ export function Demos({ gateway, workflow }: { gateway: Gateway; workflow?: Walk
     <header className="space-y-3">
       {selected && <a className="underline" href="/demos">Back to demos</a>}
       <h1 className="font-heading text-3xl font-semibold tracking-tight">{selected ? `${selected.title} walkthrough` : "Demos and validation"}</h1>
-      <p className="text-muted-foreground">{selected ? "The complete walkthrough uses the same controls and records as the short guide." : "Try a short guided workflow, or open its complete walkthrough for more context."} These flows use mainnet funds. Opening a guide submits nothing.</p>
+      <p className="text-muted-foreground">{selected ? "The complete walkthrough uses the same controls and records as the short guide." : "Try a short guided workflow, or open its complete walkthrough for more context."} Live guides use mainnet funds. The interactive Payables rehearsal uses fictional records. Opening a guide submits nothing.</p>
     </header>
     {(selected ? [selected] : walkthroughs).map(item => {
       const agents = gateway.agents.filter(agent => agent.area === item.area || (!agent.area && (item.area === "treasury" ? agent.name === "treasury" : ["payout", "payables"].includes(agent.name))));
@@ -23,6 +23,7 @@ export function Demos({ gateway, workflow }: { gateway: Gateway; workflow?: Walk
         </div>
         {agents.length ? <ul className="space-y-4">{agents.map(agent => <li key={agent.name} className="flex flex-col gap-2">
           <p className="break-all text-sm">Owner: {agent.owner}</p>
+          {item.id === "payables" && <a className="underline" href={`/a/${agent.name}/demos/payables/play`}>Play the Payables demo<span className="sr-only"> with {agent.name}</span></a>}
           <a className="underline" href={`/a/${agent.name}/${selected ? "walkthrough" : "demos"}/${item.id}`}>
             {selected ? "Open complete walkthrough" : "Start short guide"}<span className="sr-only"> for {item.id} with {agent.name}</span>
           </a>

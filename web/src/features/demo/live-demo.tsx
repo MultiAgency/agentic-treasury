@@ -33,7 +33,7 @@ type Check = {
 
 /** The numbered stages describe a real sequence, never scripted progress or inferred completion. */
 function DemoStep({ number, title, children }: { number: number; title: string; children: ReactNode }) {
-  return <li className="flex min-w-0 flex-col gap-5 border-t pt-6">
+  return <li data-demo-step={number} tabIndex={-1} className="flex min-w-0 scroll-mt-24 flex-col gap-5 border-t pt-6">
     <h3 className="flex items-center gap-3 text-lg font-semibold">
       <span aria-hidden="true" className="grid size-8 shrink-0 place-items-center rounded-full border border-border-strong text-sm">{number}</span>
       {title}
@@ -153,6 +153,8 @@ export function LiveDemo({ short = false, expanded = false }: { short?: boolean;
   ];
   const firstBlocker = checks.find(check => check.blocked);
   const disabledReason = firstBlocker?.detail;
+  const reviewingOnly = !treasury && setup.executor === false;
+  const guideReason = reviewingOnly ? "Share the supplier link, then review the exact invoice or held payout below. This host handles owner review; the supplier’s executor submits the payment." : disabledReason;
 
   return <Section title="Run with real funds" description={treasury
     ? "Preview a rebalance, review its exact swaps, then choose whether to execute on mainnet."
@@ -162,11 +164,11 @@ export function LiveDemo({ short = false, expanded = false }: { short?: boolean;
       <p>You choose and confirm each money action.</p>
       <Link to="/activity" className="underline">Activity and recovery</Link>
     </div>
-    {short && <Guidance agentId={data.agentId} workflow={treasury ? "treasury" : "payables"} blocker={disabledReason} record={planId ? { kind: "plan", id: planId } : paymentId ? { kind: "payment", id: paymentId } : undefined} />}
+    {short && <Guidance agentId={data.agentId} workflow={treasury ? "treasury" : "payables"} blocker={guideReason} record={planId ? { kind: "plan", id: planId } : paymentId ? { kind: "payment", id: paymentId } : undefined} />}
     <ol className="flex min-w-0 flex-col gap-8">
       <DemoStep number={1} title="Check this agent">
         <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-          <p className="max-w-prose text-muted-foreground">{firstBlocker ? "Resolve the check below before a new action." : "Observations checked. The server and provider check authorization again when you act."}</p>
+          <p className="max-w-prose text-muted-foreground">{reviewingOnly ? "This host reviews owner approvals. Use the supplier handoff below to request a payment; these checks describe readiness for new submissions." : firstBlocker ? "Resolve the check below before a new action." : "Observations checked. The server and provider check authorization again when you act."}</p>
           <Button variant="outline" size="sm" disabled={fetching} onClick={() => { void cache.invalidateQueries(); }}>
             {fetching && <Spinner />} {fetching ? "Checking observations…" : "Check observations"}
           </Button>

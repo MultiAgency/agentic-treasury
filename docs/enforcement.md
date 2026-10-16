@@ -659,3 +659,15 @@ cancel an admitted server execution. These tests do not establish real-provider 
 behavior. Restoring old credential state can restore revoked authority:
 retain the latest `.machine-auth/` state across rollback, or disable machine routing until credentials
 are revoked or expired. Provider concurrency guarantees remain unverified.
+
+## Standalone supplier frontend candidate
+
+Invoices' extracted frontend and shared backend additions are offline-tested candidates, not hosted
+or mainnet observations. Compatibility is checked using declared supplier capabilities; it is not
+proof of UI behavior or a signed release manifest. The frontend asset service is a trusted release
+source and receives no session cookies or API traffic. Its independent rollout/rollback must retain
+old hashed assets for open pages. There is no automatic publication, distributed state fencing or
+Module Federation runtime integration in this change. Compensation adds private SQLite records and
+an initialization marker under `.invoices/`; restore both with the existing state, never an empty
+allowance. New isolated payouts require exactly the approved observed funding before first submission;
+accepted or unresolved invoices retain their original identity. See docs/invoices-extraction.md.

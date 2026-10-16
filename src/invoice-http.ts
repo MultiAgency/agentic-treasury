@@ -1,11 +1,17 @@
+import { supplierContract } from "./supplier-contract.js";
+import { serveSupplierFrontend } from "./gateway/supplier-frontend.js";
 import { invoiceBrowser, invoicePage } from "./invoice-page.js";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { z } from "zod";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { agentId } from "./env.js";
 import { agreements, localStore, requestAgreement } from "./agreements.js";
-import { getInvoice } from "./invoice-store.js";
+import { getInvoice, invoiceId } from "./invoice-store.js";
 import { agreed, file, mine, validate } from "./invoices.js";
 import { BadRequest, readJson, SECURITY_HEADERS, sendFailure, sendJson as send } from "./http.js";
+import { compensationList, compensationHistory, saveCompensationRequest, CompensationError } from "./compensation-store.js";
+import { reportCommand } from "./compensation-contract.js";
+import { localCompensation, compensationOwnerCommand } from "./compensation.js";
 import { chainKeyLookup, challengeAnswer, clientAddress, hourlyLimit, parseSignIn, sessions, verifySignIn } from "./signin.js";
 import { getWorkOrder, listWorkOrders } from "./work-order-store.js";
 import { callWorkOrder } from "./work-order-pool.js";
@@ -46,6 +52,38 @@ const session = sessions({ cookie: process.env.INVOICES_SESSION_COOKIE ?? "invoi
 const LIMITS = { signin: hourlyLimit(10), file: hourlyLimit(10) };
 const allowed = (kind: keyof typeof LIMITS, who: string) => LIMITS[kind](who);
 
+const contributorOrder = z.object({ submission: z.uuid(), amount: z.string(), note: z.string().trim().min(1).max(200), until: z.iso.datetime() }).strict();
+// Serialize public intake across awaited owner reads, so parallel requests cannot bypass slot limits.
+let orderIntake = Promise.resolve();
+function requestWorkOrder(payee: string, raw: unknown) {
+  const run = orderIntake.then(async () => {
+    const parsed = contributorOrder.safeParse(raw);
+    if (!parsed.success) throw new BadRequest("Enter an amount, work description and deadline. Work order recipients are fixed to your signed-in account.");
+    const draft = parsed.data;
+    const valid = validate({ ...draft, payee });
+    if ("invalid" in valid) throw new BadRequest(`Check the ${valid.invalid}.`);
+    // Scope the retained client identity to this account; another payee cannot probe or claim it.
+    const hex = createHash("sha256").update(JSON.stringify([payee, draft.submission])).digest("hex");
+    const id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+    const orders = listWorkOrders(agentId());
+    const known = orders.find(order => order.id === id);
+    if (known) {
+      if (known.payee !== payee || known.amount !== valid.amount || known.note !== valid.note || known.until !== draft.until)
+        return { conflict: true } as const;
+      return { id, status: "requested" } as const;
+    }
+    if (Date.parse(draft.until) <= Date.now() || Date.parse(draft.until) > Date.now() + 365 * 86_400_000)
+      throw new BadRequest("Choose a future deadline within 365 days.");
+    const active = orders.filter(order => Date.parse(order.until) > Date.now());
+    if (active.length >= 50 || active.filter(order => order.payee === payee).length >= 3) return { full: true } as const;
+    // This records proposed terms only. Agent creation, grant and payment approval remain owner-signed.
+    await localWorkOrders(agentId(), { type: "create", input: { id, payee, amount: valid.amount, note: valid.note, until: draft.until } });
+    return { id, status: "requested" } as const;
+  });
+  orderIntake = run.then(() => undefined, () => undefined);
+  return run;
+}
+
 export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) => {
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
   const ip = clientAddress(req);
@@ -53,6 +91,10 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
     // A malformed request target (`GET http://[/`) throws here: answered 400 below, never a crash.
     const url = URL.parse(req.url ?? "/", ORIGIN);
     if (!url) throw new BadRequest("Malformed request.");
+    if (req.method === "GET" && url.pathname === "/api/capabilities") return send(res, 200, supplierContract);
+    if (req.method === "GET" && await serveSupplierFrontend(res, url.pathname)) return;
+    if (req.method === "GET" && url.pathname === "/api/compensation/schema")
+      return send(res, 200, { version: 2, submit: z.toJSONSchema(reportCommand), reads: ["GET /api/compensation"], writes: ["POST /api/compensation"], authentication: "Contributor NEP-413 session; no anonymous private reads or writes", semantics: "Atomic USDC strings; expectedVersion and commandId required. Submission never sends a payment." });
     if (req.method === "GET" && url.pathname === "/") {
       // The wallet connector loads from jsDelivr, fetches its wallet list over https, and runs each
       // wallet as inline script in a sandboxed srcdoc frame, which inherits this policy: so inline
@@ -70,7 +112,7 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
     // Same-origin writes only: with a SameSite cookie this closes cross-site requests outright.
     if (req.method === "POST" && req.headers.origin && req.headers.origin !== ORIGIN) return send(res, 403, { error: "Wrong origin." });
 
-    if (url.pathname.startsWith("/internal/agreements") || url.pathname === "/internal/work-orders") return await internal(req, res, url.pathname);
+    if (url.pathname.startsWith("/internal/agreements") || url.pathname === "/internal/work-orders" || url.pathname === "/internal/compensation") return await internal(req, res, url.pathname);
 
     if (req.method === "GET" && url.pathname === "/api/session") {
       const account = session.account(req);
@@ -79,8 +121,11 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
 
     if (req.method === "POST" && url.pathname === "/api/signin/challenge") return send(res, ...challengeAnswer(PUBLIC_HOST, allowed("signin", ip)));
 
+    // Report intake needs its authenticated recipient and retained terms, not provider availability.
+    if (req.method === "GET" && url.pathname === "/api/compensation/session") return send(res, 200, { account: session.account(req) });
+
     // A signature by a full-access key opens a session; whether the account is agreed decides what it files.
-    if (req.method === "POST" && url.pathname === "/api/signin") {
+    if (req.method === "POST" && ["/api/signin", "/api/compensation/signin"].includes(url.pathname)) {
       const signIn = parseSignIn(await readJson(req));
       let account: string;
       try {
@@ -90,7 +135,7 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
         console.warn("sign-in refused", JSON.stringify({ ...signIn, host: PUBLIC_HOST, reason: String(error) }));
         return send(res, 403, { error: error instanceof Error ? error.message : "Sign-in failed." });
       }
-      return send(res, 200, { account, agreed: (await agreed()).has(account) }, { "set-cookie": session.open(account) });
+      return send(res, 200, { account, ...(url.pathname === "/api/signin" && { agreed: (await agreed()).has(account) }) }, { "set-cookie": session.open(account) });
     }
 
     if (req.method === "POST" && url.pathname === "/api/signout")
@@ -99,9 +144,47 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
     const payee = session.account(req);
     if (url.pathname.startsWith("/api/") && !payee) return send(res, 401, { error: "Sign in with the account being paid." });
 
+    if (req.method === "GET" && url.pathname === "/api/compensation") {
+      const view = compensationList(payee!);
+      const redact = (record: unknown) => {
+        const r = record as Record<string, unknown>;
+        return { ...r, ...("recordedBy" in r && { recordedBy: "owner" }), ...("reviewedBy" in r && { reviewedBy: r.reviewedBy ? "owner" : null }) };
+      };
+      const invoices = await mine(payee!);
+      return send(res, 200, { account: payee, agreements: view.agreements.map(redact), requests: view.requests.map(redact),
+        history: compensationHistory(payee!).map(h => ({ ...h, actor: h.actor === payee ? payee : "owner", record: redact(h.record) })),
+        payments: await Promise.all(view.requests.filter(r => r.payment).map(async r => {
+          if (r.payment!.mode === "isolated") {
+            try {
+              const order = getWorkOrder(agentId(), r.payment!.id);
+              if (order.payee !== payee || order.id !== r.id) throw new Error("Payout binding unavailable");
+              const snapshot = publicWorkOrder(await callWorkOrder(agentId(), order.id, { type: "snapshot" }));
+              return { requestId: r.id, id: order.id, status: snapshot.unavailable ? "unavailable" : snapshot.invoice?.status ?? (Date.parse(order.until) <= Date.now() ? "expired" : "preparing") };
+            } catch { return { requestId: r.id, id: r.payment!.id, status: "unavailable" }; }
+          }
+          const id = invoiceId({ payee: r.payee, submission: r.id });
+          return { requestId: r.id, id, status: invoices.find(i => i.id === id)?.status ?? "preparation_incomplete" };
+        })) });
+    }
+    if (req.method === "POST" && url.pathname === "/api/compensation") {
+      if (!allowed("file", payee!)) return send(res, 429, { code: "rate_limited", error: "Too many attempts. Keep this draft and try later." });
+      const parsed = reportCommand.safeParse(await readJson(req));
+      if (!parsed.success) return send(res, 400, { code: "invalid_request", error: parsed.error.issues[0]?.message ?? "Check your request.", issues: parsed.error.issues });
+      return send(res, 200, saveCompensationRequest(payee!, parsed.data));
+    }
+
     if (req.method === "GET" && url.pathname === "/api/work-orders") {
       const orders = listWorkOrders(agentId()).filter(order => order.payee === payee);
       return send(res, 200, { orders: orders.map(({ id, amount, note, until, createdAt }) => ({ id, amount, note, until, createdAt })) });
+    }
+    if (req.method === "POST" && url.pathname === "/api/work-orders") {
+      const body = await readJson(req);
+      if (!contributorOrder.safeParse(body).success) throw new BadRequest("Enter an amount, work description and deadline. Work order recipients are fixed to your signed-in account.");
+      if (!allowed("file", payee!)) return send(res, 429, { error: "Too many attempts. Try again later." });
+      const result = await requestWorkOrder(payee!, body);
+      if ("conflict" in result) return send(res, 409, { error: "This request already has different terms. Review the existing work order before starting another." });
+      if ("full" in result) return send(res, 429, { error: "The work order request queue is full. Review your existing requests or contact the owner." });
+      return send(res, 200, result);
     }
     const workOrder = url.pathname.match(/^\/api\/work-orders\/([0-9a-f-]{36})(\/file)?$/);
     if (workOrder && (req.method === "GET" || req.method === "POST")) {
@@ -127,6 +210,8 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
       const input = await readJson(req);
       const invoice = validate({ ...input, payee });
       if ("invalid" in invoice) return send(res, 400, { error: `Check the ${invoice.invalid}.` });
+      if (compensationList(payee!).agreements.length && !getInvoice(invoiceId(invoice)))
+        return send(res, 409, { code: "review_required", error: "Submit a report & payment request under your recorded agreement before payment preparation." });
       const payees = await agreed();
       if (!payees.has(payee!)) return send(res, 200, requestAgreement(invoice, payees));
       return send(res, 200, await file(invoice, payee!));
@@ -153,6 +238,7 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
     }
     send(res, 404, { error: "Not found." });
   } catch (error) {
+    if (error instanceof CompensationError) return send(res, error.code === "not_found" ? 404 : 409, { code: error.code, error: error.message });
     // Payees see no internals: accounts, policy and API errors stay in this process's log.
     sendFailure(res, error);
   }
@@ -166,6 +252,11 @@ async function internal(req: IncomingMessage, res: ServerResponse, path: string)
   if (req.method === "GET" && path === "/internal/agreements") return send(res, 200, { agreements: await store.list() });
   if (req.method !== "POST") return send(res, 404, { error: "Not found." });
   try {
+    if (path === "/internal/compensation") {
+      const body = await readJson(req);
+      if (body.parentAgentId !== agentId() || typeof body.actor !== "string" || !body.actor) throw new BadRequest("Compensation owner binding unavailable.");
+      return send(res, 200, { result: await localCompensation(agentId(), body.actor, compensationOwnerCommand.parse(body.command)) });
+    }
     if (path === "/internal/work-orders") {
       const body = await readJson(req) as Record<string, unknown>;
       if (body.parentAgentId !== agentId()) throw new BadRequest("Work order parent does not match this executor.");
@@ -174,7 +265,7 @@ async function internal(req: IncomingMessage, res: ServerResponse, path: string)
     return await answerInternal(res, path, (await readJson(req)) as Record<string, unknown>);
   } catch (error) {
     // The caller is this agent's own dashboard: it sees why, unlike a payee.
-    return send(res, 400, { error: error instanceof Error ? error.message : "Malformed request." });
+    return send(res, 400, { error: error instanceof Error ? error.message : "Malformed request.", ...(error instanceof CompensationError && { code: error.code }) });
   }
 }
 

@@ -69,7 +69,7 @@ async function serveDashboard(req: IncomingMessage, res: ServerResponse) {
     req.url = req.url.slice("/supplier".length);
     return (await import("./invoice-http.js")).invoiceHandler(req, res);
   }
-  const { matched } = await handler.handle(req, res, { prefix: "/rpc" });
+  const { matched } = await handler.handle(req, res, { prefix: "/rpc", context: { actor: typeof req.headers["x-gateway-actor"] === "string" ? req.headers["x-gateway-actor"] : undefined } });
   if (matched) return;
 
   const url = URL.parse(req.url ?? "/", "http://localhost");
