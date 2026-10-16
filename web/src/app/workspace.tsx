@@ -46,7 +46,8 @@ export function Workspace({ gateway, activity = false, pathname = location.pathn
   const style = (active: boolean) => `flex min-h-11 min-w-0 items-center gap-2 rounded-lg px-3 py-2 text-sm ${active ? "bg-brand-muted font-semibold text-brand-strong" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`;
   const anchor = (href: string, label: string, active: boolean) => <a href={href} aria-current={active ? "page" : undefined} className={style(active)} onClick={leave}>{label}</a>;
   const navigation = <nav aria-label="Workspace" className="flex flex-col gap-2">
-    {anchor("/", "Home", !BASE && !activity)}
+    {anchor("/", "Home", !BASE && !activity && path !== "/demos")}
+    {anchor("/demos", "Demos", !BASE && path === "/demos")}
     {areas.map(agent => {
       const selected = agent.name === current?.name;
       const label = areaName(agent);
@@ -66,6 +67,7 @@ export function Workspace({ gateway, activity = false, pathname = location.pathn
       </div></header>
       <nav aria-label="Walkthrough navigation" className="mx-auto flex max-w-5xl flex-wrap gap-x-6 gap-y-2 px-4 pt-4 text-sm sm:px-8">
         <a href="/" className="inline-flex min-h-11 items-center underline">Your agents</a>
+        <a href="/demos" className="inline-flex min-h-11 items-center underline">Demos</a>
         {current && <a href={`${BASE}/demo`} className="inline-flex min-h-11 items-center underline">Guided walkthrough</a>}
         <a href={current ? `${BASE}/activity` : "/#activity"} className="inline-flex min-h-11 items-center underline">Activity and recovery</a>
       </nav>

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "@tanstack/react-router";
-import { useState } from "react";
+import { useRef } from "react";
 import { queries } from "../shared/queries";
 import { type Overview, kindOf } from "../shared/lib";
 import { type Setup } from "../features/owner/owner";
@@ -43,13 +43,16 @@ export function SetupActions({ state }: { state: ReturnType<typeof useSetupActio
 export function SetupNextStep({ setup, overview }: { setup: Setup; overview?: Overview }) {
   const guided = useGateway()?.walkthroughs;
   const pathname = useLocation({ select: location => location.pathname });
-  const [entry] = useState({ withoutGrant: !setup.grant, pathname });
+  const entry = useRef({ withoutGrant: !setup.grant, pathname });
+  // Setup can span several routes before the grant arrives. Resume on the route where it completes.
+  if (!setup.grant) entry.current = { withoutGrant: true, pathname };
   if (setup.grant) {
-    if (!entry.withoutGrant || pathname !== entry.pathname) return null;
+    if (!entry.current.withoutGrant || pathname !== entry.current.pathname) return null;
     const policyKnown = overview?.notInForce === null;
     const treasury = overview && kindOf(overview) === "treasury";
+    const fundingNeeded = policyKnown && overview.book.length > 0 && overview.book.every(holding => BigInt(holding.public) + BigInt(holding.confidential) === 0n);
     return <Section title="Continue to your next task" description="An agent and grant are now reported. Each action still requires its own authorization and balance checks.">
-      <Link to={!policyKnown ? "/policy" : guided ? "/demo" : treasury ? "/automations" : "/"} className="self-start underline">{!policyKnown ? "Review policy and permissions" : guided ? "Continue to walkthrough" : treasury ? "Continue to Strategy" : "Continue to Payments"}</Link>
+      <Link to={!policyKnown ? "/policy" : fundingNeeded ? "/funding" : guided ? "/demo" : treasury ? "/automations" : "/"} className="self-start underline">{!policyKnown ? "Review policy and permissions" : fundingNeeded ? "Continue to funding" : guided ? "Continue to walkthrough" : treasury ? "Continue to Strategy" : "Continue to Payments"}</Link>
       <p className="text-sm">A grant report does not settle every owner action. <Link to="/activity" className="underline">Review existing action outcomes in Activity</Link>.</p>
     </Section>;
   }

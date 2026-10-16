@@ -1,0 +1,38 @@
+{
+  "host": "proto.multiagency.ai",
+  "walkthroughs": true,
+  "selfService": true,
+  "agents": [],
+  "hosts": {
+    "proto.multiagency.ai": {
+      "demo": "showcase",
+      "agents": [],
+      "hostedAreas": [
+        "treasury",
+        "payables"
+      ]
+    },
+    "payables.multiagency.ai": {
+      "demo": "payables",
+      "agents": [],
+      "hostedAreas": [
+        "payables"
+      ]
+    },
+    "treasury.multiagency.ai": {
+      "demo": "treasury",
+      "agents": [],
+      "hostedAreas": [
+        "treasury",
+        "payables"
+      ]
+    },
+    "invoices.multiagency.ai": {
+      "demo": "invoices",
+      "agents": [],
+      "hostedAreas": [
+        "payables"
+      ]
+    }
+  }
+}

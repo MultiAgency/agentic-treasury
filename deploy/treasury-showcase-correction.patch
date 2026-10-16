@@ -1,0 +1,242 @@
+--- a/deploy/dao-treasury-demo.json
++++ b/deploy/dao-treasury-demo.json
+@@ -1,6 +1,6 @@
+ {
+   "host": "treasury.multiagency.ai",
+-  "redirect_hosts": ["proto.multiagency.ai"],
++  "redirect_hosts": [],
+   "invoices": "https://invoices.multiagency.ai",
+   "agents": [
+     {
+--- a/src/gateway/config.ts
++++ b/src/gateway/config.ts
+@@ -10,7 +10,7 @@
+   /** The public host users sign in to, e.g. "dao.example.com". Bound into every sign-in signature. */
+   host: z.string().min(0),
+   /** Legacy page hosts redirect to host; API requests on them are refused, never replayed. */
+-  redirect_hosts: z.array(z.hostname()).default([]),
++  redirect_hosts: z.array(z.hostname().refine(host => host.toLowerCase() !== "proto.multiagency.ai", "Proto is the umbrella showcase, never a redirect alias")).default([]),
+   /** Where payees submit invoices, linked from the public page. */
+   invoices: z.url().optional(),
+   /**
+--- a/src/gateway/canonical-host.ts
++++ b/src/gateway/canonical-host.ts
+@@ -3,6 +3,8 @@
+ /** Only configured legacy hosts redirect. API calls and bodies never cross origins. */
+ export function canonicalHostAnswer(req: IncomingMessage, url: URL, canonical: string, aliases: readonly string[]) {
+   const host = req.headers.host?.toLowerCase();
++  // Defense in depth for callers that bypass configuration parsing.
++  if (host === "proto.multiagency.ai") return { status: 421 as const };
+   if (!host || host === canonical.toLowerCase() || !aliases.some(alias => alias.toLowerCase() === host)) return null;
+   const pageRead = req.method === "GET" || req.method === "HEAD";
+   if (pageRead && url.pathname === "/health") return null;
+--- a/test/gateway-canonical.test.ts
++++ b/test/gateway-canonical.test.ts
+@@ -14,7 +14,7 @@
+   await new Promise<void>(resolve => probe.close(() => resolve()));
+   const dir = mkdtempSync(join(tmpdir(), "canonical-gateway-"));
+   const file = join(dir, "config.json");
+-  writeFileSync(file, JSON.stringify({ host: "treasury.test", redirect_hosts: ["proto.test"],
++  writeFileSync(file, JSON.stringify({ host: "treasury.test", redirect_hosts: ["legacy.test"],
+     agents: [{ name: "treasury", owner: "owner.test", area: "treasury", port: 65530 }] }));
+   const child = spawn(TSX, [join(process.cwd(), "src/gateway/server.ts")], {
+     cwd: dir, env: { ...process.env, PORT: String(port), DASHBOARD_FILE: file,
+@@ -23,7 +23,7 @@
+   });
+   let errors = "";
+   child.stderr.on("data", bytes => { errors += bytes; });
+-  const call = (path: string, method = "GET", host = "proto.test", extra: Record<string, string> = {}) =>
++  const call = (path: string, method = "GET", host = "legacy.test", extra: Record<string, string> = {}) =>
+     new Promise<{ status: number; headers: Record<string, unknown>; body: string }>((resolve, reject) => {
+       const req = request({ hostname: "127.0.0.1", port, path, method, headers: { host, ...extra } }, res => {
+         let body = ""; res.on("data", bytes => { body += bytes; });
+@@ -51,13 +51,16 @@
+       for (const method of ["POST", "PUT", "DELETE", "OPTIONS"])
+         assert.equal((await call(path, method)).status, 421, `${method} ${path}`);
+     assert.equal((await call("/health")).status, 200);
++    const showcase = await call("/", "GET", "proto.multiagency.ai");
++    assert.equal(showcase.status, 421);
++    assert.equal(showcase.headers.location, undefined, "the Treasury-only service never redirects Proto");
+     const canonical = await call("/gw/challenge", "GET", "treasury.test");
+     assert.equal(canonical.status, 200);
+     assert.match(canonical.body, /treasury\.test/);
+     assert.equal((await call("/a/treasury/rpc/executePlan", "POST", "treasury.test")).status, 401);
+-    const hostile = await call("//evil.test/path?next=https://evil.test", "GET", "proto.test", { "x-forwarded-host": "evil.test" });
++    const hostile = await call("//evil.test/path?next=https://evil.test", "GET", "legacy.test", { "x-forwarded-host": "evil.test" });
+     assert.equal(new URL(String(hostile.headers.location)).origin, "https://treasury.test");
+-    assert.equal((await call("/gw/challenge", "GET", "unlisted.test", { "x-forwarded-host": "proto.test" })).status, 200,
++    assert.equal((await call("/gw/challenge", "GET", "unlisted.test", { "x-forwarded-host": "legacy.test" })).status, 200,
+       "forwarded host cannot select the redirect path");
+     assert.equal(child.exitCode, null);
+   } finally {
+--- a/test/gateway.test.ts
++++ b/test/gateway.test.ts
+@@ -240,7 +240,13 @@
+   const previous = loadConfig("deploy/legacy-dashboard.json");
+   const candidate = loadConfig("deploy/dao-treasury-demo.json");
+   assert.equal(candidate.host, "treasury.multiagency.ai");
+-  assert.deepEqual(candidate.redirect_hosts, ["proto.multiagency.ai"]);
++  assert.deepEqual(candidate.redirect_hosts, []);
++  const dir = mkdtempSync(join(tmpdir(), "showcase-host-"));
++  try {
++    const file = join(dir, "dashboard.json");
++    writeFileSync(file, JSON.stringify({ ...candidate, redirect_hosts: ["proto.multiagency.ai"] }));
++    assert.throws(() => loadConfig(file), /umbrella showcase/);
++  } finally { rmSync(dir, { recursive: true, force: true }); }
+   assert.deepEqual(candidate.agents, previous.agents);
+   assert.equal(candidate.invoices, previous.invoices);
+   assert.equal(childEnv(candidate.agents[1] as typeof candidate.agents[1] & { envFile: string }, {}).EXECUTOR, "off");
+--- a/docs/treasury-rollout.md
++++ b/docs/treasury-rollout.md
+@@ -1,88 +1,20 @@
+-# DAO Treasury demo rollout — prepared, not applied
++# Treasury routing proposal — superseded, not applied
+ 
+-Serve the selected `agentic.sputnik-dao.near` Treasury at `treasury.multiagency.ai` using the
+-existing **dao** service in the **agentic-treasury / production** Railway environment. Keep its
+-current `/data` volume, agent settings, grant, operation journal and history in place. This plan
+-changes the application and domain routing; it does not move funds or migrate agent state.
+-Both public domains attach to this same backend. Treasury is canonical; proto redirects page
+-visits to Treasury. Sign-in and API calls on proto are refused rather than forwarded or replayed.
+-The redirect implementation is offline-tested and has not been deployed.
++The former proposal made Proto a redirect alias for Treasury. That scope is incorrect.
++`proto.multiagency.ai` is the static umbrella showcase for all three Agent Connect ideas.
++`treasury.multiagency.ai` is the agency workspace combining all three ideas. Payables covers ideas 01 and 03;
++Invoices is its supplier entry. Proto remains on the shared gateway, never this Treasury-only image.
+ 
+-## Configuration to review
++Use the reviewable integration candidate in `../proto/deploy/shared-demos.json` and its
++[shared-demo rollout](../../proto/docs/shared-demos-rollout.md). It preserves the DAO Treasury
++executor, payout approve-only assignment, existing invoice executor and every service's volume.
++This repository's `dao-treasury-demo.json` retains agent assignments for historical review but
++is not the four-domain rollout configuration. Its redirect list is empty.
+ 
+-Use [dao-treasury-demo.json](../deploy/dao-treasury-demo.json). It keeps the existing Treasury
+-executor on port 8789 and the existing payout approve-only instance on port 8790. Payables stays
+-hidden by the default Treasury frontend; its retained server responsibilities are preserved.
+-Do not point this deployment at the empty `deploy/dashboard.json` or `deploy/treasury.json`.
++Do not execute the former domain-move instructions. Before moving the standalone Treasury
++service's domain, establish owner-authorized alternate access for its retained wallet workspace.
++No state or grants are imported into the shared gateway. Keep all current records and one executor
++per agent; backup, rollout acceptance, rollback and access requirements are in the shared plan.
+ 
+-| Service | Setting | Intended value |
+-|---|---|---|
+-| dao | DASHBOARD_FILE | /app/deploy/dao-treasury-demo.json |
+-| dao | DASHBOARD_HOST | treasury.multiagency.ai |
+-| dao | Configured redirect_hosts | proto.multiagency.ai |
+-| dao | TREASURY_SELF_SERVICE | false |
+-| dao | Frontend build | PUBLIC_TREASURY_ONLY=true, the default |
+-| dao | Replicas / deployment overlap | One replica / zero overlap |
+-| dao | Volume and secrets | Retain existing volume and settings; no credential copying |
+-| treasury | DASHBOARD_HOST, if retaining wallet access through its generated domain | treasury-production-c98c.up.railway.app |
+-
+-The **treasury** service is a separate self-service installation with its own volume and existing
+-wallet workspace. Keep its state intact. Moving its custom domain does not move that workspace.
+-If access through its generated Railway domain is needed, the owner must apply the matching
+-`DASHBOARD_HOST` setting and restart that service. Do not copy the DAO's settings or grant into it.
+-The invoices service and its domain remain outside this rollout.
+-
+-## Owner procedure
+-
+-1. Finalize and identify the reviewed source revision, including untracked candidate files and
+-   the approved branding change. `pnpm verify` must pass for that revision. The current source is
+-   not deployed merely because existing Railway deployments are healthy.
+-2. Before any stop or restart, check for an unattended run, active CLI writer, unresolved operation
+-   or owner-signature attempt. Arrange a quiet maintenance window. Use the stopped-writer backup
+-   procedure in [operations.md](operations.md#executor-migration-and-state-preservation); preserve
+-   the entire DAO state directory and settings. Do not discard unresolved records or replay
+-   an attempted signature. Record current deployment IDs, domains, DNS records and settings privately.
+-3. Stage the **dao** settings above without triggering an intermediate deployment. Select
+-   `Dockerfile.dashboard`, one replica and zero overlap. Retain the existing volume and secrets.
+-4. In Railway, move the custom domain `treasury.multiagency.ai` from **treasury** to **dao**,
+-   targeting port 8080. Update DNS to the value Railway supplies for the new attachment, including
+-   any required verification record. Do not assume the old CNAME or certificate is reusable.
+-   DNS and certificate convergence can interrupt access during the maintenance window.
+-5. Deploy the reviewed candidate to **dao**, after confirming the prior executor and writers have
+-   stopped. Verify one running instance before admitting money actions. No second DAO executor
+-   is started on the separate **treasury** service. Preserve any pre-existing schedule state;
+-   if a schedule must be paused for maintenance, the owner does that separately and records it.
+-6. Check domain DNS and certificate status, `/health`, and read-only smoke:
+-
+-   ```sh
+-   DASHBOARD_URL=https://treasury.multiagency.ai pnpm smoke
+-   ```
+-
+-7. Sign in normally at the new host; old host cookies are not a sign-in migration. Verify the
+-   selected DAO owner, policy identity, strategy/grant binding, intended schedule state, balances,
+-   unresolved records, retained plans and run history against the private pre-release observations.
+-   Verify Payables is absent from navigation and Steward remains a hidden direct route.
+-8. Only after read-only verification, prepare the low-value demonstration described in
+-   [DEMO.md](../DEMO.md). Quotes, confirmations, refusals and sweeps are separate owner actions.
+-
+-Keep `proto.multiagency.ai` attached to **dao**. Its GET/HEAD page requests redirect to the same
+-path and query at Treasury with a temporary, non-cached redirect. Sign-in and API routes and
+-other HTTP methods return 421, without reading private records or replaying a request body.
+-`/health` reads remain available. The gateway reads the actual Host header for this configured
+-alias; forwarded-host headers cannot select the redirect. Unknown hosts retain the existing
+-gateway behavior; this feature is not a general host allowlist.
+-
+-Verify a scoped proto page redirects, a proto API request is refused without a Location header,
+-and the canonical sign-in challenge names `treasury.multiagency.ai`. Sign in again at Treasury;
+-proto cookies are not transferred. Preserve the old deployment/settings for routing rollback.
+-
+-## Rollback
+-
+-If the candidate fails before money actions, stop the affected executor before changing the image.
+-Restore the prior DAO deployment and its prior `DASHBOARD_FILE` and sign-in host, retaining all
+-current state. Move `treasury.multiagency.ai` back to its former service and restore the privately
+-recorded DNS/settings as needed. Confirm certificate status and host-bound sign-in again.
+-
+-If any operations occurred after deployment, retain their records and reconcile unknown outcomes;
+-never restore an older journal backup over new records. Rollback does not authorize resubmission.
+-The same single-executor constraint applies during rollback.
++This correction is prepared source only. It authorizes no deployment, restart, DNS change,
++state migration or money action. Earlier deployment approval does not cover this rollout.
+--- a/docs/operations.md
++++ b/docs/operations.md
+@@ -26,11 +26,12 @@
+ 
+ ## Owner release handoff
+ 
+-For the selected DAO demo, use the prepared [routing rollout](treasury-rollout.md) and
+-`deploy/dao-treasury-demo.json`. It keeps the DAO executor and volume on the existing **dao**
+-service while making `treasury.multiagency.ai` its entry point. This plan has not been applied.
+-Both public domains use that backend: `redirect_hosts` makes proto a page redirect to Treasury.
+-Sign-in and API requests on proto are refused, so request bodies and operations are never replayed.
++For the selected DAO demo, the former canonical-host rollout is superseded by the
++[shared-demo candidate](../../proto/docs/shared-demos-rollout.md). Proto is the umbrella showcase,
++not a redirect alias. The four-domain integration uses the Proto repository's shared gateway;
++do not deploy this Treasury-only image over that gateway. The existing standalone Treasury
++installation retains its volume and wallet workspace; verify alternate owner access before
++moving its custom domain. `deploy/dao-treasury-demo.json` is retained for assignment review only.
+ 
+ Before deploying this cleanup, review the exact source revision and run `pnpm verify`. Include the
+ new Treasury browser fixtures and retained legacy files in the release; a tracked-only diff omits
+--- a/DEMO.md
++++ b/DEMO.md
+@@ -10,9 +10,9 @@
+ demo host. The separate wallet workspace on `treasury.multiagency.ai` is not the selected demo.
+ Confirm the displayed owner before any action. This choice does not migrate the executor or
+ authorize a new one.
+-The prepared [rollout](docs/treasury-rollout.md) makes `treasury.multiagency.ai` the demo entry
+-point while retaining the existing DAO executor and state. It has not been applied.
+-Proto becomes a page redirect to that canonical address; sign in at Treasury for the demonstration.
++The [shared-demo candidate](../proto/docs/shared-demos-rollout.md) prepares Treasury as the
++combined agency entry while preserving the existing DAO executor and state. Proto remains the
++umbrella showcase for all three ideas. This rollout has not been applied.
+ 
+ ## Prepare before presenting
+ 
+--- a/CONTEXT.md
++++ b/CONTEXT.md
+@@ -244,7 +244,8 @@
+ 
+ ## Treasury interface
+ 
+-**Canonical Treasury host**: One gateway can accept both Treasury and its explicitly configured
++**Canonical Treasury host**: Proto is the umbrella showcase and cannot be a redirect alias.
++A standalone Treasury gateway can accept Treasury and an unrelated explicitly configured
+ legacy page host. The legacy host redirects GET/HEAD page visits to the canonical HTTPS host with
+ the path and query preserved. Sign-in and API requests and all other methods on the legacy host
+ are refused, never forwarded or replayed. Health reads remain available on both. Sessions stay

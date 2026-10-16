@@ -38,8 +38,9 @@ const store = localStore(agreed);
 
 if (!PUBLIC_HOST || !SECRET) throw new Error("Set INVOICES_PUBLIC_HOST and INVOICES_SESSION_SECRET before listening beyond loopback");
 agentId(); // fail at start, not on the first request, when no agent is configured
-const ORIGIN = `${LOOPBACK ? "http" : "https"}://${PUBLIC_HOST}`;
-const session = sessions({ cookie: "invoices_session", secret: SECRET, secure: !LOOPBACK });
+const SECURE = !LOOPBACK || process.env.INVOICES_HTTPS === "true";
+const ORIGIN = `${SECURE ? "https" : "http"}://${PUBLIC_HOST}`;
+const session = sessions({ cookie: process.env.INVOICES_SESSION_COOKIE ?? "invoices_session", secret: SECRET, secure: SECURE });
 
 /** Attempts allowed per hour: sign-ins per address, invoices per signed-in account. */
 const LIMITS = { signin: hourlyLimit(10), file: hourlyLimit(10) };
@@ -60,7 +61,7 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
         "content-security-policy",
         "frame-ancestors 'none'; default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https:; connect-src 'self' https: wss:; frame-src https:; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'",
       );
-      return res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(invoicePage(TITLE));
+      return res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(invoicePage(TITLE, process.env.HOSTED_INVOICE_BASE ?? ""));
     }
     if (req.method === "GET" && url.pathname === "/invoice-browser.js")
       return res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" }).end(invoiceBrowser);

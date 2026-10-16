@@ -122,7 +122,9 @@ function WorkOrderDetail({ order }: { order: Order }) {
       description={`${terms} ${description}`} reviewKey={JSON.stringify([order, ownerAction])}
       disabled={disabled || unavailable} onConfirm={() => void action.run(ownerAction)} />;
   let link: string | undefined;
-  if (gateway.data?.invoices) { const url = new URL(gateway.data.invoices, location.origin); url.searchParams.set("workOrder", order.id); link = url.href; }
+  const gatewayAgent = gateway.data?.agents.find(agent => `/a/${agent.name}` === BASE);
+  const invoices = gatewayAgent?.invoices !== undefined ? gatewayAgent.invoices : gateway.data?.invoices;
+  if (invoices) { const url = new URL(invoices, location.origin); url.searchParams.set("workOrder", order.id); link = url.href; }
   return <div className="mt-4 flex flex-col gap-4 text-sm">
     {query.isPending && <Loading label="Checking this work order" />}
     {query.error && <QueryError error={query.error} retry={() => query.refetch()} />}

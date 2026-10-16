@@ -8,6 +8,7 @@ Vocabulary is in `CONTEXT.md`: use its terms in code, tests, docs and conversati
 policy, grant, purpose, authorization, operation, unresolved, held payout, refusal). Read it first.
 
 ## Where things are
+- `.agents/skills/` — individually discoverable stack skills with primary sources and verified integration notes. Read the relevant skill before stack-related implementation or review. `.claude/skills` links to the same directory.
 - `README.md` — what runs, how to start it, the two areas (Payables, Treasury), and **Not done yet**.
 - `docs/facilitator.md`, `docs/treasury.md` — each area: its briefs, each requirement's stage, how each claim is
   known, what isn't covered.

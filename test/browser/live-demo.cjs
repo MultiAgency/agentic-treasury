@@ -57,6 +57,7 @@ function overview(kind, state) {
           const method = pathname.split('/rpc/')[1];
           const kind = pathname.includes('/payables/') ? 'payables' : 'treasury';
           calls.push(method);
+          if (method === 'workOrders/list') return route.fulfill({ json: { json: [] } });
           if (method === state.error) return route.fulfill({ status: 500, json: { json: { defined: false, code: 'INTERNAL_SERVER_ERROR', message: 'Fixture observation unavailable' } } });
           const setup = { agentId: kind, wallet: kind + '.near', owner: { type: 'near', account_id: 'owner.near' }, executor: !state.approveOnly,
             grant: state.noGrant ? null : { id: 'grant-fixture', label: grantLabel(kind, state), expiresAt: state.expired ? '2020-01-01T00:00:00Z' : '2030-01-01T00:00:00Z' }, dao: null };
@@ -117,6 +118,30 @@ function overview(kind, state) {
       await context.close();
     }
     console.log('PASS walkthrough mode: area roots open real guides directly and retain recovery navigation');
+    for (const workflow of ['treasury', 'payables', 'invoices']) for (const version of ['demos', 'walkthrough']) {
+      const agent = workflow === 'treasury' ? 'treasury' : 'payables';
+      const { page, context, writes, errors } = await open(`/a/${agent}/${version}/${workflow}`, { guided: true });
+      await page.getByRole('navigation', { name: 'Walkthrough versions' }).waitFor();
+      assert.equal(await page.getByRole('complementary', { name: 'Walkthrough guidance' }).count(), version === 'demos' ? 1 : 0);
+      if (workflow === 'invoices') await page.getByRole('heading', { name: 'Purchase-order walkthrough', exact: true }).waitFor();
+      else await page.getByRole('heading', { name: 'Run with real funds', exact: true }).waitFor();
+      await page.reload();
+      await page.getByRole('navigation', { name: 'Walkthrough versions' }).waitFor();
+      assert.deepEqual(writes, [], 'guide entry and reload never submit');
+      assert.deepEqual(errors, []);
+      await context.close();
+    }
+    console.log('PASS all three short and complete guides reuse private controls without submitting on entry');
+    {
+      const { page, context, writes, errors } = await open('/a/payables/workspace', { guided: true });
+      await page.getByRole('heading', { name: 'Payments', exact: true }).waitFor();
+      assert.equal(await page.getByText(/This page isn't part of/).count(), 0);
+      assert.deepEqual(writes, []); assert.deepEqual(errors, []);
+      await context.close();
+      console.log('PASS configured owner workspace remains admitted after setup');
+    }
+
+
 
     for (const width of [320, 1280]) {
       const { page, context, writes, errors } = await open('/', { width });
@@ -159,7 +184,7 @@ function overview(kind, state) {
 
     {
       const width = 390;
-      const { page, context, writes, errors } = await open('/a/treasury/demo', { allowRebalance: true, width });
+      const { page, context, writes, errors } = await open('/a/treasury/demos/treasury', { allowRebalance: true, width });
       const preview = page.getByRole('button', { name: 'Preview', exact: true });
       const execute = page.getByRole('button', { name: 'Execute', exact: true });
       await expect(preview).toBeEnabled();
@@ -189,6 +214,7 @@ function overview(kind, state) {
       assert.equal(await planRecords.locator('#operation-unrelated-operation').count(), 0, 'newer unrelated activity never becomes the selected outcome');
       assert.deepEqual(writes.map(write => write.method), ['rebalance', 'executePlan']);
       assert.deepEqual(writes[1].input, { planId }, 'execute exactly the reviewed saved plan');
+      await expect(page.getByRole('complementary', { name: 'Walkthrough guidance' })).toContainText(`Selected plan: ${planId}`);
       assert.equal(await follow.getAttribute('href'), `/a/treasury/activity#operation-${operationId}`);
       await follow.click();
       await page.locator(`#operation-${operationId}`).waitFor();
@@ -201,7 +227,7 @@ function overview(kind, state) {
     }
 
     {
-      const { page, context, writes, errors, state } = await open('/a/payables/demo', { allowPay: true });
+      const { page, context, writes, errors, state } = await open('/a/payables/demos/payables', { allowPay: true });
       const reviewButton = page.getByRole('button', { name: 'Review payment', exact: true });
       await expect(reviewButton).toBeEnabled();
       await page.getByRole('heading', { name: 'Request a real payment', exact: true }).waitFor();
@@ -223,7 +249,8 @@ function overview(kind, state) {
       await follow.waitFor();
       await page.getByRole('heading', { name: 'Your payment', exact: true }).waitFor();
       await page.getByRole('link', { name: 'Link to this payment', exact: true }).waitFor();
-      assert.ok(page.url().endsWith('/demo'), 'the returned payment is followed inline');
+      assert.ok(page.url().endsWith('/demos/payables'), 'the returned payment is followed inline');
+      await expect(page.getByRole('complementary', { name: 'Walkthrough guidance' })).toContainText(`Selected payment: ${paymentId}`);
       assert.deepEqual(writes, [{ method: 'pay', input: { ...payment, expectedPolicy: { revision: 1, digest } } }]);
       assert.equal(await follow.getAttribute('href'), `/a/payables/follow/payment?payment=${paymentId}`);
       await follow.click();

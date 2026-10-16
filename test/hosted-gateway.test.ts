@@ -1,15 +1,24 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { createServer, type Server } from "node:http";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { createServer, request, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { supplierEnvironment, supplierCookie } from "../src/gateway/hosted-supplier.js";
+import { demoSession } from "../src/gateway/demo-hosts.js";
 import { sessionToken } from "../src/signin.js";
 
+const localFetch = (url: string, init: { method?: string; headers?: Record<string, string>; body?: string } = {}) => new Promise<Response>((resolve, reject) => {
+  const req = request(new URL(url), init, res => {
+    const chunks: Buffer[] = [];
+    res.on("data", chunk => chunks.push(chunk)).on("end", () => resolve(new Response(Buffer.concat(chunks), { status: res.statusCode! })));
+  });
+  req.on("error", reject); req.end(init.body);
+});
 const listen = (server: Server) => new Promise<number>(resolve => server.listen(0, "127.0.0.1", () => resolve((server.address() as AddressInfo).port)));
-test("hosted setup admits a new wallet, isolates its real child, and recovers its reservation after gateway restart", { timeout: 60_000 }, async t => {
+for (const sharedHosts of [false, true]) test(`${sharedHosts ? "shared hosts" : "legacy host"}: hosted setup admits a new wallet, isolates its real child, and recovers its reservation after gateway restart`, { timeout: 60_000 }, async t => {
   const root = process.cwd();
   const dir = mkdtempSync(join(tmpdir(), "hosted-gateway-"));
   const secret = "offline-self-service-session-secret-123456789";
@@ -29,6 +38,11 @@ test("hosted setup admits a new wallet, isolates its real child, and recovers it
   const oldPort = await listen(old);
   const probe = createServer(); const port = await listen(probe); await new Promise(resolve => probe.close(resolve));
   writeFileSync(join(dir, "dashboard.json"), JSON.stringify({ host: "fixture.test", selfService: true, walkthroughs: true,
+    ...(sharedHosts && { hosts: {
+      "fixture.test": { demo: "showcase", agents: ["existing"], hostedAreas: ["treasury", "payables"] },
+      "payables.test": { demo: "payables", agents: [], hostedAreas: ["payables"] },
+      "invoices.test": { demo: "invoices", agents: [], hostedAreas: ["payables"] },
+    } }),
     agents: [{ name: "existing", owner: "existing.near", port: oldPort }] }));
   let child: ChildProcess;
   let diagnostics = "";
@@ -46,8 +60,8 @@ test("hosted setup admits a new wallet, isolates its real child, and recovers it
       child.once("exit", code => { clearTimeout(timer); reject(new Error(`Gateway exited ${code}`)); });
     });
   };
-  const call = (path: string, account?: string, body?: unknown, origin?: string) => fetch(`http://127.0.0.1:${port}${path}`, {
-    method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", ...(account && { cookie: `dao_session=${sessionToken(account, secret)}` }), ...(origin && { origin }) },
+  const call = (path: string, account?: string, body?: unknown, origin?: string, host = "fixture.test") => localFetch(`http://127.0.0.1:${port}${path}`, {
+    method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", ...(sharedHosts && { host }), ...(account && { cookie: sharedHosts ? demoSession(secret, host).open(account).split(";")[0]! : `dao_session=${sessionToken(account, secret)}` }), ...(origin && { origin }) },
     ...(body !== undefined && { body: JSON.stringify(body) }),
   });
   await start();
@@ -96,6 +110,56 @@ test("hosted setup admits a new wallet, isolates its real child, and recovers it
   assert.equal(daoSetup?.dao.id, daoInput.owner);
   assert.equal(daoSetup?.dao.owner.account_id, "0".repeat(64));
   assert.equal(daoSetup?.dao.funded, false, "unfunded DAO owner account remains an explicit prerequisite");
-  await stop(); await start();
+  if (sharedHosts) {
+    assert.equal((await call("/gw/agents", "alice.near", input, undefined, "payables.test")).status, 403);
+    const paymentHost = await (await call("/gw/me", "alice.near", undefined, undefined, "payables.test")).json();
+    assert.equal(paymentHost.viewer.access[name], undefined, "Treasury instance stays outside the payment host");
+    assert.ok(paymentHost.viewer.access[daoName], "the same owner-created payout instance is available on its assigned hosts");
+    assert.deepEqual(await (await call("/gw/agents", "alice.near", daoInput, undefined, "payables.test")).json(), { name: daoName });
+    assert.deepEqual((await (await call("/gw/me", "bob.near", undefined, undefined, "payables.test")).json()).agents, []);
+  }
+  let walletPayout: string | undefined;
+  if (sharedHosts) {
+    assert.equal((await call(`/i/${daoName}/`, undefined, undefined, undefined, "invoices.test")).status, 503, "uninitialized payout cannot serve invoices");
+    const own = await call("/gw/agents", "alice.near", { owner: "alice.near", kind: "wallet", area: "payables" });
+    assert.equal(own.status, 200); walletPayout = (await own.json()).name;
+  }
+  await stop();
+  if (sharedHosts) {
+    // Offline-created identities: no provider creation or owner action is submitted by this test.
+    for (const [instance, id] of [[daoName, "a".repeat(64)], [walletPayout!, "b".repeat(64)]]) {
+      const file = join(dir, ".hosted", `${instance}.env`);
+      writeFileSync(file, readFileSync(file, "utf8") + `AGENT_ID=${id}\n`);
+    }
+  }
+  await start();
+  if (sharedHosts) {
+    for (const instance of [daoName, walletPayout!]) {
+      let page;
+      for (let i = 0; i < 100; i++) {
+        page = await call(`/i/${instance}/?workOrder=exact`, undefined, undefined, undefined, "invoices.test");
+        if (page.status === 200) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      assert.equal(page?.status, 200, diagnostics);
+      assert.match(await page!.text(), new RegExp(`/i/${instance}/invoice-browser.js`));
+      const unsigned = await call(`/i/${instance}/api/session`, undefined, undefined, undefined, "invoices.test");
+      assert.deepEqual(await unsigned.json(), { account: null, agreed: false });
+      assert.equal((await call(`/i/${instance}/api/work-orders`, undefined, undefined, undefined, "invoices.test")).status, 401);
+      assert.equal((await call(`/i/${instance}/internal/agreements`, undefined, undefined, undefined, "invoices.test")).status, 404);
+    }
+    const env = supplierEnvironment({ name: daoName, owner: daoInput.owner, kind: "dao", area: "payables", port: 9000, executor: true, envFile: "unused" }, "invoices.test", secret);
+    const cookie = `${supplierCookie(daoName)}=${sessionToken("supplier.near", env.INVOICES_SESSION_SECRET!)}`;
+    const read = (instance: string) => localFetch(`http://127.0.0.1:${port}/i/${instance}/api/work-orders`, { headers: { host: "invoices.test", cookie } });
+    assert.deepEqual(await (await read(daoName)).json(), { orders: [] });
+    assert.equal((await read(walletPayout!)).status, 401, "supplier sessions cannot cross owner instances");
+    const renamed = cookie.replace(supplierCookie(daoName), supplierCookie(walletPayout!));
+    const copied = await localFetch(`http://127.0.0.1:${port}/i/${walletPayout!}/api/work-orders`, { headers: { host: "invoices.test", cookie: renamed } });
+    assert.equal(copied.status, 401, "renaming another instance's cookie cannot bypass its distinct signing key");
+    const challenge = await call(`/i/${daoName}/api/signin/challenge`, undefined, {}, "https://invoices.test", "invoices.test");
+    assert.equal(challenge.status, 200);
+    assert.equal((await challenge.json()).recipient, "invoices.test");
+    assert.equal((await call(`/i/own-${"f".repeat(24)}/`, undefined, undefined, undefined, "invoices.test")).status, 404);
+  }
   assert.deepEqual(await (await call("/gw/agents", "alice.near", input)).json(), { name });
 });

@@ -8,7 +8,7 @@ import { signChallenge, signOutMember } from "../features/owner/wallet";
 
 /** An agent behind the gateway and the account it answers to; `dao` when that account is a DAO, signing by proposal. */
 export type GatewayAgent = { name: string; owner: string; dao: boolean; area?: Area; invoices?: string | null };
-export type Gateway = { agents: GatewayAgent[]; invoices: string | null; viewer: GatewayViewer | null; walkthroughs?: boolean; selfService?: boolean };
+export type Gateway = { demo?: "showcase" | "payables" | "treasury" | "invoices"; agents: GatewayAgent[]; invoices: string | null; viewer: GatewayViewer | null; walkthroughs?: boolean; selfService?: boolean; setupAreas?: Area[] };
 
 /** The agents' owners, each once, in order. Signed out, the gateway lists only DAOs' agents, so these are DAOs. */
 export const ownersOf = (agents: GatewayAgent[]) => [...new Set(agents.map((a) => a.owner))];

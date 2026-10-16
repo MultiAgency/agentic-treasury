@@ -77,7 +77,7 @@ const { budget, setup, overview } = workspaceEvidence({});
       assert.equal(await page.getByRole('link', { name: /^Open (Portfolio|Payables)$/ }).count(), 0);
       await openWorkspaceNavigation(page);
       assert.equal(await nav().getByRole('link', { name: 'Home', exact: true }).getAttribute('aria-current'), 'page');
-      assert.deepEqual(await nav().getByRole('link').allTextContents(), ['Home', 'Payables', 'Portfolio', 'Activity']);
+      assert.deepEqual(await nav().getByRole('link').allTextContents(), ['Home', 'Demos', 'Payables', 'Portfolio', 'Activity']);
       await openWorkspaceNavigation(page);
       await nav().getByRole('link', { name: 'Payables', exact: true }).click();
       await page.getByRole('heading', { name: 'Payables · Payments', exact: true }).waitFor();

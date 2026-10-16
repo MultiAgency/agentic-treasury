@@ -46,11 +46,11 @@ async function fileInvoice(browser, root) {
     await page.getByLabel('Amount (USDC)').fill('1.25');
     await page.getByLabel("What's it for? (optional)").fill('Synthetic work');
     await page.getByRole('button', { name: 'Send request', exact: true }).click();
-    await page.getByText(/Waiting for the DAO to agree/).waitFor();
+    await page.getByText(/Waiting for the owner to agree/).waitFor();
     const original = writes.find(w => w.path === '/api/invoices').body.submission;
     const refresh = () => page.getByRole('button', { name: 'Check invoice status again' }).click();
     agreements[0].status = 'proposed'; await refresh();
-    await page.getByText(/DAO still needs to approve the policy/).waitFor();
+    await page.getByText(/owner still needs to approve the policy/).waitFor();
     assert.equal(await page.getByRole('button', { name: 'File this invoice' }).count(), 0);
     agreements[0].status = 'agreed'; agreed = true; await refresh();
     await page.getByRole('button', { name: 'File this invoice' }).click();

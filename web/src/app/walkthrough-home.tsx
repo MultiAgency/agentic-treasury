@@ -10,7 +10,8 @@ import { areaName } from "./workspace";
 /** Reserve a private setup first; the existing onboarding asks for the actual owner signature. */
 export function WalkthroughHome({ gateway }: { gateway: Gateway }) {
   const [kind, setKind] = useState<"wallet" | "dao">("wallet");
-  const [area, setArea] = useState<"treasury" | "payables">("treasury");
+  const setupAreas = gateway.setupAreas ?? ["treasury", "payables"];
+  const [area, setArea] = useState<"treasury" | "payables">(setupAreas[0] ?? "payables");
   const [daoId, setDaoId] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -36,7 +37,7 @@ export function WalkthroughHome({ gateway }: { gateway: Gateway }) {
       // The executor must answer ownership checks before opening its private setup.
       for (let attempt = 0; attempt < 15; attempt++) {
         const session = await loadGateway();
-        if (session?.viewer?.access[result.name]) { location.assign(`/a/${result.name}/demo`); return; }
+        if (session?.viewer?.access[result.name]) { location.assign(`/a/${result.name}/workspace`); return; }
         await new Promise(resolve => setTimeout(resolve, 1_000));
       }
       throw new Error("Your setup is saved, but its agent is still starting. Continue setup again to reopen the same agent.");
@@ -44,17 +45,27 @@ export function WalkthroughHome({ gateway }: { gateway: Gateway }) {
   };
   return <main id="workspace-main" tabIndex={-1} className="mx-auto flex max-w-3xl flex-col gap-10 px-4 py-8 sm:px-8">
     <header className="flex flex-col gap-3">
-      <h1 className="font-heading text-3xl font-semibold tracking-tight">Your guided walkthroughs</h1>
-      <p className="text-muted-foreground">Choose an agent to make a payment or rebalance its portfolio. These walkthroughs use real funds on mainnet.</p>
+      <h1 className="font-heading text-3xl font-semibold tracking-tight">Your agents</h1>
+      <p className="text-muted-foreground">Run agents for your NEAR wallet or Sputnik DAO. Each agent keeps its own balance, policy and grant. You approve its authority; MultiAgency hosts its executor.</p>
     </header>
-    {gateway.agents.length > 0 && <section aria-label="Your agents">
-      <ul className="divide-y">{gateway.agents.map(agent => <li key={agent.name} className="flex flex-wrap items-center justify-between gap-4 py-5">
-        <div className="flex min-w-0 flex-col gap-1"><h2 className="font-semibold">{areaName(agent)}</h2><p className="break-all text-sm text-muted-foreground">{agent.owner}{agent.dao ? " · DAO through Trezu" : " · NEAR wallet"}</p></div>
-        <Button asChild variant="outline"><a href={`/a/${agent.name}/demo`}>Open walkthrough<span className="sr-only"> for {agent.name}</span></a></Button>
+    {gateway.agents.length > 0 ? <section aria-label="Your agents">
+      <ul className="divide-y">{gateway.agents.map(agent => <li key={agent.name} className="flex flex-col gap-4 py-5">
+        <div className="flex min-w-0 flex-col gap-1"><h2 className="font-semibold">{areaName(agent)} agent</h2><p className="break-all text-sm text-muted-foreground">Owner: {agent.owner}{agent.dao ? " · Sputnik DAO" : " · NEAR wallet"}</p></div>
+        <div className="flex flex-wrap gap-3"><Button asChild><a href={`/a/${agent.name}/workspace`}>Open agent<span className="sr-only"> {agent.name}</span></a></Button>
+          {agent.area === "payables" && <Button asChild variant="outline"><a href={`/a/${agent.name}/payees`}>Agreements and work orders</a></Button>}
+          {agent.area === "treasury" && <Button asChild variant="outline"><a href={`/a/${agent.name}/automations`}>Strategy</a></Button>}
+        </div>
+        <nav aria-label={`${areaName(agent)} agent ${agent.name}`} className="flex flex-wrap gap-x-5 gap-y-2 text-sm">
+          <a className="underline" href={`/a/${agent.name}/policy`}>Policy and grants</a>
+          <a className="underline" href={`/a/${agent.name}/funding`}>Balances and funding</a>
+          <a className="underline" href={`/a/${agent.name}/activity`}>Activity and recovery</a>
+          <a className="underline" href={`/a/${agent.name}/demo`}>Guided walkthrough</a>
+        </nav>
+        <p className="text-sm text-muted-foreground">Open the agent to check its current setup and permissions. Appearing here does not mean it is funded or authorized to act.</p>
       </li>)}</ul>
-    </section>}
+    </section> : <p>You have no agents available on this host yet. {gateway.selfService ? "Choose an owner and task below to start." : "Access depends on the owner’s permissions."}</p>}
     {gateway.selfService && <section aria-labelledby="create-heading" className="flex flex-col gap-6 border-t pt-8">
-      <div className="flex flex-col gap-2"><h2 id="create-heading" className="text-xl font-semibold">Create your own agent</h2><p className="text-sm text-muted-foreground">Choose its owner and walkthrough. Next, review and sign the policy in your wallet or through the DAO’s approval process.</p></div>
+      <div className="flex flex-col gap-2"><h2 id="create-heading" className="text-xl font-semibold">Create your own agent</h2><p className="text-sm text-muted-foreground">Choose its owner and task. Continue an existing setup for that owner and task, or reserve a new one. Then review and sign its policy and grant separately.</p></div>
       <form onSubmit={event => { event.preventDefault(); void create(); }} className="flex flex-col items-start gap-6">
         <FieldGroup>
           <FieldSet disabled={busy || connecting}>
@@ -69,11 +80,11 @@ export function WalkthroughHome({ gateway }: { gateway: Gateway }) {
             </div>}
           </FieldSet>
           <FieldSet disabled={busy || connecting}>
-            <FieldLegend>Walkthrough</FieldLegend>
-            <ToggleGroup type="single" variant="outline" value={area} onValueChange={value => { if (value === "treasury" || value === "payables") setArea(value); }} aria-label="Walkthrough" className="flex-wrap">
-              <ToggleGroupItem value="treasury">Portfolio</ToggleGroupItem><ToggleGroupItem value="payables">Payables</ToggleGroupItem>
+            <FieldLegend>Task</FieldLegend>
+            <ToggleGroup type="single" variant="outline" value={area} onValueChange={value => { if (value === "treasury" || value === "payables") setArea(value); }} aria-label="Task" className="flex-wrap">
+              {setupAreas.includes("treasury") && <ToggleGroupItem value="treasury">Portfolio</ToggleGroupItem>}{setupAreas.includes("payables") && <ToggleGroupItem value="payables">Payables</ToggleGroupItem>}
             </ToggleGroup>
-            <p className="text-sm text-muted-foreground">{area === "treasury" ? "Preview and execute a rebalance within the signed policy and authorized strategy." : "Request a confidential USDC payment to an agreed payee, then follow owner approval and the payment outcome."}</p>
+            <p className="text-sm text-muted-foreground">{area === "treasury" ? "Preview and execute a rebalance within the signed policy and authorized strategy." : "Manage confidential invoices, agreements and owner-approved payouts, or create isolated purchase orders and track their payments."}</p>
           </FieldSet>
         </FieldGroup>
         <ErrorBox error={error} />
@@ -81,6 +92,5 @@ export function WalkthroughHome({ gateway }: { gateway: Gateway }) {
         <p role="status" className="text-sm text-muted-foreground">{busy ? "Preparing your agent’s setup. No money action has been submitted." : "Continuing saves your setup. Creating the agent requires a separate owner signature."}</p>
       </form>
     </section>}
-    {!gateway.selfService && gateway.agents.length === 0 && <p>No agents are available for this account.</p>}
   </main>;
 }

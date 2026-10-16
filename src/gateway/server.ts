@@ -1,3 +1,6 @@
+import { supplierBase, supplierCookie, supplierEnvironment, supplierRoute } from "./hosted-supplier.js";
+import { demoHost, demoCrossSite, demoSession, invoiceRoute, assignedToHost } from "./demo-hosts.js";
+import { forwardInvoice } from "./invoice-proxy.js";
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, request, type ServerResponse } from "node:http";
@@ -33,6 +36,7 @@ const DIST = join(APP, "web/dist");
 // Signs every session: an empty or missing secret would let anyone forge one, so the gateway won't start.
 const SECRET = process.env.SESSION_SECRET ?? "";
 if (SECRET.length < 32) throw new Error("Set SESSION_SECRET to a random value of at least 32 characters before starting the gateway");
+const supplierHost = Object.entries(config.hosts ?? {}).find(([, site]) => site.demo === "invoices")?.[0];
 const session = sessions({ cookie: "dao_session", secret: SECRET, secure: true });
 
 const INTERVENTIONS = join(".evidence", "interventions.jsonl");
@@ -52,10 +56,10 @@ function interventions(since: string) {
 }
 
 /** The signed-in account and what it may do with each agent it may see, or null. */
-async function viewer(req: IncomingMessage) {
-  const account = session.account(req);
+async function viewer(req: IncomingMessage, auth = session, selected = agents) {
+  const account = auth.account(req);
   if (!account) return null;
-  const access = await resolveAccess(account, agents);
+  const access = await resolveAccess(account, selected);
   return config.selfService || Object.keys(access).length ? { account, access } : null;
 }
 
@@ -64,9 +68,9 @@ async function viewer(req: IncomingMessage) {
  * proposal): a signed-in viewer's own, or, signed out, only the DAOs' agents. Those are public already,
  * since every owner action is an on-chain proposal naming the agent; a wallet's agent is not.
  */
-async function agentsView(me: Awaited<ReturnType<typeof viewer>>) {
-  if (!me && config.walkthroughs) return [];
-  const all = await Promise.all(agents.filter(a => !me || me.access[a.name]).map(async (agent) => ({ name: agent.name, owner: agent.owner, ...(agent.area && { area: agent.area }), ...("kind" in agent && { invoices: null }), dao: (await ownerOf(agent.owner)).policy !== null })));
+async function agentsView(me: Awaited<ReturnType<typeof viewer>>, selected = agents) {
+  if (!me && (config.walkthroughs || config.hosts)) return [];
+  const all = await Promise.all(selected.filter(a => !me || me.access[a.name]).map(async (agent) => ({ name: agent.name, owner: agent.owner, ...(agent.area && { area: agent.area }), ...("kind" in agent && { managed: true, invoices: agent.area === "payables" && supplierHost ? `https://${supplierHost}${supplierBase(agent.name)}/` : null }), ...(!("kind" in agent) && agent.invoices !== undefined && { invoices: agent.invoices }), dao: (await ownerOf(agent.owner)).policy !== null })));
   return all.filter((a) => (me ? Boolean(me.access[a.name]) : a.dao));
 }
 
@@ -76,11 +80,20 @@ function forward(req: IncomingMessage, res: ServerResponse, agent: AgentEntry, p
   delete headers.origin;
   delete headers.cookie;
   const upstream = request({ host: "127.0.0.1", port: agent.port, path: `/rpc/${path}`, method: req.method, headers }, (answer) => {
-    res.writeHead(answer.statusCode ?? 502, { ...answer.headers,
-      ...(["autopilot/log", "owner/actions", "paymentHistory", "strategy/get"].includes(path) && { "cache-control": "private, no-store" }) });
+    if ((answer.statusCode ?? 500) >= 300 && (answer.statusCode ?? 500) < 400) {
+      answer.resume();
+      return json(res, 502, { error: "Agent backend redirected. Check the original record before retrying." });
+    }
+    res.writeHead(answer.statusCode ?? 502, { ...answer.headers, "cache-control": "private, no-store" });
+    answer.on("error", () => res.destroy());
     answer.pipe(res);
   });
-  upstream.on("error", () => json(res, 502, { error: `The ${agent.name} agent server is not answering` }));
+  upstream.on("error", () => {
+    if (res.headersSent) res.destroy();
+    else json(res, 502, { error: "Agent backend unavailable. A submitted request may have been accepted; check its original record before retrying." });
+  });
+  req.on("aborted", () => upstream.destroy());
+  res.on("close", () => { if (!res.writableFinished) upstream.destroy(); });
   req.pipe(upstream);
 }
 
@@ -100,33 +113,59 @@ createServer(async (req, res) => {
     const url = URL.parse(req.url ?? "/", "http://gateway");
     if (!url) throw new BadRequest("Malformed request.");
     const { pathname } = url;
+    // Health is public and contains no agent records, including on provider probe hosts.
+    if (pathname === "/health" && ["GET", "HEAD"].includes(req.method ?? "")) return json(res, 200, { ok: true });
+    const site = config.hosts ? demoHost(req, config.hosts) : null;
+    if (config.hosts && !site) return json(res, 421, { error: "Unconfigured demo host" });
+    const signingHost = site?.host ?? HOST;
+    const auth = site ? demoSession(SECRET, signingHost) : session;
+    const selected = site ? agents.filter(a => assignedToHost(a, site)) : agents;
+    if (site && demoCrossSite(req, signingHost)) return json(res, 403, { error: "Cross-origin request" });
+    if (pathname.startsWith("/i/")) {
+      const route = site?.demo === "invoices" ? supplierRoute(pathname) : null;
+      const agent = route && selected.find(a => a.name === route.name && "kind" in a && a.area === "payables");
+      if (!route || !agent) return json(res, 404, { error: "Supplier entry not found" });
+      if (route.path === "/" && !["GET", "HEAD"].includes(req.method ?? "")) return json(res, 405, { error: "Use the invoice API" });
+      return forwardInvoice(req, res, `http://127.0.0.1:${agent.port}`, `/supplier${route.path}${url.search}`, request as typeof import("node:https").request, supplierCookie(agent.name));
+    }
+    // Supplier entry and retained work-order identities stay with the existing Payables executor.
+    const intake = invoiceRoute(site?.demo, url, req.method ?? "");
+    if (intake !== null) {
+      if (!config.invoiceUpstream) {
+        if ((pathname === "/" || pathname === "/submit") && ["GET", "HEAD"].includes(req.method ?? ""))
+          return res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }).end('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Supplier invoices · MultiAgency</title><main style="max-width:42rem;margin:4rem auto;padding:1.5rem;font:1.125rem/1.6 system-ui"><h1>Supplier invoices</h1><p>Open the supplier link shared by the owner to submit an invoice or track a purchase-order payment. Each owner has a separate entry.</p></main></html>');
+        return json(res, 503, { error: "Use the supplier link shared by the owner" });
+      }
+      return forwardInvoice(req, res, config.invoiceUpstream, intake);
+    }
     // State-changing requests must come from this site's own pages.
     if (req.method !== "GET" && crossSite(req)) return json(res, 403, { error: "Cross-site request" });
 
     if (pathname === "/health") return json(res, 200, { ok: true });
 
-    if (pathname === "/gw/challenge" && req.method === "GET") return json(res, ...challengeAnswer(HOST, mayChallenge(clientAddress(req))));
+    if (pathname === "/gw/challenge" && req.method === "GET") return json(res, ...challengeAnswer(signingHost, mayChallenge(clientAddress(req))));
     if (pathname === "/gw/session" && req.method === "POST") {
-      const account = await verifySignIn(parseSignIn(await readJson(req)), HOST, chainKeyLookup).catch((error: Error) => error);
+      const account = await verifySignIn(parseSignIn(await readJson(req)), signingHost, chainKeyLookup).catch((error: Error) => error);
       if (account instanceof Error) return json(res, 401, { error: account.message });
-      const access = await resolveAccess(account, agents);
+      const access = await resolveAccess(account, selected);
       if (!config.selfService && !Object.keys(access).length) return json(res, 403, { error: `${account} doesn't own any agent here, nor is a member of a DAO that does` });
-      return json(res, 200, { account, access }, { "set-cookie": session.open(account) });
+      return json(res, 200, { account, access }, { "set-cookie": auth.open(account) });
     }
     if (pathname === "/gw/logout" && req.method === "POST")
-      return json(res, 200, {}, { "set-cookie": session.close() });
+      return json(res, 200, {}, { "set-cookie": auth.close() });
 
     if (pathname === "/gw/me") {
-      const me = await viewer(req);
-      return json(res, 200, { agents: await agentsView(me), invoices: config.invoices ?? null, viewer: me, ...(config.walkthroughs && { walkthroughs: true }), ...(config.selfService && { selfService: true }) });
+      const me = await viewer(req, auth, selected);
+      return json(res, 200, { agents: await agentsView(me, selected), invoices: config.invoices ?? null, viewer: me, ...(site && { demo: site.demo, setupAreas: config.selfService ? site.hostedAreas ?? [] : [] }), ...(config.walkthroughs && { walkthroughs: true }), ...(config.selfService && (!site || site.hostedAreas?.length) && { selfService: true }) });
     }
 
     if (pathname === "/gw/agents" && req.method === "POST") {
-      const account = session.account(req);
+      const account = auth.account(req);
       if (!account) return json(res, 401, { error: "Sign in first" });
       if (!config.selfService) return json(res, 403, { error: "New agent setup is disabled on this host" });
       const parsed = setupRequest.safeParse(await readJson(req));
       if (!parsed.success) return json(res, 400, { error: "Choose a valid owner, owner type and area" });
+      if (site && !site.hostedAreas?.includes(parsed.data.area)) return json(res, 403, { error: "This area is not available on this host" });
       try { authorizeSetup(account, parsed.data.kind, await ownerOf(parsed.data.owner)); }
       catch { return json(res, 403, { error: "Owner access could not be verified. Use your own wallet or a DAO where you can propose owner actions." }); }
       const reserved = hosted.reserve(parsed.data);
@@ -136,10 +175,10 @@ createServer(async (req, res) => {
 
     // A DAO's recent signing proposals, for a viewer who may see one of the agents it owns.
     if (pathname === "/gw/proposals") {
-      const me = await viewer(req);
+      const me = await viewer(req, auth, selected);
       if (!me) return json(res, 401, { error: "Sign in first", access: "session" });
       const dao = url.searchParams.get("dao") ?? "";
-      const owned = agents.filter((a) => a.owner === dao && me.access[a.name]);
+      const owned = selected.filter((a) => a.owner === dao && me.access[a.name]);
       if (!owned.length) return json(res, 403, { error: `No agent here you may see is owned by ${dao || "that account"}`, access: "procedure" });
       if (!(await ownerOf(dao)).policy) return json(res, 400, { error: `${dao} is not a DAO` });
       return json(res, 200, await recentSignProposals(dao, owned));
@@ -147,7 +186,7 @@ createServer(async (req, res) => {
 
     // Intervention history, including old operator records, for agents this viewer may execute or manage.
     if (pathname === "/gw/interventions") {
-      const me = await viewer(req);
+      const me = await viewer(req, auth, selected);
       const operated = new Set(Object.entries(me?.access ?? {}).filter(([, a]) => a.canExecute || a.canManage).map(([agent]) => agent));
       if (!operated.size) return json(res, me ? 403 : 401, { error: "Execution or management permission required", access: me ? "procedure" : "session" });
       const { calls, corrupt } = interventions(url.searchParams.get("since") ?? "");
@@ -159,9 +198,9 @@ createServer(async (req, res) => {
 
     const call = pathname.match(/^\/a\/([a-z0-9-]+)\/rpc\/(.+)$/);
     if (call) {
-      const agent = agents.find((a) => a.name === call[1]);
+      const agent = selected.find((a) => a.name === call[1]);
       if (!agent) return json(res, 404, { error: "No such agent" });
-      const account = session.account(req);
+      const account = auth.account(req);
       if (!account) return json(res, 401, { error: "Sign in first", access: "session" });
       const access = await resolveAgentAccess(account, agent);
       if (!access) return json(res, 403, { error: `${account} may not see the ${agent.name} agent`, access: "agent" });
@@ -175,10 +214,13 @@ createServer(async (req, res) => {
           return json(res, 503, { error: "The action could not be recorded, so it was not run" });
         }
       }
-      return forward(req, res, agent, call[2]!);
+      return forward(req, res, agent, `${call[2]!}${url.search}`);
     }
 
-    return serveStatic(res, DIST, pathname.replace(/^\/a\/[a-z0-9-]+/, "") || "/");
+    const scoped = pathname.match(/^\/a\/([a-z0-9-]+)(?:\/|$)/);
+    if (site && scoped && !selected.some(a => a.name === scoped[1])) return json(res, 404, { error: "Agent is not assigned to this demo" });
+    if (site && !["GET", "HEAD"].includes(req.method ?? "")) return json(res, 405, { error: "Not a submission endpoint" });
+    return serveStatic(res, site?.frontendDist ?? DIST, pathname.replace(/^\/a\/[a-z0-9-]+/, "") || "/");
   } catch (error) {
     sendFailure(res, error);
   }
@@ -193,7 +235,7 @@ const children = new Set<ChildProcess>();
 function start(agent: AgentEntry & { envFile: string }, delay = 5_000) {
   const started = Date.now();
   const managed = "kind" in agent ? agent as HostedAgent : undefined;
-  const environment = managed ? hostedEnvironment(managed, process.env) : childEnv(agent);
+  const environment = managed ? { ...hostedEnvironment(managed, process.env), ...supplierEnvironment(managed, supplierHost, SECRET) } : childEnv(agent);
   const child = spawn(join(APP, "node_modules/.bin/tsx"), [...(managed ? [] : ["--env-file-if-exists=.env"]), join(APP, "src/server.ts")], {
     env: environment,
     stdio: ["ignore", "inherit", "inherit"],

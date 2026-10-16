@@ -31,13 +31,14 @@ export const WORDS: Record<Status, [string, "" | "ok" | "warn"]> = {
 
 /** What the page says for each agreement status; a filed one shows as its invoice instead. */
 export const AGREEMENT_WORDS: Record<Exclude<AgreementStatus, "filed">, string> = {
-  requested: "Waiting for the DAO to agree to pay you. Nothing is paid until it does and you file the invoice.",
-  proposed: "The terms are saved; the DAO still needs to approve the policy before you can file.",
+  requested: "Waiting for the owner to agree to pay you. Nothing is paid until it does and you file the invoice.",
+  proposed: "The terms are saved; the owner still needs to approve the policy before you can file.",
   agreed: "Agreed. File the invoice to be paid.",
-  declined: "The DAO declined this request.",
+  declined: "The owner declined this request.",
 };
 
-export function invoicePage(title: string) {
+export function invoicePage(title: string, base = "") {
+  if (base && !/^\/i\/own-[a-f0-9]{24}$/.test(base)) throw new Error("Invalid supplier entry base");
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escape(title)}</title>
@@ -82,7 +83,7 @@ ul.items{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}u
 <section class="card" id="step-invoice" hidden>
 <div class="row"><span>Signed in as <code id="account"></code></span><span class="chip" id="agreed-chip"></span><button class="link" id="signout">Sign out</button></div>
 <h2 id="ordinary-invoice-title">New invoice or agreement request</h2>
-<p id="not-agreed" class="notice" hidden>The DAO hasn't agreed to pay this account yet. Submitting sends it a request; you're paid only after it agrees and you file the invoice.</p>
+<p id="not-agreed" class="notice" hidden>The owner hasn't agreed to pay this account yet. Submitting sends it a request; you're paid only after it agrees and you file the invoice.</p>
 <section id="agreements-card" hidden><h2>Your agreements</h2><ul class="items" id="agreements"></ul></section>
 <label>Amount (USDC)<input id="amount" inputmode="decimal" autocomplete="off" placeholder="250"></label>
 <label>What's it for? (optional)<input id="note" maxlength="200" autocomplete="off" placeholder="October design work"></label>
@@ -94,7 +95,7 @@ ul.items{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}u
 <button id="refresh" hidden>Check invoice status again</button>
 <section class="card" id="list" hidden><h2>Your invoices</h2><ul class="items" id="invoices"></ul><p id="none" hidden>None yet.</p></section>
 <script type="module">
-import { mountInvoicePage } from "/invoice-browser.js";
+import { mountInvoicePage } from "${base}/invoice-browser.js";
 import { NearConnector } from "https://cdn.jsdelivr.net/npm/@fastnear/near-connect@0.14.1/+esm";
 // The wallet list is pinned to one commit of near-connect's manifest, not its moving main branch.
 const connector = new NearConnector({ network: "mainnet", features: { signMessage: true },

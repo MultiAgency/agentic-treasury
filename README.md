@@ -1,4 +1,17 @@
-# Agentic Treasury
+# MultiAgency shared infrastructure
+
+This repository provides shared owner onboarding, isolated agent execution, host-bound access,
+and supplier intake for MultiAgency prototypes. Regular NEAR wallet owners and authorized Sputnik
+DAO members can reserve their own Treasury or Payables setup; owner policy and grant signatures
+remain separate. The public showcase reads no private records.
+
+The [shared frontend integration](docs/shared-frontend-integration.md) keeps Proto as the static
+three-idea showcase and serves independently built Treasury and Payables frontends. Invoices is
+Payables' supplier-facing entry. The 2026-10-16 UTC [release record](docs/proto-release-execution.md)
+identifies the deployed artifact and verified sign-in, private access and routing boundaries.
+Agents retain separate balances, authority and executors. [Source ownership and scope](docs/shared-backend-scope.md)
+describe how this integration relates to the sibling Treasury and Payables directories.
+
 
 An AI agent manages a treasury on [NEAR Intents](https://near.org/intents) through the
 [NEAR Intents Agent API](https://api.agentsonintents.com/llms.txt), inside a policy its owner signed.
@@ -6,7 +19,8 @@ The owner can be a person's wallet or a Sputnik DAO, such as a [Trezu](https://t
 
 > Runs on NEAR mainnet with real funds. Use a low-value account and small amounts.
 
-Two areas, each one agent owned by the same DAO, `agentic.sputnik-dao.near`. Each runs a brief from
+The initial agency experiment has two areas, each with its own agent owned by
+`agentic.sputnik-dao.near`. Other owners reserve separate instances. Each area runs a brief from
 the Agent Connect catalog and plans more:
 
 | Area | What it shows | Details |
@@ -65,15 +79,18 @@ The command line has only what the dashboard doesn't: owner actions signed with 
 
 ## Hosted demo
 
-Two pages run on Railway. Signing in with a NEAR wallet signs a message, never a transaction.
+Four public entry points share Railway routing. Signing in with a NEAR wallet signs a message, never a transaction.
 
 - **Dashboard**, https://proto.multiagency.ai: the existing treasury executor and payout approve-only instance.
-  The prepared deployment configuration selects a sign-in-only public entry and real-funds guided
-  walkthroughs after sign-in. This change has not been deployed or observed on mainnet.
-- **Invoices**, https://invoices.multiagency.ai: the existing payout executor, where its payees request
-  agreements, file invoices and follow their existing payment identities.
+  The public showcase links the three ideas; owner workspaces and guides require sign-in.
+- **Treasury**, https://treasury.multiagency.ai: the independent Treasury frontend using the shared gateway.
+- **Payables**, https://payables.multiagency.ai: the independent Payables frontend using the shared gateway.
+- **Invoices**, https://invoices.multiagency.ai: supplier routing to the existing payout executor,
+  where payees request agreements, file invoices and follow their existing payment identities.
+  Hosted sign-in, retained private access and supplier page routing were checked in the
+  [2026-10-16 UTC release](docs/proto-release-execution.md); no money action was performed.
 
-With `walkthroughs: true`, the signed-in entry is **Your guided walkthroughs**. Choose an existing
+With `walkthroughs: true` or `selfService: true`, the signed-in entry is **Your agents**. Choose an existing
 agent or **Create your own agent**, select Portfolio or Payables, and continue setup. A regular NEAR
 wallet owns its own agent. For a DAO, sign in with a member's wallet, then select the DAO through
 Trezu; the gateway verifies membership and permission to propose owner actions. Owner signatures,
@@ -85,16 +102,17 @@ that setup. Each instance retains its own settings, grant, lease and records; re
 sends nothing to the provider. The agent's policy is still created through the existing owner-intent
 flow. Provisioning and ownership isolation are tested offline, not mainnet-observed.
 
-**Open walkthrough** leads directly to the real rebalance or payment controls. The guide summarizes
+**Open agent** opens its task workspace at `/a/<instance>/workspace`, or resumes incomplete setup.
+Policy and grants, funding, activity and guided walkthroughs have separate agent-scoped links.
+The **Guided walkthrough** link opens the real rebalance or payment controls. The guide summarizes
 prerequisite observations and follows the exact confirmed plan or returned payment. Funding,
 policy, grants, agreements and Activity remain linked where needed. Unknown outcomes remain
 unresolved; approval does not establish settlement. Opening or reloading a guide submits nothing.
-New Payables agents use manual payments; no supplier invoice intake is provisioned for them. The
-existing approve-only payout agent links to a separate **Invoice demo** at
-https://invoices.multiagency.ai. Payees sign in there to request agreements, file invoices and
-follow payment status. Owners review agreements and approve held payouts in the signed-in
-Payables walkthrough at proto.multiagency.ai. The invoice demo retains its existing payout executor;
-new self-service agents are not connected to it. This presentation change is prepared locally.
+When a supplier host is configured, owner-created Payables agents receive an isolated supplier entry
+at `/i/<instance>/` after provider agent creation. The existing approve-only payout agent retains its
+separate invoice executor. New owner-created agents never share that executor’s state or grant.
+The shared routing is deployed. New-owner provisioning and scoped supplier journeys retain
+offline coverage only; the release did not create an agent or issue a grant.
 
 There are no public read-only walkthroughs or requirement cards at the entry. Legacy example hashes
 also show sign-in when signed out. Requirement evidence remains in the canonical area documentation.
@@ -208,6 +226,14 @@ of maintaining separate requirement statuses.
 
 ## Not done yet
 
+- General live AG-UI agent orchestration is not implemented. Short-guide guidance is deterministic
+  UI observation; the existing Treasury run recordings remain separate evidence.
+
+- Multi-owner shared-host onboarding and scoped supplier journeys remain offline-tested only. Complete hosted
+  owner creation, grant issuance and payments for arbitrary wallet and DAO owners have not been
+  observed on mainnet through this build. Supplier conversion and forwarding remain unimplemented.
+
+
 Self-service hosted creation is offline-tested only. Mainnet wallet and Trezu setup, capacity under load, and invoice intake for newly created Payables agents have not been demonstrated. Reservations are bounded to 32 instances; the cap is not abuse-resistant admission or distributed execution.
 
 Work orders have no mainnet lifecycle evidence yet. Partial invoices, amendments, automatic residual-fund
@@ -294,3 +320,16 @@ as proof that a replacement payment is safe. See [recovery guidance](DEMO.md#the
   there needs a full-access key.
 - The autopilot (off by default) hasn't yet run unattended for days. Outside the dashboard, its warnings
   reach the owner only through the optional Telegram notices (Notifications, above).
+
+The signed-in `/demos` collection offers short guides for all three workflows. `/treasury`,
+`/payables` and `/invoices` select an accessible agent for the corresponding complete walkthrough.
+After selection, `/a/<instance>/demos/<workflow>` and `/a/<instance>/walkthrough/<workflow>` use the
+same private action controls. Existing `/a/<instance>/demo` links remain valid. Full-app links point
+to the dedicated product domains. Opening, switching versions or reloading submits nothing.
+
+Short guides consume validated AG-UI CUSTOM events projected from UI observations. Guidance is
+currently deterministic, not LLM-directed, and is not an executor run log or settlement evidence.
+Exact selected plan/payment identities remain in the existing outcome views; no selection is
+inferred after reload. Work-order guides use the existing per-order controls and retained identities.
+Live AG-UI agent orchestration across all three workflows remains unimplemented. Treasury run
+recordings retain their separate evidence-backed AG-UI format.

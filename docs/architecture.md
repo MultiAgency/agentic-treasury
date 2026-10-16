@@ -528,3 +528,27 @@ agent chooser, guided walkthrough and Activity/recovery links. Funding, grants, 
 agreements are supporting routes linked from the guide. New Payables agents expose no inherited
 invoice-service link. Configuration defaults preserve existing hosts; `deploy/dashboard.json`
 selects both options for the prepared proto deployment. Nothing here establishes a mainnet observation.
+
+## Shared MultiAgency services
+
+The 2026-10-16 UTC [release record](proto-release-execution.md) identifies the deployed
+runtime and bounded hosted observations. New-owner and scoped supplier lifecycles remain
+offline-tested; deployment alone does not establish those flows on mainnet.
+
+The gateway is shared infrastructure for Treasury and both Payables workflows. `config.ts` assigns
+static agents and allowed hosted areas to each domain; `demo-hosts.ts` selects actual authority,
+binds sessions and rejects cross-origin access. `HostedAgents` reserves one owner/area instance,
+starts it once, and reuses it across hosts. Existing wallet ownership and DAO permissions remain
+mandatory on each private procedure.
+
+`hosted-supplier.ts` derives each registered Payables instance’s supplier URL and session settings.
+The supplier gateway proxies `/i/<instance>/` to `/supplier/` on that instance’s loopback server.
+`server.ts` activates the existing executor lease before loading invoice HTTP, refusing unconfigured
+instances. This is the same process and dispatch path as owner-triggered payouts. The default
+supplier root still proxies once to the original invoice service when explicitly configured.
+Neither route retries or follows redirects. Keys, draft namespaces and records remain isolated.
+
+New-instance templates do not carry the agency’s agents, grants or intake upstream. The populated
+rollout configuration deliberately retains those original instances. No standalone volume or grant
+is imported; integration and rollout boundaries are in [shared-backend-scope.md](shared-backend-scope.md)
+and [shared-demos-rollout.md](shared-demos-rollout.md).

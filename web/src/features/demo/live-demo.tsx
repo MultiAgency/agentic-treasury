@@ -13,6 +13,7 @@ import { ManualPayment } from "../payables/payees";
 import { Payments } from "../payables/timeline-payment";
 import { Rebalance } from "../portfolio/automations";
 import { useGateway } from "../../app/gateway-context";
+import { Guidance } from "./guidance";
 import { BASE } from "../../shared/client";
 
 // An observation is only a UI hint. Every actual action still goes through existing authorization.
@@ -48,7 +49,7 @@ function DemoActivity({ planId }: { planId: string }) {
 }
 
 /** Private guided actions reuse the area's existing review, submission, and durable outcome views. */
-export function LiveDemo() {
+export function LiveDemo({ short = false, expanded = false }: { short?: boolean; expanded?: boolean } = {}) {
   const { setup, data } = useAgent();
   const gateway = useGateway();
   const manualOnly = gateway?.agents.find(agent => `/a/${agent.name}` === BASE)?.invoices === null;
@@ -161,6 +162,7 @@ export function LiveDemo() {
       <p>You choose and confirm each money action.</p>
       <Link to="/activity" className="underline">Activity and recovery</Link>
     </div>
+    {short && <Guidance agentId={data.agentId} workflow={treasury ? "treasury" : "payables"} blocker={disabledReason} record={planId ? { kind: "plan", id: planId } : paymentId ? { kind: "payment", id: paymentId } : undefined} />}
     <ol className="flex min-w-0 flex-col gap-8">
       <DemoStep number={1} title="Check this agent">
         <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
@@ -175,7 +177,7 @@ export function LiveDemo() {
           <p className="max-w-prose text-muted-foreground">{firstBlocker.detail}</p>
           {firstBlocker.link && <Link to={firstBlocker.link.to} hash={firstBlocker.link.hash} className="underline">{firstBlocker.link.label}</Link>}
         </div>}
-        <Details summary="Agent details and prerequisite checks">
+        <Details summary="Agent details and prerequisite checks" open={expanded}>
         <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
           <div><dt className="text-muted-foreground">Owner</dt><dd className="break-all">{ownerName(setup)}</dd></div>
           <div><dt className="text-muted-foreground">Agent</dt><dd className="break-all">{data.agentId}</dd></div>
@@ -216,7 +218,7 @@ export function LiveDemo() {
           <Card size="sm">
             <h4 className="font-medium">{manualOnly ? "Review and request a payment" : "Invoice demo — payee handoff"}</h4>
             {!manualOnly && <>
-            <p className="max-w-prose text-sm text-muted-foreground">The invoice demo opens separately. Share it with the agreed payee, who signs in there with their own NEAR account and enters the actual amount and terms. Invoices require a policy with confidential transfers and owner approval. Return here to review the recorded payment; owner approval and payment completion are separate steps.</p>
+            <p className="max-w-prose text-sm text-muted-foreground">{short ? "Share the invoice link with the agreed payee. Review its recorded payment here; owner approval is not settlement." : "The invoice demo opens separately. Share it with the agreed payee, who signs in there with their own NEAR account and enters the actual amount and terms. Invoices require a policy with confidential transfers and owner approval. Return here to review the recorded payment; owner approval and payment completion are separate steps."}</p>
             <InvoicePageLink demo />
             </>}
             <Link to="/payees" className="self-start text-sm underline">Set up or review an agreement</Link>

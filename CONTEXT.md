@@ -30,8 +30,9 @@ behavior unverified, and requirements not yet demonstrated.
 _Avoid_: prototype (for an area), use case
 
 **Workspace**:
-The hosted walkthrough mode starts with **Your guided walkthroughs**, agent selection and optional
-self-service setup. It links funding, policy, grants, agreements and recovery from the selected guide.
+The hosted owner entry starts with **Your agents**, agent-scoped task and recovery links, and optional
+self-service setup. Opening an agent resumes incomplete setup or opens its task workspace. Guided walkthroughs remain optional.
+It links funding, policy, grants, agreements and recovery for the selected agent.
 The broader task workspace below remains available on hosts without walkthrough mode.
 The signed-in owner's interface, with a shared Home, Payables and Portfolio sections, and Activity.
 Each area retains its own agent, policy, grant, balance and access permissions. The shared Home
@@ -250,3 +251,42 @@ outside credits or incomplete records.
 A hosted dashboard call classified by the gateway's intervention list, recorded before it runs
 (or not run). The unattended-run report counts them. The existing record format and historical
 classification are retained when dashboard permissions change.
+
+## Shared demo entry points
+
+**Showcase**: `proto.multiagency.ai` introduces all three catalog ideas through static public copy
+and links to their demos. It is not a Treasury redirect. Its root makes no gateway or agent reads.
+
+**Agency Treasury**: The integrated product at `treasury.multiagency.ai`, combining Treasury,
+confidential payables and work orders for the agency. Initial experiments use the existing agents
+owned by `agentic.sputnik-dao.near`. This product scope does not merge agents, balances or authority.
+Catalog idea 02 still means Agentic Treasury Management.
+
+**Demo host**: An explicit gateway assignment of a host to an entry experience and named agents.
+Each host has its own sign-in audience and session key. Host assignment bounds access; the owner’s
+current membership and permissions still determine what each request may do. Payables covers
+ideas 01 and 03: confidential invoice intake, agreements and owner-approved payouts, plus isolated
+purchase orders, supplier invoices and payment tracking. Invoices is the supplier-facing entry
+into Payables, with no separate repository. Both wallet owners and DAO owners retain their approval flows.
+The shared-host implementation was deployed on 2026-10-16 UTC; the bounded hosted
+observations and unverified flows are recorded in docs/proto-release-execution.md.
+
+**Shared MultiAgency infrastructure**: This repository’s gateway, owner setup registry, isolated
+agent processes and supplier HTTP routing, used by all three prototype workflows. A regular NEAR
+wallet owner signs directly. Sputnik DAO members sign in with their own accounts and need the DAO’s
+applicable permissions; the DAO’s proposals and votes authorize its owner actions. The agency DAO
+is an initial experiment, not an admission allowlist.
+
+**Scoped supplier entry**: `/i/<instance>/` on the supplier host routes to one registered Payables
+executor. It has its own supplier session key, cookie name and browser draft namespace. Invoice and
+work-order identities remain scoped to that agent. An unknown instance never falls back to the
+agency’s intake. The unscoped supplier root retains the existing executor when configured; a fresh
+installation instead asks for the owner’s supplier link without exposing an owner directory.
+
+**Short guide / Complete walkthrough**: `/demos` collects the short versions; `/treasury`,
+`/payables` and `/invoices` select an accessible agent for a complete walkthrough. Both lengths
+reuse existing scoped action and recovery controls. A short guide’s AG-UI CUSTOM event is a
+versioned UI observation, explicitly not an executor run, authority or payment settlement.
+The current guide is deterministic; it does not invoke an LLM. A selected plan or payment stays
+exact, and reload never infers a selection from the latest record. Work-order identities remain
+with the existing per-order controls. These are local candidate behaviors, not mainnet observations.

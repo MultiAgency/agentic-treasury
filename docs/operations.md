@@ -1,5 +1,12 @@
 # Operations
 
+For the deployed four-domain integration, start with the [release execution record](proto-release-execution.md)
+and [reviewed release procedure](proto-release-review.md). The earlier
+[shared-demo plan](shared-demos-rollout.md) is historical preparation, not the current deployment recipe.
+Future production changes require their own authorization and must preserve executor assignments
+and all four volumes. No deployment or restart is implied by committing source changes.
+
+
 These instructions describe the repository configuration. Deploys, restarts and money actions are
 performed by the owner. For the product and recorded results, see [README](../README.md).
 

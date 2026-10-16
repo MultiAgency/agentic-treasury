@@ -7,7 +7,7 @@ const { assertResponsive } = require('./fixtures/layout.cjs');
 async function entry(browser, root) {
   {
     const width = 390;
-    for (const kind of ['wallet', 'dao']) {
+    for (const kind of ['wallet', 'dao']) for (const area of ['payables', 'treasury']) {
       const context = await browser.newContext({ viewport: { width, height: 900 } });
       await context.addInitScript(() => {
         if (location.origin !== 'http://frontend.test') return;
@@ -40,10 +40,10 @@ async function entry(browser, root) {
         return route.fulfill({ path: p.startsWith('/static/') ? root + p : root + '/index.html' });
       });
       await page.goto('http://frontend.test/');
-      await page.getByRole('heading', { name: 'Your guided walkthroughs', exact: true }).waitFor();
+      await page.getByRole('heading', { name: 'Your agents', exact: true }).waitFor();
       assert.deepEqual(writes, []);
       assert.equal(await page.getByRole('navigation', { name: 'Workspace', exact: true }).count(), 0);
-      await page.getByRole('radio', { name: 'Payables', exact: true }).click();
+      await page.getByRole('radio', { name: area === 'payables' ? 'Payables' : 'Portfolio', exact: true }).click();
       if (kind === 'dao') {
         await page.getByRole('radio', { name: 'DAO through Trezu', exact: true }).click();
         await expect(page.getByRole('button', { name: 'Continue setup', exact: true })).toBeDisabled();
@@ -54,16 +54,46 @@ async function entry(browser, root) {
       if (process.env.PROTO_BROWSER_ARTIFACTS) await page.screenshot({ path: `/tmp/walkthrough-entry-${kind}-${width}.png`, fullPage: true });
       await page.getByRole('button', { name: 'Continue setup', exact: true }).click();
       await page.getByRole('heading', { name: 'Set up the agent', exact: true }).waitFor();
-      assert.deepEqual(saved, { owner: kind === 'wallet' ? 'alice.near' : 'team.sputnik-dao.near', kind, area: 'payables' });
+      assert.deepEqual(saved, { owner: kind === 'wallet' ? 'alice.near' : 'team.sputnik-dao.near', kind, area });
       assert.equal(writes.length, 1, 'only a reservation, never an owner signature or payment');
       await page.getByText(/Selected owner:/).waitFor();
       await assertResponsive(page, `reserved setup ${kind} ${width}`);
+      assert.ok(new URL(page.url()).pathname.endsWith('/workspace'));
       await page.reload();
       await page.getByRole('heading', { name: 'Set up the agent', exact: true }).waitFor();
       assert.equal(writes.length, 1);
+      await page.goto('http://frontend.test/');
+      await page.getByRole('heading', { name: 'Your agents', exact: true }).waitFor();
+      for (const [label, path] of [['Open agent own-fixture', 'workspace'], ['Policy and grants', 'policy'], ['Balances and funding', 'funding'], ['Guided walkthrough', 'demo']]) {
+        await expect(page.getByRole('link', { name: label, exact: true })).toHaveAttribute('href', `/a/own-fixture/${path}`);
+      }
+      assert.equal(writes.length, 1, 'returning home never provisions or submits');
+      await page.getByRole('link', { name: 'Open agent own-fixture', exact: true }).click();
+      await page.getByRole('heading', { name: 'Set up the agent', exact: true }).waitFor();
+      assert.equal(writes.length, 1, 'opening a saved agent resumes without another reservation');
+      await page.goto('http://frontend.test/demos');
+      await page.getByRole('heading', { name: 'Demos and validation', exact: true }).waitFor();
+      const titles = { treasury: 'Treasury', payables: 'Confidential payables', invoices: 'Purchase orders and invoices' };
+      for (const workflow of ['treasury', 'payables', 'invoices']) {
+        const available = workflow === 'treasury' ? area === 'treasury' : area === 'payables';
+        const shortLink = page.getByRole('link', { name: `Start short guide for ${workflow} with own-fixture`, exact: true });
+        assert.equal(await shortLink.count(), available ? 1 : 0);
+        if (available) await expect(shortLink).toHaveAttribute('href', `/a/own-fixture/demos/${workflow}`);
+        await page.getByRole('link', { name: `Full ${titles[workflow].toLowerCase()} walkthrough`, exact: true }).click();
+        await page.getByRole('heading', { name: `${titles[workflow]} walkthrough`, exact: true }).waitFor();
+        assert.equal(new URL(page.url()).pathname, `/${workflow}`);
+        const fullLink = page.getByRole('link', { name: `Open complete walkthrough for ${workflow} with own-fixture`, exact: true });
+        assert.equal(await fullLink.count(), available ? 1 : 0);
+        if (available) await expect(fullLink).toHaveAttribute('href', `/a/own-fixture/walkthrough/${workflow}`);
+        await page.reload();
+        await page.getByRole('heading', { name: `${titles[workflow]} walkthrough`, exact: true }).waitFor();
+        await page.getByRole('link', { name: 'Back to demos', exact: true }).click();
+        await page.getByRole('heading', { name: 'Demos and validation', exact: true }).waitFor();
+      }
+      assert.equal(writes.length, 1, 'all short and complete entry routes are read-only');
       assert.deepEqual(errors, []);
       await context.close();
-      console.log(`PASS ${kind} ${width}px: selection, reservation, bound onboarding, no money submission and read-only reload`);
+      console.log(`PASS ${kind} ${width}px: ${area} selection, reservation, bound onboarding, no money submission and read-only reload`);
     }
   }
 }

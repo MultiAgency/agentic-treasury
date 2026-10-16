@@ -10,6 +10,7 @@ import { PayeesSection } from "../features/payables/payees";
 import { Funding } from "../features/funding/funding";
 import { PaymentTimeline } from "../features/payables/timeline-payment";
 import { RunTimeline } from "../features/portfolio/timeline-run";
+import { Walkthrough } from "../features/demo/walkthrough";
 import { LiveDemo } from "../features/demo/live-demo";
 import { useGateway } from "./gateway-context";
 
@@ -21,9 +22,16 @@ export const router = createRouter({
   basepath: BASE || "/",
   routeTree: root.addChildren([
     page("/", () => useGateway()?.walkthroughs ? <LiveDemo /> : <Overview />),
+    page("/workspace", Overview),
     page("/steward", Steward),
     page("/automations", Automations),
     page("/demo", LiveDemo),
+    page("/demos/treasury", () => <Walkthrough workflow="treasury" short />),
+    page("/demos/payables", () => <Walkthrough workflow="payables" short />),
+    page("/demos/invoices", () => <Walkthrough workflow="invoices" short />),
+    page("/walkthrough/treasury", () => <Walkthrough workflow="treasury" />),
+    page("/walkthrough/payables", () => <Walkthrough workflow="payables" />),
+    page("/walkthrough/invoices", () => <Walkthrough workflow="invoices" />),
     // A treasury agent's few destinations (the DAO, the payout agent) belong with its funding.
     page("/funding", Funding),
     // The page's first address: old links land on its new one.

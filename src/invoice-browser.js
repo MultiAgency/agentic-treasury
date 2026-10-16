@@ -15,6 +15,9 @@
  * @param {typeof import("./invoice-page.js").AGREEMENT_WORDS} AGREEMENT_WORDS
  */
 export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
+  const base = location.pathname.match(/^\/i\/own-[a-f0-9]{24}(?=\/|$)/)?.[0] ?? "";
+  /** @param {string} account */
+  const draftStorageKey = account => "invoice-draft:" + (base ? base + ":" : "") + account;
   /** @template {keyof Elements} K @param {K} id @returns {Elements[K]} */
   const $ = (id) => {
     const element = document.getElementById(id);
@@ -31,7 +34,7 @@ export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
   async function call(method, path, payload) {
     const session = sessionVersion;
     $("error").hidden = true;
-    const res = await fetch(path, { method, headers: { "content-type": "application/json" }, body: payload === undefined ? undefined : JSON.stringify(payload) });
+    const res = await fetch(base + path, { method, headers: { "content-type": "application/json" }, body: payload === undefined ? undefined : JSON.stringify(payload) });
     if ((res.status === 401 || res.status === 403) && (path.startsWith("/api/invoices") || path.startsWith("/api/work-orders"))) {
       if (session === sessionVersion) expireSession();
       throw new Error("Sign in again to review the existing invoice.");
@@ -77,7 +80,7 @@ export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
     eligibility(agreed);
     if (!account) $("signin").focus();
     if (account) {
-      const saved = JSON.parse(localStorage.getItem("invoice-draft:" + account) || "null");
+      const saved = JSON.parse(localStorage.getItem(draftStorageKey(account)) || "null");
       submission = saved?.submission || crypto.randomUUID();
       retainedDraft.hidden = !saved?.submission;
       $("amount").value = saved?.amount || ""; $("note").value = saved?.note || "";
@@ -175,7 +178,7 @@ export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
     clearTimeout(timer);
     $("refresh").hidden = false;
     try {
-    const res = await fetch("/api/invoices");
+    const res = await fetch(base + "/api/invoices");
     if (version !== refreshVersion) return;
     if (res.status === 401 || res.status === 403) { expireSession(); return; }
     if (!res.ok) throw new Error("Invoice status could not be checked. Showing the last loaded records.");
@@ -186,7 +189,7 @@ export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
     $("agreements-card").hidden = agreements.length === 0;
     syncRows($("agreements"), agreements, (agreement) => {
       const terms = agreement.terms ? "up to " + usdc(agreement.terms.maxAmount) + " until " + new Date(agreement.terms.until).toLocaleDateString() : usdc(agreement.amount);
-      const title = [agreement.origin === "owner" ? "Offered by the DAO" : "Requested", terms, agreement.note].filter(Boolean).join(" · ");
+      const title = [agreement.origin === "owner" ? "Offered by the owner" : "Requested", terms, agreement.note].filter(Boolean).join(" · ");
       const tone = agreement.status === "declined" ? "warn" : agreement.status === "agreed" ? "ok" : "";
       const item = row(title, AGREEMENT_WORDS[agreement.status] || agreement.status, tone, agreement.at);
       if (agreement.status === "agreed") {
@@ -267,7 +270,7 @@ export async function mountInvoicePage(connector, WORDS, AGREEMENT_WORDS) {
     $("submit").textContent = "Submitting… this can take up to a minute";
     try {
       const draft = { amount: $("amount").value, note: $("note").value, submission };
-      const draftKey = "invoice-draft:" + $("account").textContent;
+      const draftKey = draftStorageKey($("account").textContent || "");
       localStorage.setItem(draftKey, JSON.stringify(draft));
       retainedDraft.hidden = false;
       const result = await call("POST", "/api/invoices", draft);
