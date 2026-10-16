@@ -638,3 +638,24 @@ one on that instance. The 32-instance cap bounds local reservations; it does not
 under load, fair admission or protection against many wallets exhausting that cap. Mainnet creation
 through both owner types, and supplier invoice intake for newly reserved Payables agents, remain
 unverified or unimplemented respectively. See `docs/operations.md` for preservation and host limits.
+
+
+## Shared machine access candidate
+
+The local shared access implementation is documented in [Agent access](agent-access.md). It delegates
+independent read, chosen-swap/rebalance preparation, saved-plan execution and sweep permissions to a host-, owner-
+and provider-agent-bound credential. DAO machine issuance and use remain refused; existing records
+can be restricted by a DAO member with freshly verified management rights. The existing execution
+path is unchanged. Credentials have no separate spending budget; the scheduled autopilot per-run
+ceiling does not limit external saved-plan execution.
+
+This is offline-tested, not deployed or mainnet-observed. Chosen-swap `externalPlan` quotes and saves
+exact ordered swaps, retaining policy/strategy bindings and cost limits; execution uses the existing
+guarded saved-plan path. The Treasury skill/client uses shared authorization with no rebalance fallback.
+There is no verified DAO delegation approval, OAuth/MCP interface, or distributed revocation/fencing. Local
+simulated-provider tests cover client process termination after a first success and lost swap responses:
+no duplicate submissions occur, and unresolved outcomes block new sends. Killing the client does not
+cancel an admitted server execution. These tests do not establish real-provider crash/settlement
+behavior. Restoring old credential state can restore revoked authority:
+retain the latest `.machine-auth/` state across rollback, or disable machine routing until credentials
+are revoked or expired. Provider concurrency guarantees remain unverified.

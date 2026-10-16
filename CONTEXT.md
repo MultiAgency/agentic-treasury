@@ -290,3 +290,22 @@ versioned UI observation, explicitly not an executor run, authority or payment s
 The current guide is deterministic; it does not invoke an LLM. A selected plan or payment stays
 exact, and reload never infers a selection from the latest record. Work-order identities remain
 with the existing per-order controls. These are local candidate behaviors, not mainnet observations.
+
+**Machine credential**:
+A private bearer secret issued through Proto's shared owner access screen, delegating independent read,
+plan preparation, saved-plan execution or sweep permissions for a bounded duration. It binds the host,
+configured agent, actual provider agent ID and owner, is stored only as a hash, and can be revoked.
+It is not a provider grant and has no separate spending budget. External saved-plan execution is not
+limited by the scheduled autopilot's per-run ceiling. DAO machine delegation remains unavailable;
+current DAO management rights may inspect or revoke existing access but cannot issue or use it.
+The shared implementation is offline-tested, not deployed or mainnet-observed. See docs/agent-access.md
+for the contract and state preservation.
+
+
+**External plan**:
+A saved plan prepared from an external agent's chosen, ordered swaps. Treasury obtains quotes and
+checks policy, strategy, output floors and aggregate feasibility before saving the whole plan. The
+`externalPlan` procedure requires preparation authority; executing its exact saved ID separately
+requires saved-plan execution authority and uses the existing guarded dispatch path. Allocation-based
+`rebalance` is not a substitute for chosen swaps. The shared integration and Treasury skill/client
+are offline-tested candidates, not deployed or mainnet-observed.

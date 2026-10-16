@@ -19,7 +19,7 @@ export const ownersOf = (agents: GatewayAgent[]) => [...new Set(agents.map((a) =
  * throws: a hosted page must never fall back to the trusted local view on loopback.
  */
 export async function loadGateway(): Promise<Gateway | null> {
-  const response = await fetch("/gw/me");
+  const response = await fetch(/\/access\/?$/.test(location.pathname) ? "/gw/access-session" : "/gw/me");
   if (!response.headers.get("content-type")?.includes("application/json")) {
     if (response.ok) return null;
     // A proxy's error page in front of a gateway that is down, not a local server.

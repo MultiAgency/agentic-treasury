@@ -29,3 +29,5 @@ test
 *.bak
 backups
 dashboard.json
+
+.machine-auth/

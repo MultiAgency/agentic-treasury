@@ -5,10 +5,17 @@ import type { AgentEntry } from "./config.js";
 export const RPC_IDLE_TIMEOUT_MS = 15 * 60_000;
 
 /** Forwards a call to an agent server on loopback, streaming both ways (some procedures stream events). */
-export function forwardRpc(req: IncomingMessage, res: ServerResponse, agent: AgentEntry, path: string, timeoutMs = RPC_IDLE_TIMEOUT_MS) {
-  const headers = { ...req.headers, host: `127.0.0.1:${agent.port}` };
+export function forwardRpc(req: IncomingMessage, res: ServerResponse, agent: AgentEntry, path: string, timeoutMs = RPC_IDLE_TIMEOUT_MS, body?: string) {
+  const headers: import("node:http").OutgoingHttpHeaders = { ...req.headers, host: `127.0.0.1:${agent.port}` };
   delete headers.origin;
   delete headers.cookie;
+  delete headers.authorization;
+  for (const key of Object.keys(headers)) if (key.startsWith("x-gateway")) delete headers[key];
+  if (body !== undefined) {
+    delete headers["transfer-encoding"];
+    headers["content-length"] = String(Buffer.byteLength(body));
+    headers["content-type"] = "application/json";
+  }
   const upstream = request({ host: "127.0.0.1", port: agent.port, path: `/rpc/${path}`, method: req.method, headers }, (answer) => {
     if ((answer.statusCode ?? 500) >= 300 && (answer.statusCode ?? 500) < 400) {
       answer.resume();
@@ -28,5 +35,6 @@ export function forwardRpc(req: IncomingMessage, res: ServerResponse, agent: Age
   upstream.setTimeout(timeoutMs, () => upstream.destroy(new Error("Agent backend timed out")));
   req.on("aborted", () => upstream.destroy());
   res.on("close", () => { if (!res.writableFinished) upstream.destroy(); });
-  req.pipe(upstream);
+  if (body === undefined) req.pipe(upstream);
+  else upstream.end(body);
 }

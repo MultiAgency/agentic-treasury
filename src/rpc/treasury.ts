@@ -9,6 +9,7 @@ import { exportRunLog } from "../run-log-export.js";
 import { agentId, executes, saveEnv } from "../env.js";
 import { steward } from "../llm.js";
 import { executePlan } from "../plans.js";
+import { ExternalPlanInput, prepareExternalPlan } from "../planning/external.js";
 import { ASSETS } from "../policy.js";
 import { MIN_EVERY_MIN, Strategy } from "../strategy-digest.js";
 import { enableSchedule, saveReviewedStrategy, setLegacySchedule, stopSchedule } from "../strategy-controls.js";
@@ -74,6 +75,8 @@ export const treasuryRoutes = {
   },
   /** Previews a rebalance and saves it as a plan; `executePlan` runs it. */
   rebalance: os.handler(() => rebalance()),
+  /** Quotes the caller’s exact swaps and saves the complete plan without submitting funds. */
+  externalPlan: os.input(ExternalPlanInput).handler(({ input }) => prepareExternalPlan(input)),
   sweep: os.input(run).handler(({ input }) => sweep(input)),
   steward: {
     /** The model proposes; the result is a saved plan, and nothing moves. */
@@ -81,5 +84,5 @@ export const treasuryRoutes = {
       .input(z.object({ instruction: z.string().trim().max(2000).optional() }))
       .handler(({ input }) => steward({ instruction: input.instruction || undefined })),
   },
-  /** Executes a saved plan (the steward's or a rebalance's) exactly as previewed, or refuses if anything material changed. */
+  /** Executes a saved plan (including an external agent's chosen swaps) exactly as previewed, or refuses if anything material changed. */
   executePlan: os.input(z.object({ planId: z.uuid() })).handler(({ input }) => executePlan(input.planId)),};

@@ -31,3 +31,5 @@ web/node_modules
 *.bak
 backups
 dashboard.json
+
+.machine-auth/

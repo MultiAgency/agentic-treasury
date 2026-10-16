@@ -53,9 +53,10 @@ export function Workspace({ gateway, activity = false, pathname = location.pathn
       const label = areaName(agent);
       const duplicate = areas.filter(a => areaName(a) === label).length > 1;
       return <div key={agent.name}>
-        {anchor(`/a/${agent.name}/`, duplicate ? `${label} (${agent.name} · ${agent.owner})` : label, selected && path !== "/activity" && path !== "/follow/run")}
+        {anchor(`/a/${agent.name}/`, duplicate ? `${label} (${agent.name} · ${agent.owner})` : label, selected && path !== "/activity" && path !== "/follow/run" && path !== "/access")}
       </div>;
     })}
+    {current?.area === "treasury" && anchor(`${BASE}/access`, "Agent access", path === "/access")}
     {anchor("/#activity", "Activity", !BASE && activity || Boolean(BASE) && (path === "/activity" || path === "/follow/run"))}
   </nav>;
   const identity = <div className="min-w-0"><a href="/" className="font-heading text-lg font-semibold">Agentic Treasury</a><p className="mt-2 break-all text-xs text-muted-foreground">{current?.owner ?? (ownersOf(gateway.agents).join(" · ") || "Workspace")}</p></div>;
@@ -69,6 +70,7 @@ export function Workspace({ gateway, activity = false, pathname = location.pathn
         <a href="/" className="inline-flex min-h-11 items-center underline">Your agents</a>
         <a href="/demos" className="inline-flex min-h-11 items-center underline">Demos</a>
         {current && <a href={`${BASE}/demo`} className="inline-flex min-h-11 items-center underline">Guided walkthrough</a>}
+        {current?.area === "treasury" && <a href={`${BASE}/access`} className="inline-flex min-h-11 items-center underline">Agent access</a>}
         <a href={current ? `${BASE}/activity` : "/#activity"} className="inline-flex min-h-11 items-center underline">Activity and recovery</a>
       </nav>
       {children}

@@ -1,3 +1,5 @@
+import { resolveMachineManagement } from "./machine-authority.js";
+import { machineRoutes } from "./machine-routes.js";
 import { supplierBase, supplierCookie, supplierEnvironment, supplierRoute } from "./hosted-supplier.js";
 import { demoHost, demoCrossSite, demoSession, invoiceRoute, assignedToHost } from "./demo-hosts.js";
 import { forwardRpc } from "./rpc-proxy.js";
@@ -124,6 +126,10 @@ const server = createServer(async (req, res) => {
 
     if (pathname === "/health") return json(res, 200, { ok: true });
 
+    if (!site && (pathname.startsWith("/machine/") || pathname.startsWith("/gw/machine-credentials/") || pathname === "/gw/access-session")
+      && req.headers.host?.toLowerCase() !== signingHost.toLowerCase()) return json(res, 421, { error: "Use the configured host for agent access" });
+    if (await machineRoutes(req, res, pathname, signingHost, selected, () => auth.account(req), () => stopping)) return;
+
     if (pathname === "/gw/challenge" && req.method === "GET") return json(res, ...challengeAnswer(signingHost, mayChallenge(clientAddress(req))));
     if (pathname === "/gw/session" && req.method === "POST") {
       const account = await verifySignIn(parseSignIn(await readJson(req)), signingHost, chainKeyLookup).catch((error: Error) => error);
@@ -134,6 +140,20 @@ const server = createServer(async (req, res) => {
     }
     if (pathname === "/gw/logout" && req.method === "POST")
       return json(res, 200, {}, { "set-cookie": auth.close() });
+
+    // Access management must remain reachable during provider outages. This response grants no RPC access.
+    if (pathname === "/gw/access-session" && req.method === "GET") {
+      const account = auth.account(req);
+      const candidates = account ? await Promise.all(selected.filter(a => a.area === "treasury").map(async a => {
+        const management = await resolveMachineManagement(account, a);
+        return management ? { ...a, dao: management.dao } : null;
+      })) : [];
+      const owned = candidates.filter(a => a !== null);
+      return json(res, 200, { agents: owned.map(a => ({ name: a.name, owner: a.owner, area: a.area, dao: a.dao })),
+        invoices: null, viewer: account ? { account, access: Object.fromEntries(owned.map(a => [a.name,
+          { canSign: false, canPropose: false, canVote: false, canExecute: false, canManage: true }])) } : null,
+        ...(site && { demo: site.demo }), walkthroughs: config.walkthroughs });
+    }
 
     if (pathname === "/gw/me") {
       const me = await viewer(req, auth, selected);

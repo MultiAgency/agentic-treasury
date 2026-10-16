@@ -23,7 +23,7 @@ const READS = ["instance", "setup", "overview", "policyHistory", "treasury/get",
  * Preparations require FunctionCall proposal permission. None executes money or replaces the
  * owner's signature. The first three retain their historical non-intervention classification.
  */
-const PROPOSES = ["owner/prepare", "agreements/propose", "agreements/offer", "rebalance", "steward/propose", "deposit", "treasury/fund",
+const PROPOSES = ["owner/prepare", "agreements/propose", "agreements/offer", "rebalance", "externalPlan", "steward/propose", "deposit", "treasury/fund",
   "workOrders/create", "workOrders/prepare", "workOrders/deposit"];
 const EXECUTES = ["pay", "sweep", "executePlan", "autopilot/tick", "autopilot/enable"];
 const MANAGES = ["strategy/save", "treasury/link", "treasury/unlink", "treasury/setConfidential", "agreements/decline"];

@@ -21,3 +21,5 @@ web/dist/
 .notify/
 .work-orders/
 .hosted/
+
+.machine-auth/
