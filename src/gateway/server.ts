@@ -1,3 +1,4 @@
+import { accessFrontend } from "./access-frontend.js";
 import { resolveMachineManagement } from "./machine-authority.js";
 import { machineRoutes } from "./machine-routes.js";
 import { supplierBase, supplierCookie, supplierEnvironment, supplierRoute } from "./hosted-supplier.js";
@@ -223,7 +224,7 @@ const server = createServer(async (req, res) => {
     const scoped = pathname.match(/^\/a\/([a-z0-9-]+)(?:\/|$)/);
     if (site && scoped && !selected.some(a => a.name === scoped[1])) return json(res, 404, { error: "Agent is not assigned to this demo" });
     if (site && !["GET", "HEAD"].includes(req.method ?? "")) return json(res, 405, { error: "Not a submission endpoint" });
-    return serveStatic(res, site?.frontendDist ?? DIST, pathname.replace(/^\/a\/[a-z0-9-]+/, "") || "/");
+    return serveStatic(res, accessFrontend(site?.frontendDist, DIST, pathname), pathname.replace(/^\/a\/[a-z0-9-]+/, "") || "/");
   } catch (error) {
     sendFailure(res, error);
   }

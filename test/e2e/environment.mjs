@@ -15,7 +15,7 @@ async function freePort(host = '127.0.0.1') {
   await new Promise(resolve => server.listen(0, host, resolve));
   const port = server.address().port; await close(server); return port;
 }
-export async function environment(directory, { workspace = false, portfolioOwner = PAYEE } = {}) {
+export async function environment(directory, { workspace = false, portfolioOwner = PAYEE, independentFrontend = false } = {}) {
   mkdirSync(directory, { recursive: true });
   const services = [], proxies = [];
   const simulated = await provider(directory);
@@ -92,8 +92,13 @@ export async function environment(directory, { workspace = false, portfolioOwner
       // An obsolete operator list is ignored; only the actual owner can access this wallet's agent.
       agents.push({ name: 'portfolio', owner: portfolioOwner, operators: [OWNER], area: 'treasury', port, executor: true });
     }
+    const frontend = join(directory, 'independent-frontend');
+    if (independentFrontend) {
+      mkdirSync(frontend); writeFileSync(join(frontend, 'index.html'), '<h1>Independent Treasury frontend</h1>');
+    }
     writeFileSync(join(gatewayDir, 'dashboard.json'), JSON.stringify({ host: new URL(dashboard).host, invoices,
-      agents }));
+      ...(independentFrontend && { hosts: { [new URL(dashboard).host]: {
+        demo: 'treasury', agents: agents.map(a => a.name), frontendDist: frontend } } }), agents }));
     await start('gateway', gatewayDir, 'src/gateway/server.ts', { PORT: String(gatewayPort), AGENT_GRANT_TOKEN: '',
       DASHBOARD_FILE: join(gatewayDir, 'dashboard.json') }, 'on port');
   } catch (error) { await dispose(); throw error; }

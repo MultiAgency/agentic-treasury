@@ -11,6 +11,10 @@ view of configured Treasury agents, independently of provider observations. Wall
 configured owner; DAO members need current onchain management permission to inspect or revoke existing
 records. DAO members still cannot issue or use machine authority. That view
 provides no signing or execution capabilities. It is not a fresh assertion of provider ownership.
+On independently packaged product hosts, `/a/<name>/access` serves Proto's shared frontend;
+content-hashed shared assets are available when absent from the product asset directory. Ordinary
+product pages and existing product assets keep their own frontend. Host-local session checks and
+supplier routing remain unchanged.
 The ordinary workspace still uses `/gw/me` and the existing dashboard authorization rules.
 
 With the existing host-local owner session:

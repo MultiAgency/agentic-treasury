@@ -18,12 +18,13 @@ const localFetch = (url, options) => new Promise((resolve, reject) => {
   }); req.on('error', reject); req.end(options.body);
 });
 test('shared consent issues once, machine calls stay guarded, and outage revocation survives reload', async ({ browser }, info) => {
-  const stack = await environment(info.outputPath('environment'), { workspace: true });
+  const stack = await environment(info.outputPath('environment'), { workspace: true, independentFrontend: true });
   const wallet = await browserContext(browser, stack, PAYEE);
   const page = await wallet.context.newPage();
   const label = 'A'.repeat(80);
   await wallet.context.tracing.start({ screenshots: true, snapshots: true });
   try {
+    expect(await (await localFetch(`${stack.dashboard}/`, { method: 'GET' })).text()).toContain('Independent Treasury frontend');
     await page.goto(`${stack.dashboard}/a/portfolio/access`);
     await page.getByRole('button', { name: 'Connect wallet', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Agent access', exact: true })).toBeVisible();

@@ -43,8 +43,13 @@ not live-provider, distributed-fencing or screen-reader-hardware acceptance.
    `.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`, `.agreements/`, `.notify/`,
    `.work-orders/` and `.hosted/`, including plan execution claims and all revocations. This release
    requires no conversion of existing records and must not initialize replacement identities.
-3. Deploy the reviewed Proto commit with the existing `Dockerfile.dashboard` configuration, one replica
-   and the retained `/data` mount. Gateway and loopback agent servers must use the same release.
+3. Package the reviewed Proto commit with `scripts/package-shared-frontends.mjs`, supplying the
+   verified currently deployed Treasury and Payables frontend artifacts. Build Proto's own frontend
+   from the reviewed commit. The live four-domain service uses the packaged root Dockerfile from
+   `deploy/Dockerfile.shared-frontends`, not the plain repository's root Dockerfile or a single-frontend
+   dashboard image. Verify every preserved product asset and `deploy/shared-frontends.json` against
+   the current deployment. Retain the effective root Dockerfile setting, one replica, zero overlap,
+   `/data` mount and `DASHBOARD_FILE=/app/deploy/shared-frontends.json`. Gateway and loopback agent servers must use the same release.
    Preserve Treasury's executor assignment and payout's approve-only assignment on `dao`; the existing
    payout executor remains on the invoice service. Do not restart or redeploy that service for this feature.
 4. Check health and the existing read-only smoke checks from the reviewed checkout. Inspect the shared
