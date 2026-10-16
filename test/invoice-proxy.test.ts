@@ -33,3 +33,16 @@ test("invoice proxy streams the original identity once, strips dashboard session
     assert.equal(calls, before + 1); assert.match(await answer.text(), /original record/);
   }
 });
+
+test("supplier timeout after acceptance preserves ambiguity and never replays", async t => {
+  let accepted = 0;
+  const backend = createServer((req, _res) => { req.resume(); req.on("end", () => { accepted++; }); });
+  const backendPort = await listen(backend);
+  const transport = ((_target: URL, options: object, callback: Parameters<typeof request>[2]) => request({ ...options, hostname: "127.0.0.1", port: backendPort }, callback)) as unknown as typeof httpsRequest;
+  const gateway = createServer((req, res) => forwardInvoice(req, res, "https://fixed-backend.invalid", "/api/invoices", transport, "invoices_session", 50));
+  const port = await listen(gateway);
+  t.after(() => { backend.closeAllConnections(); backend.close(); gateway.closeAllConnections(); gateway.close(); });
+  const answer = await fetch(`http://127.0.0.1:${port}`, { method: "POST", body: '{"submission":"original"}', signal: AbortSignal.timeout(1500) });
+  assert.equal(answer.status, 502); assert.match(await answer.text(), /may have been accepted.*original record/);
+  assert.equal(accepted, 1);
+});

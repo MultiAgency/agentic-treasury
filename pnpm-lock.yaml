@@ -208,6 +208,9 @@ importers:
       cn:
         specifier: ^0.4.0
         version: 0.4.0
+      effect:
+        specifier: 4.0.5
+        version: 4.0.5
       near-kit:
         specifier: ^0.20.2
         version: 0.20.2
@@ -2281,6 +2284,9 @@ packages:
 
   ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
+
+  effect@4.0.5:
+    resolution: {integrity: sha512-BY4/28NlpOd99yzmV741xbVGmp+1U7tks4oB7F/Png64bTa5tm5eCA6W0RiXsnuLDDoJpjfVSo4Dnq4BZb/89Q==}
 
   electron-to-chromium@1.5.456:
     resolution: {integrity: sha512-8hboqI6xesozteFb8aa7OGknvxUtTeRJLz0FoePysUEh/oWbddykIGdgpEJRbPRg/nIMfBf2DFos+H2MtvJl2A==}
@@ -5477,6 +5483,8 @@ snapshots:
       tweetnacl: 1.0.3
 
   ee-first@1.1.1: {}
+
+  effect@4.0.5: {}
 
   electron-to-chromium@1.5.456: {}
 

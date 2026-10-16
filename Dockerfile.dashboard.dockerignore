@@ -19,3 +19,15 @@ test
 web/dist
 web/node_modules
 .evidence
+.test-artifacts
+.hosted
+.work-orders
+.agreements
+.notify
+.treasuries
+.payables
+*.tar
+*.tar.gz
+*.bak
+backups
+dashboard.json

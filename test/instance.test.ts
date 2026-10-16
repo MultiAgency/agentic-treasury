@@ -39,7 +39,7 @@ test("gateway ownership evidence reads only the configured agent and leaves inst
       "a successful provider read with missing ownership retains the configured agent identity");
   }
   getAgent.mock.mockImplementation(async () => { throw new Error("Provider unavailable"); });
-  await assert.rejects(client.ownerIdentity(), /Provider unavailable/);
+  await assert.rejects(client.ownerIdentity(), { code: "INTERNAL_SERVER_ERROR" });
   assert.deepEqual(await client.instance(), { agentId: "fixture", executor: false });
   delete process.env.AGENT_ID;
   assert.deepEqual(await client.ownerIdentity(), { agentId: null, owner: null });

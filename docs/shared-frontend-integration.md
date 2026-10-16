@@ -1,5 +1,12 @@
 # Independently built product frontends
 
+Local infrastructure hardening changes the error contract: arbitrary exceptions now return generic
+`INTERNAL_SERVER_ERROR`, while explicitly public application errors and provider codes remain
+available. See [interface ownership and compatibility](infrastructure-review.md#repository-and-interface-ownership).
+Consumers must not branch on raw exception prose or automatically replay an action after a transport
+error. Scoped RPC forwarding now has a fifteen-minute inactivity timeout (settlement may wait 180 seconds per leg); active streams may run longer.
+These changes are offline-tested, not part of the deployed r2 artifact.
+
 Proto can serve an independently built product frontend on a configured host while retaining its
 same-origin gateway, host-bound sign-in and per-agent authorization. The frozen r2 integration
 was deployed on 2026-10-16 UTC; see the [execution record](proto-release-execution.md) for
@@ -127,3 +134,55 @@ Fallback review: public generated-domain challenge reads on 2026-10-15 still ret
 `treasury.multiagency.ai` and `payables.multiagency.ai`. These observations do not establish working
 owner sign-in or private access on the generated domains. That release gate remains open until
 owner-controlled browser verification is returned; no domain move or standalone restart occurred.
+
+## Consumer source contract preflight
+
+Run `node scripts/check-consumer-contract.mjs /absolute/path/to/consumer . payables` (or
+`treasury`) before building or testing a consumer against Proto. `contracts/payables-frontend.json`
+and `contracts/treasury-frontend.json` explicitly declare the required top-level procedure groups.
+The checker first typechecks the actual frontend with its Router type restricted to those groups,
+then compares the declared client contract with Proto, including procedure inputs and outputs.
+Aliases and client factories retain TypeScript checking; backend-only imports keep their full
+router. Undeclared frontend calls fail rather than disappearing from the comparison.
+
+The existing TypeScript 7 compiler API supplies in-memory source overrides; it executes no backend
+modules, copies no consumer source and changes neither sibling checkout. A changed client binding
+that the adapter cannot restrict fails closed for review. Like any TypeScript check, explicit
+`any` casts or untyped HTTP calls are outside this guarantee. The small adapter uses TypeScript's
+unstable API and is covered by regression tests; compiler upgrades must pass those tests.
+Proto owns the check; Treasury and Payables own requirements for their consumer declarations.
+The optional `backend` mode retains the whole-router comparison for separate backend integration;
+it is not a gateway behavior test. Omitted mode infers Treasury/Payables from the directory name,
+otherwise it uses `backend`.
+
+`test-shared-frontend.mjs` runs this check before browser startup when a consumer source tree is
+adjacent to `web/dist`. Its optional fifth argument selects the consumer root; the fourth remains
+the Proto runtime root. Standalone frozen artifacts without adjacent source explicitly report
+that source compatibility was not checked and retain the existing browser-only check.
+
+This conservatively compares all procedures within declared groups, including unused members. It does not
+prove built-artifact provenance, runtime schema refinements, serialization/version compatibility,
+discovery, gateway authorization, supplier routing or safe error content. Retain build provenance
+and HTTP/browser tests for those boundaries. No contract package or source copying is required.
+
+Local source observation on 2026-10-16: Treasury passes. Current Payables fails on `compensation`,
+which its frontend calls and Proto does not implement. `platformPayments` is used by Payables'
+gateway, not its frontend, and is excluded from the frontend declaration. The earlier whole-router
+failure for both names did not establish two frontend dependencies.
+
+For this infrastructure phase retain the frozen r2 Payables artifact at
+`/tmp/proto-infrastructure-review-20261015-r2/frontends/payables`, with the provenance in
+[the release review](proto-release-review.md). Do not substitute the current Payables build.
+No production configuration or archive bytes were changed. Compensation remains a separate
+Payables-owned feature integration covering its records, contributor endpoints and review flow;
+Proto owns shared authentication, scoped routing, executor lifecycle and durable dispatch. Its
+backend implementation ownership must be agreed before integration, with isolation, interrupted
+preparation, duplicate submission and ambiguous-outcome acceptance tests. No placeholder endpoints
+or fixture responses satisfy this release block.
+
+Validation of this local candidate on 2026-10-16: typecheck, 775 offline tests and evidence
+consistency passed. Sequential browser checks passed for the existing Treasury build and frozen
+r2 Payables artifact. All 28 frozen Payables files were rechecked against `review-manifest.json`
+and match. The current Payables build was refused by the narrowed frontend preflight on
+`compensation` before browser startup. These observations establish neither a new build's
+provenance nor deployed behavior.

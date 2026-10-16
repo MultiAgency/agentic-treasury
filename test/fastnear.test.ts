@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
-import { fastnearPost } from "../src/chain.js";
+import { fastnearPost, fastnearAuthorization } from "../src/chain.js";
 
 afterEach(() => mock.restoreAll());
 const url = "https://tx.main.fastnear.com/v0/transactions";
@@ -30,4 +30,11 @@ test("FastNear transport errors stay unavailable and successful responses retain
   const result = { transactions: [], resume_token: "opaque" };
   mock.method(globalThis, "fetch", async () => Response.json(result));
   assert.deepEqual(await fastnearPost(url, {}), result);
+});
+
+
+test("FastNear bearer stays on exact trusted HTTPS hosts", () => {
+  assert.deepEqual(fastnearAuthorization(url, "fixture"), { Authorization: "Bearer fixture" });
+  for (const endpoint of ["https://custom.example/rpc", "http://rpc.mainnet.fastnear.com", "https://rpc.mainnet.fastnear.com.evil.example", "https://user@rpc.mainnet.fastnear.com", "https://rpc.mainnet.fastnear.com:8443"])
+    assert.deepEqual(fastnearAuthorization(endpoint, "fixture"), {});
 });

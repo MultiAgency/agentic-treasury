@@ -1,3 +1,4 @@
+import { PublicError } from "./public-error.js";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
 import { createHash } from "node:crypto";
@@ -142,10 +143,10 @@ async function withDelegateLock<T>(owner: string, run: (assertHeld: () => void) 
       onCompromised: () => { held = false; } });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ELOCKED")
-      throw new Error("Another owner action is preparing a delegate; retry after it finishes.");
+      throw new PublicError("Another owner action is preparing a delegate; retry after it finishes.");
     throw error;
   }
-  const assertHeld = () => { if (!held) throw new Error("Owner delegate preparation lock lost; refresh before preparing again."); };
+  const assertHeld = () => { if (!held) throw new PublicError("Owner delegate preparation lock lost; refresh before preparing again."); };
   try { assertHeld(); return await run(assertHeld); }
   finally { if (held) { held = false; await release(); } }
 }
@@ -235,7 +236,7 @@ async function build(
       return { request: ownerRequests.agent_create(action.owner, action.role, action.payees) };
     case "grant_issue": {
       // The new grant's token is saved where it is prepared: only the agent's executor may hold it.
-      if (!executes()) throw new Error("This copy only reads and approves: issue the grant from the agent's executor, which must hold its token");
+      if (!executes()) throw new PublicError("This copy only reads and approves: issue the grant from the agent's executor, which must hold its token");
       const { token, request } = await grantRequest({ label: action.label, suffix: action.suffix, expectedStrategyDigest: action.expectedStrategyDigest, requireStrategyReview: true });
       return { request, grantToken: token };
     }
@@ -266,7 +267,7 @@ export function prepare(action: OwnerAction, signer: Signer = "wallet") {
 
 async function prepareLocked(action: OwnerAction, signer: Signer) {
   if (process.env.HOSTED_OWNER && action.type === "agent_create" && [...pending.values()].some(p => p.type === "agent_create" && p.stage !== "settled"))
-    throw new Error("Agent creation already has an open owner action. Follow its existing record before preparing another.");
+    throw new PublicError("Agent creation already has an open owner action. Follow its existing record before preparing another.");
   const paymentApproval = action.type === "approval_vote" ? (await checkPaymentApproval(action)).binding : undefined;
   const owner = signer === "dao" ? await treasuryOwner() : undefined;
   if (action.type === "agent_create" && (owner ?? action.owner))
@@ -394,7 +395,7 @@ const sendSignature = async (correlationId: string, prepared: Prepared, signedDa
   if (!prepared.paymentApproval) throw new Error("Legacy approval has no exact payment binding; prepare a new vote");
   const lock = await acquireMoneyLock({ reconcile: true });
   try {
-    if (prepared.stage === "submitted" || prepared.stage === "settled") throw new Error("Approval submission already attempted; poll its existing intent");
+    if (prepared.stage === "submitted" || prepared.stage === "settled") throw new PublicError("Approval submission already attempted; poll its existing intent");
     const checked = await checkPaymentApproval(prepared.paymentApproval, prepared.paymentApproval);
     assertMoneyLock(lock);
     prepared.stage = "submitted";
@@ -421,14 +422,14 @@ export function submit(correlationId: string, signedData: Record<string, unknown
 async function submitLocked(correlationId: string, signedData: Record<string, unknown>, from: "wallet" | "dao") {
   assertOwnerLock();
   const prepared = pending.get(correlationId);
-  if (!prepared) throw new Error("Unknown intent");
+  if (!prepared) throw new PublicError("Unknown intent");
   if (prepared.stage === "settled") return prepared.result!;
   if (prepared.stage === "submitted") return reconcileOne(correlationId, prepared);
-  if (Date.now() >= Date.parse(prepared.expiresAt)) throw new Error("Intent expired");
+  if (Date.now() >= Date.parse(prepared.expiresAt)) throw new PublicError("Intent expired");
   if (from === "dao") {
     if (!prepared.dao) throw new Error("This intent wasn't prepared for a DAO's signature");
   } else {
-    if (!prepared.wallet) throw new Error("This intent wasn't prepared for a wallet's signature: prepare it again");
+    if (!prepared.wallet) throw new PublicError("This intent wasn't prepared for a wallet's signature: prepare it again");
     const problem = ownerSignatureProblem(prepared.wallet.intent, prepared.wallet.signer, signedData);
     if (problem) throw new Error(`Not submitted: ${problem}`);
   }

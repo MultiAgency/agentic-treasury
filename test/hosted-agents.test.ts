@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HostedAgents, authorizeSetup, hostedEnvironment } from "../src/gateway/hosted-agents.js";
@@ -15,6 +15,18 @@ test("new owners inherit only infrastructure, never existing-owner notifications
   });
   assert.deepEqual(env, { PATH: "/bin", NEAR_INTENTS_AGENT_API_KEY: "fixture-api", NEAR_RPC_URL: "http://127.0.0.1:9",
     ENV_FILE: ".hosted/own-test.env", PORT: "9000", DASHBOARD_AREA: "payables", HOSTED_OWNER: "alice.near", HOSTED_OWNER_KIND: "wallet", EXECUTOR: "on" });
+});
+
+test("interrupted reservation preserves orphan settings and refuses implicit repair", t => {
+  const dir = mkdtempSync(join(tmpdir(), "hosted-interrupted-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const input = { owner: "alice.near", kind: "wallet" as const, area: "treasury" as const };
+  const first = new HostedAgents(dir, []).reserve(input);
+  // Represents a crash after settings became durable but before the registry commit.
+  unlinkSync(join(dir, "registry.json"));
+  const before = readFileSync(first.envFile, "utf8");
+  assert.throws(() => new HostedAgents(dir, []).reserve(input), /unregistered settings/);
+  assert.equal(readFileSync(first.envFile, "utf8"), before);
 });
 
 test("self-service setup requires the wallet owner or a DAO member with proposal permission", () => {

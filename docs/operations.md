@@ -132,8 +132,8 @@ same candidate; this compatibility is offline-tested, not a deployed-host observ
 Keep `FASTNEAR_API_KEY` configured server-side on both services. `src/chain.ts` already sends it
 as a Bearer header to FastNear RPC, Transactions and Transfers APIs. With a key and no
 `NEAR_RPC_URL` override, RPC uses `https://rpc.mainnet.fastnear.com`. Check the effective override
-privately: an empty value breaks the default, and a custom host receives the same authorization
-header. Use the intended FastNear host; never put the backend key in browser code or copied URLs.
+privately: empty values now use the default, and custom hosts receive no FastNear authorization
+header. Only exact documented HTTPS hosts receive the key. Use the intended FastNear host; never put the backend key in browser code or copied URLs.
 
 The integration already uses canonical RPC for account, DAO policy and access-key reads;
 Transactions for DAO execution discovery (including relayed transactions) and deposit receipts;
@@ -536,3 +536,24 @@ DAO proposal, then the existing policy/grant/funding checks. New Payables agents
 payments; their supplier invoice intake is not provisioned. The existing payout executor and its
 invoice service keep their current roles. Offline tests cover reservations, restart, ownership
 binding and browser setup; real wallet/Trezu creation must be separately observed after user deployment.
+
+
+### Offline infrastructure follow-up (2026-10-16)
+
+Indexer scans for public transfers and DAO signatures have a 100-page, two-minute bound;
+repeated cursors fail explicitly. An incomplete read is not an empty history or permission to replay.
+An operator can run `node --env-file-if-exists=.env --import tsx scripts/fastnear-status.ts`
+for a sanitized read-only status report (latency, HTTP status and numeric indexer height/lag fields).
+Missing fields remain null; published source does not establish the deployed service version.
+This diagnostic has been offline-tested, not run against production in this follow-up.
+
+
+### Effect-based indexed reads (local candidate)
+
+FastNear failures retain safe operator guidance and now distinguish authentication, rate limit,
+unavailability, malformed responses, incomplete evidence and cancellation internally. No upstream
+body, credentials or raw exception causes are included. FastNear workflows share a two-minute
+Effect deadline; each request, including response-body consumption, is also bounded at 30 seconds.
+Failure or cancellation aborts active requests and stops queued lookups. These reads never retry
+automatically. Separate Agent API reads and the ten-second status diagnostic retain their existing
+bounds. Public history still cannot establish confidential settlement or authorize a replay.

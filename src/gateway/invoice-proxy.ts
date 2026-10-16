@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { sendJson } from "../http.js";
 
 /** A single streaming submission to the existing executor. No redirect following and no retries. */
-export function forwardInvoice(req: IncomingMessage, res: ServerResponse, origin: string, path: string, transport: typeof request = request, cookieName = "invoices_session") {
+export function forwardInvoice(req: IncomingMessage, res: ServerResponse, origin: string, path: string, transport: typeof request = request, cookieName = "invoices_session", timeoutMs = 15 * 60_000) {
   const target = new URL(origin);
   const headers: IncomingMessage["headers"] = { ...req.headers, host: target.host };
   delete headers["x-forwarded-host"];
@@ -29,7 +29,7 @@ export function forwardInvoice(req: IncomingMessage, res: ServerResponse, origin
     if (res.headersSent) res.destroy();
     else sendJson(res, 502, { error: "Invoice backend unavailable. A submitted request may have been accepted; check its original record before retrying." });
   });
-  upstream.setTimeout(30_000, () => upstream.destroy(new Error("Invoice backend timed out")));
+  upstream.setTimeout(timeoutMs, () => upstream.destroy(new Error("Invoice backend timed out")));
   req.on("aborted", () => upstream.destroy());
   res.on("close", () => { if (!res.writableFinished) upstream.destroy(); });
   req.pipe(upstream);

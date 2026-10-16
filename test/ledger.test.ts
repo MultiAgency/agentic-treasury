@@ -88,7 +88,11 @@ test("failed lookups reject the ledger and leave no workers running after reject
     active++;
     try {
       if (String(init?.body).includes('"tx0"')) throw new Error("private transport details");
-      await new Promise(resolve => setImmediate(resolve));
+      await new Promise<void>((resolve, reject) => {
+        const aborted = () => reject(new Error("read aborted"));
+        init?.signal?.addEventListener("abort", aborted, { once: true });
+        setImmediate(() => { init?.signal?.removeEventListener("abort", aborted); resolve(); });
+      });
       return Response.json(response(receipt()));
     } finally { active--; }
   });
@@ -106,4 +110,19 @@ test("only successful deposits with transaction and address evidence trigger loo
   const fetch = mock.method(globalThis, "fetch", async () => { throw new Error("Unexpected lookup"); });
   assert.equal((await ledger()).length, 4);
   assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("ledger cancellation aborts active receipt requests and leaves queued hashes unread", { timeout: 2000 }, async () => {
+  mock.method(api, "getHistory", async () => ({ data: Array.from({ length: 12 }, (_, i) => deposit(`row${i}`, `tx${i}`)) }));
+  let started!: () => void, calls = 0, aborted = 0;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  mock.method(globalThis, "fetch", (_url: unknown, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+    calls++;
+    init?.signal?.addEventListener("abort", () => { aborted++; reject(new Error("cancelled")); }, { once: true });
+    if (calls === 4) started();
+  }));
+  const controller = new AbortController();
+  const rejected = assert.rejects(ledger("fixture", controller.signal), /read cancelled/);
+  await ready; controller.abort(); await rejected;
+  assert.equal(calls, 4); assert.equal(aborted, 4);
 });

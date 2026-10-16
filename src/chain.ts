@@ -2,42 +2,8 @@ import type { Intent } from "@near-intents-agent-api/sdk";
 import { AccountDoesNotExistError, FunctionCallError, Near } from "near-kit";
 import { ASSETS } from "./policy.js";
 
-/** A FastNear API key, when set, goes in a header (not the URL) on RPC and indexer calls. */
-const fastnearHeaders: Record<string, string> = process.env.FASTNEAR_API_KEY
-  ? { Authorization: `Bearer ${process.env.FASTNEAR_API_KEY}` }
-  : {};
-
-/**
- * One POST to a FastNear indexer API, keyed when there is a key; throws on any error it reports, and
- * after 30 seconds without an answer, so a stalled indexer never holds up a caller (or a lock it holds).
- */
-export async function fastnearPost<T>(url: string, body: object) {
-  // Do not forward upstream bodies or transport messages: they may contain request details.
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json", ...fastnearHeaders },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30_000),
-    });
-  } catch { throw new Error("FastNear read unavailable. Check connectivity and try the read again."); }
-  if (response.status === 401 || response.status === 403)
-    throw new Error("FastNear authentication or access failed. Check the server API key and endpoint.");
-  if (response.status === 429) throw new Error("FastNear rate limit reached. Wait before refreshing this read.");
-  if (!response.ok) throw new Error(`FastNear read unavailable (HTTP ${response.status}). No outcome inferred.`);
-  let result: unknown;
-  try { result = await response.json(); }
-  catch { throw new Error("FastNear returned an invalid response. The read is unavailable."); }
-  if (!result || typeof result !== "object" || Array.isArray(result))
-    throw new Error("FastNear returned an invalid response. The read is unavailable.");
-  if ("error" in result && result.error) throw new Error("FastNear reported an error. The read is unavailable.");
-  return result as T;
-}
-
-/** FastNear's Transactions API: an account's transactions, relayed ones included, with their receipts. */
-export const transactionsApi = <T>(path: "/account" | "/transactions", body: object) =>
-  fastnearPost<T>(`https://tx.main.fastnear.com/v0${path}`, body);
+import { fastnearAuthorization } from "./fastnear.js";
+export { fastnearAuthorization, fastnearPost, transactionsApi } from "./fastnear.js";
 
 /** The transaction a NEP-366 payload asks for, from `signerId`, ready to sign as a delegate action. */
 export const delegateTransaction = (near: Near, signerId: string, { receiverId, actions }: Extract<Intent, { standard: "nep366" }>["payload"]) =>
@@ -47,12 +13,13 @@ export const delegateTransaction = (near: Near, signerId: string, { receiverId, 
   );
 
 /** How every `Near` client here reaches mainnet: the keyed FastNear host when there is a key. */
+const rpcUrl = process.env.NEAR_RPC_URL?.trim() || (process.env.FASTNEAR_API_KEY ? "https://rpc.mainnet.fastnear.com" : "https://free.rpc.fastnear.com");
 export const mainnet = {
   network: {
-    rpcUrl: process.env.NEAR_RPC_URL ?? (process.env.FASTNEAR_API_KEY ? "https://rpc.mainnet.fastnear.com" : "https://free.rpc.fastnear.com"),
+    rpcUrl,
     networkId: "mainnet",
   },
-  headers: fastnearHeaders,
+  headers: fastnearAuthorization(rpcUrl),
 };
 
 /** Read-only NEAR access for the treasury view; owner signing builds its own client in owner.ts. */

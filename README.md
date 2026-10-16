@@ -226,6 +226,20 @@ of maintaining separate requirement statuses.
 
 ## Not done yet
 
+- Current Payables frontend requires `compensation` procedures absent from Proto. Its frontend
+  contract preflight blocks that candidate; retain the frozen r2 artifact for infrastructure work.
+  Payables' gateway-only `platformPayments` dependency requires separate backend integration.
+  See [consumer compatibility](docs/shared-frontend-integration.md#consumer-source-contract-preflight).
+
+- FastNear deposit batching awaits a verified raw-transaction hash mapping; deployed indexer
+  freshness remains unverified. Single-hash receipt reads remain in place. See the
+  [infrastructure follow-up](docs/infrastructure-review.md#follow-up-review-2026-10-16).
+
+- The shared-host infrastructure hardening is local, not deployed; see the
+  [architecture review](docs/infrastructure-review.md) for failure reproductions, source provenance
+  and remaining isolation/recovery limits. Coordinated [credential rotation](docs/credential-rotation.md)
+  after the diagnostic exposure remains outstanding and requires owner-controlled maintenance.
+
 - General live AG-UI agent orchestration is not implemented. Short-guide guidance is deterministic
   UI observation; the existing Treasury run recordings remain separate evidence.
 

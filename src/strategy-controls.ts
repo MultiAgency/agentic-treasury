@@ -1,3 +1,4 @@
+import { PublicError } from "./public-error.js";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import lockfile from "proper-lockfile";
@@ -9,7 +10,7 @@ import { readStrategyStatus } from "./strategy-status.js";
 // These controls serialize dashboard configuration on one host, not distributed executors.
 // No owner or money lock is acquired here; dispatch still checks each individual operation.
 async function controlled<T>(work: (assertHeld: () => void) => Promise<T> | T): Promise<T> {
-  if (!executes()) throw new Error("Change strategy settings on the executor.");
+  if (!executes()) throw new PublicError("Change strategy settings on the executor.");
   mkdirSync(dirname(STRATEGY_FILE), { recursive: true });
   let held = true;
   const release = await lockfile.lock(`${STRATEGY_FILE}.control`, {
@@ -17,7 +18,7 @@ async function controlled<T>(work: (assertHeld: () => void) => Promise<T> | T): 
     retries: { retries: 100, minTimeout: 100, maxTimeout: 100 },
     onCompromised: () => { held = false; },
   });
-  const assertHeld = () => { if (!held) throw new Error("Strategy settings lock lost; refresh before trying again."); };
+  const assertHeld = () => { if (!held) throw new PublicError("Strategy settings lock lost; refresh before trying again."); };
   try { assertHeld(); return await work(assertHeld); }
   finally { if (held) { held = false; await release(); } }
 }
@@ -28,7 +29,7 @@ const snapshot = () => {
 };
 function reviewed(expectedDigest: string) {
   const current = snapshot();
-  if (current.digest !== expectedDigest) throw new Error("The saved strategy changed. Compare it with your draft and review again.");
+  if (current.digest !== expectedDigest) throw new PublicError("The saved strategy changed. Compare it with your draft and review again.");
   return current;
 }
 
@@ -41,7 +42,7 @@ function saveOff(strategy: Strategy) {
 export function saveReviewedStrategy(strategy: Strategy, expectedDigest: string) {
   const checked = Strategy.parse(strategy);
   if (checked.autopilot.everyMin > 1440 || checked.autopilot.maxUsd > 1_000_000)
-    throw new Error("Schedule must be at most 1440 minutes and the automatic ceiling at most $1,000,000.");
+    throw new PublicError("Schedule must be at most 1440 minutes and the automatic ceiling at most $1,000,000.");
   return controlled(() => { reviewed(expectedDigest); return saveOff(checked); });
 }
 async function enable(expectedDigest: string, assertHeld: () => void) {
@@ -49,7 +50,7 @@ async function enable(expectedDigest: string, assertHeld: () => void) {
   const observation = await readStrategyStatus();
   assertHeld();
   reviewed(expectedDigest);
-  if (observation.digest !== expectedDigest) throw new Error("The strategy changed during authorization review.");
+  if (observation.digest !== expectedDigest) throw new PublicError("The strategy changed during authorization review.");
   if (!observation.readiness.canEnable) throw new Error(observation.readiness.reasons.join(" "));
   saveEnv({ AUTOPILOT: "on" });
   return snapshot();
@@ -65,10 +66,10 @@ export function setLegacySchedule(input: { on: boolean; everyMin: number; maxUsd
     const current = snapshot();
     const changed = input.everyMin !== current.strategy.autopilot.everyMin || input.maxUsd !== current.strategy.autopilot.maxUsd;
     if (!input.on && !changed) { saveEnv({ AUTOPILOT: "" }); return snapshot(); }
-    if (!input.expectedDigest) throw new Error("Review the strategy digest before changing or enabling the schedule.");
+    if (!input.expectedDigest) throw new PublicError("Review the strategy digest before changing or enabling the schedule.");
     reviewed(input.expectedDigest);
     if (input.on) {
-      if (changed) throw new Error("Save changed settings with the schedule off, then enable separately.");
+      if (changed) throw new PublicError("Save changed settings with the schedule off, then enable separately.");
       return enable(input.expectedDigest, assertHeld);
     }
     return saveOff({ ...current.strategy, autopilot: { everyMin: input.everyMin, maxUsd: input.maxUsd } });

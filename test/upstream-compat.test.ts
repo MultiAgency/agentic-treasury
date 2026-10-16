@@ -60,8 +60,13 @@ test("owner policy preparation receives a canonical near.com destination", async
   await assert.rejects(client.owner.prepare({ signer: "wallet", action: {
     type: "policy_update", expectedPolicy,
     changes: { destinations: [{ address: "nearcom:Payee.near", confidential: true }] },
-  } }), /canonical policy reached generation/);
+  } }), { code: "INTERNAL_SERVER_ERROR" });
   assert.equal(generate.mock.callCount(), 1);
+  const generated = generate.mock.calls[0]?.arguments[0];
+  assert.ok(generated && "policy" in generated);
+  assert.ok(generated.policy);
+  assert.deepEqual(generated.policy.destinations.list,
+    [{ action: "transfer", address: "payee.near", confidential: true }]);
 });
 
 test("overview retains revoked and expired grants without making them executable", async () => {

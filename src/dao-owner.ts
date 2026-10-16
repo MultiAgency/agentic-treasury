@@ -1,6 +1,9 @@
+import { Effect } from "effect";
+import { z } from "zod";
+import { decodeRead, indexedPages, runFastnear, transactionsEffect } from "./fastnear.js";
 import type { Intent, OwnerWallet } from "@near-intents-agent-api/sdk";
 import { encodeSignedDelegateAction, Near, parsePublicKey } from "near-kit";
-import { accountExists, delegateTransaction, mainnet, transactionsApi } from "./chain.js";
+import { accountExists, delegateTransaction, mainnet } from "./chain.js";
 import { nep413Hash, rawKey, verifyEd25519 } from "./nep413.js";
 
 /**
@@ -131,7 +134,10 @@ export function proposalAndVote(dao: string, hash: string, description: string, 
   };
 }
 
-type Transactions = { transactions?: { receipts?: { execution_outcome?: { outcome?: { status?: { SuccessValue?: string } } } }[] }[] };
+const accountPage = z.object({ account_txs: z.array(z.object({ transaction_hash: z.string().min(1) })), resume_token: z.string().nullish() });
+const receiptPage = z.object({ transactions: z.array(z.object({ receipts: z.array(z.object({
+  execution_outcome: z.object({ outcome: z.object({ status: z.object({ SuccessValue: z.string().optional() }).passthrough() }) }),
+})) })) });
 
 /**
  * The DAO's signature over the request's hash, once a proposal asking for it has executed; null until
@@ -141,36 +147,30 @@ type Transactions = { transactions?: { receipts?: { execution_outcome?: { outcom
  * so a transaction read too early has no signature yet. Only a signature that verifies against the
  * owner key counts.
  */
-export async function findSignature(dao: string, { owner, hash, since }: DaoSigning) {
-  const candidates: string[] = [];
-  let resume_token: string | undefined;
-  do {
-    const page = await transactionsApi<{ account_txs?: { transaction_hash: string }[]; resume_token?: string }>("/account", {
-      account_id: dao,
-      is_predecessor: true,
-      from_tx_block_height: since,
-      desc: true,
-      limit: 200,
-      resume_token,
-    });
-    const txs = page.account_txs ?? [];
-    candidates.push(...txs.map((t) => t.transaction_hash));
-    resume_token = txs.length > 0 ? page.resume_token : undefined;
-  } while (resume_token);
+export async function findSignature(dao: string, { owner, hash, since }: DaoSigning, signal?: AbortSignal) {
+  return runFastnear(Effect.gen(function* () {
+    const candidates = yield* indexedPages(cursor => Effect.gen(function* () {
+      const raw = yield* transactionsEffect("/account", { account_id: dao, is_predecessor: true,
+        from_tx_block_height: since, desc: true, limit: 200, resume_token: cursor });
+      const page = yield* decodeRead(accountPage, raw);
+      return { items: page.account_txs.map(t => t.transaction_hash), next: page.resume_token };
+    }));
 
-  // 20 is the most /transactions accepts in one call.
-  for (let i = 0; i < candidates.length; i += 20) {
-    const { transactions = [] } = await transactionsApi<Transactions>("/transactions", { tx_hashes: candidates.slice(i, i + 20) });
-    for (const receipt of transactions.flatMap((t) => t.receipts ?? [])) {
-      const value = receipt.execution_outcome?.outcome?.status?.SuccessValue;
-      if (!value) continue;
-      try {
-        const result = JSON.parse(Buffer.from(value, "base64").toString());
-        if (result?.scheme !== "Ed25519" || !Array.isArray(result.signature)) continue;
-        const signature = Buffer.from(result.signature);
-        if (verifyEd25519(owner.public_key, Buffer.from(hash, "hex"), signature)) return signature;
-      } catch {}
+    // 20 is the most /transactions accepts in one call. Verification still binds the exact hash/key.
+    for (let i = 0; i < candidates.length; i += 20) {
+      const raw = yield* transactionsEffect("/transactions", { tx_hashes: candidates.slice(i, i + 20) });
+      const { transactions } = yield* decodeRead(receiptPage, raw);
+      for (const receipt of transactions.flatMap(t => t.receipts)) {
+        const value = receipt.execution_outcome.outcome.status.SuccessValue;
+        if (!value) continue;
+        try {
+          const result = JSON.parse(Buffer.from(value, "base64").toString());
+          if (result?.scheme !== "Ed25519" || !Array.isArray(result.signature)) continue;
+          const signature = Buffer.from(result.signature);
+          if (verifyEd25519(owner.public_key, Buffer.from(hash, "hex"), signature)) return signature;
+        } catch {}
+      }
     }
-  }
-  return null;
+    return null;
+  }), signal);
 }

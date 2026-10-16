@@ -17,3 +17,15 @@ test
 .strategy
 .DS_Store
 .evidence
+.test-artifacts
+.hosted
+.work-orders
+.agreements
+.notify
+.treasuries
+.payables
+*.tar
+*.tar.gz
+*.bak
+backups
+dashboard.json

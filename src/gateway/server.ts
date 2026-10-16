@@ -1,9 +1,11 @@
 import { supplierBase, supplierCookie, supplierEnvironment, supplierRoute } from "./hosted-supplier.js";
 import { demoHost, demoCrossSite, demoSession, invoiceRoute, assignedToHost } from "./demo-hosts.js";
+import { forwardRpc } from "./rpc-proxy.js";
 import { forwardInvoice } from "./invoice-proxy.js";
-import { type ChildProcess, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
+import { Supervisor, workerArguments } from "./supervisor.js";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { createServer, type IncomingMessage, request, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, request } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isIntervention, mayCall } from "./allowlist.js";
@@ -74,29 +76,6 @@ async function agentsView(me: Awaited<ReturnType<typeof viewer>>, selected = age
   return all.filter((a) => (me ? Boolean(me.access[a.name]) : a.dao));
 }
 
-/** Forwards a call to an agent server on loopback, streaming both ways (some procedures stream events). */
-function forward(req: IncomingMessage, res: ServerResponse, agent: AgentEntry, path: string) {
-  const headers = { ...req.headers, host: `127.0.0.1:${agent.port}` };
-  delete headers.origin;
-  delete headers.cookie;
-  const upstream = request({ host: "127.0.0.1", port: agent.port, path: `/rpc/${path}`, method: req.method, headers }, (answer) => {
-    if ((answer.statusCode ?? 500) >= 300 && (answer.statusCode ?? 500) < 400) {
-      answer.resume();
-      return json(res, 502, { error: "Agent backend redirected. Check the original record before retrying." });
-    }
-    res.writeHead(answer.statusCode ?? 502, { ...answer.headers, "cache-control": "private, no-store" });
-    answer.on("error", () => res.destroy());
-    answer.pipe(res);
-  });
-  upstream.on("error", () => {
-    if (res.headersSent) res.destroy();
-    else json(res, 502, { error: "Agent backend unavailable. A submitted request may have been accepted; check its original record before retrying." });
-  });
-  req.on("aborted", () => upstream.destroy());
-  res.on("close", () => { if (!res.writableFinished) upstream.destroy(); });
-  req.pipe(upstream);
-}
-
 /**
  * Sign-in challenges per connecting address per hour. The global cap in signin.ts bounds memory;
  * this keeps one client from filling it and locking every member out of sign-in.
@@ -104,12 +83,14 @@ function forward(req: IncomingMessage, res: ServerResponse, agent: AgentEntry, p
 const CHALLENGES_PER_HOUR = 20;
 const mayChallenge = hourlyLimit(CHALLENGES_PER_HOUR);
 
-createServer(async (req, res) => {
+let stopping = false;
+const server = createServer(async (req, res) => {
   // On every answer: no other site may frame these pages (they trigger wallet signatures, so a hidden
   // frame could trick a click), types are taken as declared, no address leaks to linked sites, and
   // browsers keep to HTTPS once they have seen it.
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
   try {
+    if (stopping) return json(res, 503, { error: "Gateway is stopping. Check existing records before retrying." });
     const url = URL.parse(req.url ?? "/", "http://gateway");
     if (!url) throw new BadRequest("Malformed request.");
     const { pathname } = url;
@@ -168,6 +149,7 @@ createServer(async (req, res) => {
       if (site && !site.hostedAreas?.includes(parsed.data.area)) return json(res, 403, { error: "This area is not available on this host" });
       try { authorizeSetup(account, parsed.data.kind, await ownerOf(parsed.data.owner)); }
       catch { return json(res, 403, { error: "Owner access could not be verified. Use your own wallet or a DAO where you can propose owner actions." }); }
+      if (stopping) return json(res, 503, { error: "Gateway is stopping. No reservation was made." });
       const reserved = hosted.reserve(parsed.data);
       if (!agents.some(a => a.name === reserved.name)) { agents.push(reserved); start(reserved); }
       return json(res, 200, { name: reserved.name });
@@ -203,6 +185,7 @@ createServer(async (req, res) => {
       const account = auth.account(req);
       if (!account) return json(res, 401, { error: "Sign in first", access: "session" });
       const access = await resolveAgentAccess(account, agent);
+      if (stopping) return json(res, 503, { error: "Gateway is stopping. Check existing records before retrying." });
       if (!access) return json(res, 403, { error: `${account} may not see the ${agent.name} agent`, access: "agent" });
       if (!mayCall(access, call[2]!)) return json(res, 403, { error: "This account does not have permission for this action", access: "procedure" });
       // Preserve which calls count as interventions: recorded before they run, or not run.
@@ -214,7 +197,7 @@ createServer(async (req, res) => {
           return json(res, 503, { error: "The action could not be recorded, so it was not run" });
         }
       }
-      return forward(req, res, agent, `${call[2]!}${url.search}`);
+      return forwardRpc(req, res, agent, `${call[2]!}${url.search}`);
     }
 
     const scoped = pathname.match(/^\/a\/([a-z0-9-]+)(?:\/|$)/);
@@ -226,31 +209,27 @@ createServer(async (req, res) => {
   }
 }).listen(PORT, () => console.log(`Dashboard for ${config.agents.map((a) => `${a.name} (${a.owner})`).join(", ")} on port ${PORT}, signing in to ${HOST}`));
 
-const children = new Set<ChildProcess>();
-
-/**
- * Runs an agent server on loopback, restarting it if it exits: soon after a crash, then backing off
- * up to 5 minutes while it keeps failing to start (such as when another server holds its agent).
- */
-function start(agent: AgentEntry & { envFile: string }, delay = 5_000) {
-  const started = Date.now();
+const supervisor = new Supervisor((agent: AgentEntry & { envFile: string }) => {
   const managed = "kind" in agent ? agent as HostedAgent : undefined;
   const environment = managed ? { ...hostedEnvironment(managed, process.env), ...supplierEnvironment(managed, supplierHost, SECRET) } : childEnv(agent);
-  const child = spawn(join(APP, "node_modules/.bin/tsx"), [...(managed ? [] : ["--env-file-if-exists=.env"]), join(APP, "src/server.ts")], {
+  return spawn(process.execPath, workerArguments(...(managed ? [] : ["--env-file-if-exists=.env"]), join(APP, "src/server.ts")), {
     env: environment,
     stdio: ["ignore", "inherit", "inherit"],
   });
-  children.add(child);
-  child.on("exit", (code) => {
-    children.delete(child);
-    const next = Date.now() - started < 60_000 ? Math.min(delay * 2, 300_000) : 5_000;
-    console.error(`Agent server ${agent.name} exited (${code}); restarting in ${next / 1000} s`);
-    setTimeout(() => start(agent, next), next);
-  });
+});
+function start(agent: AgentEntry & { envFile: string }) {
+  supervisor.start(agent);
 }
 for (const agent of agents) if (agent.envFile) start({ ...agent, envFile: agent.envFile });
 for (const signal of ["SIGINT", "SIGTERM"] as const)
-  process.on(signal, () => {
-    for (const child of children) child.removeAllListeners("exit").kill(signal);
-    process.exit(0);
+  process.on(signal, async () => {
+    if (stopping) return;
+    stopping = true;
+    const drained = new Promise<void>(resolve => server.close(() => resolve()));
+    const deadline = setTimeout(() => server.closeAllConnections(), 30_000);
+    const clean = await supervisor.stop(signal);
+    await drained;
+    clearTimeout(deadline);
+    if (!clean) console.error("Gateway forced child shutdown; verify retained records before restarting writers.");
+    process.exit(clean ? 0 : 1);
   });

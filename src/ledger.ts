@@ -1,8 +1,9 @@
+import { Effect } from "effect";
 import type { StatusResponse } from "@near-intents-agent-api/sdk";
 import { z } from "zod";
 import { agentId } from "./env.js";
 import { api } from "./api.js";
-import { fastnearPost, transactionsApi } from "./chain.js";
+import { FastnearFailure, decodeRead, fastnearPostEffect, indexedPages, runFastnear, transactionsEffect } from "./fastnear.js";
 import { rawBalance } from "./holdings.js";
 import { readOps } from "./ops.js";
 
@@ -95,14 +96,13 @@ const depositReceipts = z.object({ transactions: z.array(z.object({ receipts: z.
 const eventEnvelope = z.object({ standard: nonempty, event: nonempty, data: z.unknown().optional() });
 const transferData = z.array(z.object({ new_owner_id: nonempty })).min(1);
 type DepositTransfer = { address: string; asset: string };
-const unavailableDeposit = () => new Error("Deposit evidence is unavailable: invalid transaction receipts or transfer events.");
+const unavailableDeposit = () => new FastnearFailure("DepositEvidence");
 
 /**
  * Validate the whole response before using any transfer: a valid early match must not conceal
  * malformed evidence later in the transaction. Errors never include private receipt contents.
  */
-async function depositTransfers(txHash: string): Promise<DepositTransfer[]> {
-  const response = await transactionsApi<unknown>("/transactions", { tx_hashes: [txHash] });
+function depositTransfers(response: unknown): DepositTransfer[] {
   const parsed = depositReceipts.safeParse(response);
   if (!parsed.success) throw unavailableDeposit();
   const transfers: DepositTransfer[] = [];
@@ -123,34 +123,25 @@ async function depositTransfers(txHash: string): Promise<DepositTransfer[]> {
 }
 
 /** One lookup per hash per ledger read; no persistent cache or assumed batch-response mapping. */
-async function readDeposits(executions: StatusResponse[]) {
+async function readDeposits(executions: StatusResponse[], signal?: AbortSignal) {
   const hashes = new Set<string>();
   for (const e of executions) {
     const details = (e.details ?? {}) as Details;
     const hash = field(details, "deposit_tx_hash");
     if (e.type === "deposit" && e.status === "SUCCESS" && hash && field(details, "deposit_address")) hashes.add(hash);
   }
-  const remaining = hashes.values();
-  const deposits = new Map<string, DepositTransfer[]>();
-  let failed = false;
-  async function worker() {
-    while (!failed) {
-      const next = remaining.next();
-      if (next.done) return;
-      try { deposits.set(next.value, await depositTransfers(next.value)); }
-      catch (error) { failed = true; throw error; }
-    }
-  }
-  // Drain in-flight reads before rejecting, and stop scheduling new ones after a failure.
-  const results = await Promise.allSettled(Array.from({ length: Math.min(4, hashes.size) }, () => worker()));
-  for (const result of results) if (result.status === "rejected") throw result.reason;
-  return deposits;
+  const entries = await runFastnear(Effect.forEach([...hashes], hash => Effect.gen(function* () {
+    const response = yield* transactionsEffect("/transactions", { tx_hashes: [hash] });
+    const transfers = yield* Effect.try({ try: () => depositTransfers(response), catch: () => unavailableDeposit() });
+    return [hash, transfers] as const;
+  }), { concurrency: 4 }), signal);
+  return new Map(entries);
 }
 
-export async function ledger(id = agentId()): Promise<Row[]> {
+export async function ledger(id = agentId(), signal?: AbortSignal): Promise<Row[]> {
   const [executions, events] = await Promise.all([history(id), audit(id)]);
   const ops = new Map(readOps().flatMap((op) => (op.correlationId ? [[op.correlationId, op] as const] : [])));
-  const deposits = await readDeposits(executions);
+  const deposits = await readDeposits(executions, signal);
   const rows: Row[] = [];
   for (const e of executions) {
     const details = (e.details ?? {}) as Details;
@@ -188,21 +179,18 @@ export async function ledger(id = agentId()): Promise<Row[]> {
   return rows.sort((a, b) => a.at.localeCompare(b.at));
 }
 
-type Transfer = { asset_id: string; amount: string };
-
 /** Every movement of the account's public `intents.near` balance, from FastNear's Transfers API. */
-async function publicTransfers(account: string) {
-  const all: Transfer[] = [];
-  let resume_token: string | undefined;
-  do {
-    const page = await fastnearPost<{ transfers: Transfer[]; resume_token?: string | null }>(
-      "https://transfers.main.fastnear.com/v0/transfers",
-      { account_id: account, limit: 100, ...(resume_token && { resume_token }) },
-    );
-    all.push(...page.transfers);
-    resume_token = page.resume_token ?? undefined;
-  } while (resume_token);
-  return all;
+const transferPage = z.object({
+  transfers: z.array(z.object({ asset_id: z.string().min(1), amount: z.string().regex(/^-?\d+$/) })),
+  resume_token: z.string().nullish(),
+});
+function publicTransfers(account: string, signal?: AbortSignal) {
+  return runFastnear(indexedPages(cursor => Effect.gen(function* () {
+    const raw = yield* fastnearPostEffect("https://transfers.main.fastnear.com/v0/transfers",
+      { account_id: account, limit: 100, ...(cursor && { resume_token: cursor }) });
+    const page = yield* decodeRead(transferPage, raw);
+    return { items: page.transfers, next: page.resume_token };
+  })), signal);
 }
 
 const add = (book: Map<string, bigint>, asset: string | null, amount: string | null, sign: 1n | -1n) => {
@@ -235,9 +223,9 @@ type Reconciliation = {
 };
 
 /** Every asset the agent holds or any source saw it move, compared with recorded flows. */
-export async function reconcileBooks(id = agentId()): Promise<Reconciliation[]> {
+export async function reconcileBooks(id = agentId(), signal?: AbortSignal): Promise<Reconciliation[]> {
   const [rows, tokens, open, shielded, agent] = await Promise.all([
-    ledger(id),
+    ledger(id, signal),
     api.getTokens(),
     api.getBalances(id, { source: "public" }),
     api.getBalances(id, { source: "confidential" }),
@@ -246,7 +234,7 @@ export async function reconcileBooks(id = agentId()): Promise<Reconciliation[]> 
   const account = agent.wallet?.near_account_id;
   if (!account) throw new Error("The agent has no wallet account yet");
   const chain = new Map<string, bigint>();
-  for (const t of await publicTransfers(account))
+  for (const t of await publicTransfers(account, signal))
     if (t.asset_id.startsWith("nep245:intents.near:")) add(chain, t.asset_id.slice("nep245:intents.near:".length), t.amount, 1n);
   const recorded = confidentialFlows(rows);
   const assets = new Set([...open.balances, ...shielded.balances].map((b) => b.asset_id).concat([...chain.keys(), ...recorded.keys()]));

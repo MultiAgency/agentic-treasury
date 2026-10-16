@@ -1,3 +1,4 @@
+import { PublicError } from "./public-error.js";
 import type { OwnerWallet, Policy } from "@near-intents-agent-api/sdk";
 import { agentId } from "./env.js";
 import { api } from "./api.js";
@@ -13,7 +14,7 @@ export const ownerRequests = {
   agent_create: (owner: OwnerWallet, role: AgentRole = "treasury", payees: string[] = []) => {
     const order = currentWorkOrder();
     if (order && (owner.type !== "near" || owner.account_id !== order.owner.account_id || owner.public_key !== order.owner.public_key))
-      throw new Error("The work order owner changed. Preserve the original order and review its authority.");
+      throw new PublicError("The work order owner changed. Preserve the original order and review its authority.");
     return {
       type: "agent_create",
       name: order ? "Work order" : role === "payout" ? "Payouts" : "Agentic Treasury",
@@ -43,9 +44,9 @@ export type PolicyChanges = Partial<Pick<Policy, "assets" | "owner_approval" | "
 export async function policyRequest({ swap, destinations, ...fields }: PolicyChanges, expectedPolicy: ReviewedPolicy) {
   const id = agentId();
   const { policy, revision } = await api.getPolicy(id);
-  if (!policy || revision === null) throw new Error("The agent's policy is not applied yet");
+  if (!policy || revision === null) throw new PublicError("The agent's policy is not applied yet");
   if (!expectedPolicy || expectedPolicy.revision !== revision || expectedPolicy.digest !== mandateDigest(policy))
-    throw new Error("The policy changed since review. Refresh the policy and review all changes before signing.");
+    throw new PublicError("The policy changed since review. Refresh the policy and review all changes before signing.");
   const transfers = destinations ?? policy.destinations.list.flatMap((d) => (d.action === "transfer" ? [d] : []));
   const swaps = swap ?? policy.actions.includes("swap");
   const next: Policy = {

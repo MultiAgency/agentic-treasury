@@ -1,5 +1,10 @@
 # Architecture
 
+The [2026-10-16 shared-host review](infrastructure-review.md) records local gateway supervision,
+transport and error-boundary fixes, their offline reproductions, repository ownership and remaining
+limitations. These changes are not deployed. The [credential rotation procedure](credential-rotation.md)
+remains an owner-controlled production gate.
+
 Two areas, Payables and Treasury, share one core. Each agent runs in its own instance of the server (`src/server.ts`),
 with its own wallet, grant, money lock and logs; the hosted gateway signs members in and forwards
 their calls to those instances. Files are listed under `src/` unless a path says otherwise.
@@ -455,7 +460,7 @@ Malformed evidence makes the ledger read unavailable with a sanitized error, inc
 transfer precedes a malformed event. Valid receipts with no matching transfer retain a null asset.
 Each ledger invocation fetches each distinct deposit transaction hash once, with at most four
 concurrent single-hash requests, then resolves each deposit address independently. Failed reads stop
-new lookups and drain in-flight requests before rejecting. There is no persistent cache, and each
+new lookups and abort in-flight requests before rejecting. There is no persistent cache, and each
 new read still looks up historical deposits. `test/ledger.test.ts` covers these behaviors offline;
 this is not a deployed-provider observation or a measured production performance improvement.
 
@@ -552,3 +557,44 @@ New-instance templates do not carry the agency’s agents, grants or intake upst
 rollout configuration deliberately retains those original instances. No standalone volume or grant
 is imported; integration and rollout boundaries are in [shared-backend-scope.md](shared-backend-scope.md)
 and [shared-demos-rollout.md](shared-demos-rollout.md).
+
+### Gateway lifecycle ownership
+
+Proto uses pinned Effect 4.0.5 internally for child supervision. A gateway scope owns scoped
+child lifetimes and restart sleeps; scope closure cancels restarts and runs bounded child cleanup
+in parallel. The public start/stop facade, HTTP/oRPC contracts and independently built consumer
+frontends retain their interfaces. Signaling failures or forced termination are unclean shutdowns.
+See the [adoption decision and offline fault evidence](effect-supervisor-trial.md). This local
+candidate is not a deployment observation. Effect does not replace the journal or executor lease.
+
+
+### FastNear read lifetime and failures
+
+`src/infrastructure/fastnear-http.ts` owns the FastNear HTTP service and its Effect layers.
+Each Promise-boundary workflow builds its live layer once, capturing the transport and API key
+for that workflow. Later workflows read configuration again; pages within a workflow share the
+same dependencies. Tests supply a replacement layer without configuring live credentials. The
+layer owns no socket pool or persistent runtime; request cancellation still owns each fetch.
+This internal composition changes no consumer API, journal, executor lease or retained state.
+
+`src/fastnear.ts` contains Proto's Effect-based indexed read infrastructure, including an injectable
+HTTP service and typed, sanitized failures. Existing Promise helpers remain re-exported from
+`src/chain.ts`. Each request has a 30-second deadline covering fetch and JSON body consumption.
+A complete indexed-transfer scan, DAO signature search (account pages plus receipt reads), or
+ledger deposit lookup group has a shared two-minute deadline. The read helpers retain Promise
+returns; optional AbortSignal arguments allow cancellation without changing existing callers. Pagination refuses repeated cursors
+and more than 100 pages. Malformed account and transfer pages are unavailable evidence, never
+successful empty history. This does not impose a deadline on the separate Agent API reads used
+by the ledger and books; those remain outside this migration.
+
+Cancellation propagates to fetch signals; concurrent deposit reads use Effect's four-worker bound.
+Failure interrupts active sibling reads and prevents queued work from starting. A pre-aborted
+caller performs no FastNear fetch. There are no automatic retries, including for throttling.
+Injected clients must honor AbortSignal; interruption cannot forcibly terminate an arbitrary
+Promise implementation that ignores it. Receipt identity, transfer validation and cryptographic
+signature verification retain their existing rules. Deposit reads remain single-hash requests.
+
+`test/fastnear-effects.test.ts` verifies typed failures, injection, cancellation, body-consumption
+and whole-pagination deadlines with TestClock. `test/fastnear-http.test.ts` verifies real HTTP
+cancellation. Ledger and DAO-signature tests cover the consuming paths. This is offline evidence;
+no deployed-provider behavior or new custody guarantee is inferred.
