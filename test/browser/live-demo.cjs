@@ -1,5 +1,6 @@
 /** Offline live-demo regressions. All browser traffic is intercepted; no executor or wallet starts. */
 const assert = require('node:assert/strict');
+const { runSuite } = require('./fixtures/task.cjs');
 const path = require('node:path');
 const { chromium } = require('./fixtures/browser.cjs');
 const { rpcValue } = require('./fixtures/rpc.cjs');
@@ -27,7 +28,7 @@ function overview(kind, state) {
   };
 }
 
-(async () => {
+runSuite(async () => {
   const browser = await chromium.launch({ headless: true, executablePath: process.env.BROWSER_EXECUTABLE });
   try {
     async function open(routePath, options = {}) {
@@ -272,4 +273,4 @@ function overview(kind, state) {
     }
     console.log('PASS changed observations invalidate an open payment confirmation');
   } finally { await browser.close(); }
-})().catch(error => { console.error(error); process.exitCode = 1; });
+});

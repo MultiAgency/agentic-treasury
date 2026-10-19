@@ -1,10 +1,11 @@
 /** Static host entries: no gateway/private reads, mobile and desktop, and correct focused links. */
 const assert = require('node:assert/strict');
+const { runSuite } = require('./fixtures/task.cjs');
 const path = require('node:path');
 const { chromium } = require('./fixtures/browser.cjs');
 const { assertResponsive } = require('./fixtures/layout.cjs');
 const root = path.resolve(process.argv[2] || 'web/dist');
-(async () => {
+runSuite(async () => {
   const browser = await chromium.launch({ headless: true, executablePath: process.env.BROWSER_EXECUTABLE });
   try {
     for (const width of [320, 1280]) for (const [host, title] of [
@@ -37,4 +38,4 @@ const root = path.resolve(process.argv[2] || 'web/dist');
       await context.close(); console.log(`PASS ${host} static entry ${width}px`);
     }
   } finally { await browser.close(); }
-})().catch(error => { console.error(error); process.exitCode = 1; });
+});

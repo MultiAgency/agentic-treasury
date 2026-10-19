@@ -1,4 +1,5 @@
 const { rpcValue } = require('./fixtures/rpc.cjs');
+const { runSuite } = require('./fixtures/task.cjs');
 /**
  * Offline showcase regressions. Build first with pnpm build:web.
  * PLAYWRIGHT_MODULE=/path/to/playwright-core BROWSER_EXECUTABLE=/path/to/chrome \
@@ -24,7 +25,7 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
 });
 
 
-(async () => {
+runSuite(async () => {
   const browser = await chromium.launch({ headless: true, executablePath: process.env.BROWSER_EXECUTABLE });
   const results = [];
   const filter = process.env.CASE_FILTER;
@@ -193,4 +194,4 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
   console.log(JSON.stringify(results, null, 2));
   await browser.close();
   process.exitCode = results.length > 0 && results.every(result => result.pass) ? 0 : 1;
-})().catch(error => { console.error(error); process.exitCode = 1; });
+});
