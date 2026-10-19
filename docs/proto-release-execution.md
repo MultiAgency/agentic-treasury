@@ -10,6 +10,9 @@ saved all three CNAME updates. No agent, grant or money action was submitted.
 Dao deployment `09bf2aa6-d805-400a-97a8-7e55b7f131fa` reached SUCCESS.
 Railway image: `sha256:95ceea0c37486922c2946f6a39fc5e5528af8c7c0132dd16e8fcdf2bb3a8d4d8`.
 All 195 packaged runtime hashes matched the frozen r2 manifest after deployment.
+
+Note (2026-10-19): a read-only Railway check by the owner shows `09bf2aa6` REMOVED. dao's active deployment is
+`0c1f8239-497b-4987-a495-8bb8e96051e6` (2026-10-16T05:08Z), which no release record names. Its contents are unverified.
 Effective controls: root Dockerfile, one replica, zero overlap, `/health`,
 ON_FAILURE with five retries. Original dao volume and private settings were preserved.
 The final status check observed exactly one active deployment and one running

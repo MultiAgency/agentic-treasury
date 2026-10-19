@@ -264,26 +264,28 @@ deployment. Deployed smoke checks and recorded mainnet observations retain their
 
 ## Candidate and deployed verification
 
-`pnpm verify:candidate` captures all Git-visible files, including uncommitted changes, into an isolated
-source directory and runs the complete `pnpm verify` pipeline there. The manifest records the base
-commit, per-file hashes and modes, and a combined source hash. It rejects edits during capture, checks
-that captured source remains unchanged after verification, and reports whether the working tree still
-matches. It neither stages changes nor commits, deploys, restarts or changes live settings. Existing
-`node_modules` is shared; keep dependencies fixed during the run. The workspace disables pnpm's
-automatic pre-script installation; install dependencies explicitly before capturing source. The
-dashboard build fixture invokes the bundler directly and checks that shared launchers stay unchanged.
-This is a tested source snapshot,
-not a frozen Git release: reconcile review findings and identify the final release commit before shipping.
-Logs and nested browser/E2E artifacts remain under `.test-artifacts/candidates/candidate-*`.
+`pnpm release:candidate -- <inputs>` (scripts/release-candidate.mjs) produces a release candidate in one command,
+from a commit (`--ref`, default `HEAD`). It takes the same app inputs as a plain `test/e2e/run.mjs` and requires all of
+them: Invoices H and I, Payables A and B with B's change, Treasury A and B with B's change, and the Treasury skill.
+Uncommitted changes are not included; commit first.
 
-Release acceptance requires a passing result with both `snapshotUnchanged` and
-`workingTreeStillMatches` true. Then run `pnpm test:e2e:challenge` from that candidate's `source/`
-directory, with the same dependencies and runtime. Its baseline and disposable fault copies must
-descend from that captured source, not the current checkout. Require all baseline cases and all three
-designated fault detections, then recheck the candidate files. Any source correction requires a fresh
-candidate and challenge run. Match the release commit's complete file set, contents and executable
-modes to the manifest, and retain the full commit, source/archive hashes and results privately before
-the owner deploys. A passing snapshot whose working tree differs is not a releasable working tree.
+1. Freeze: `git archive` of the commit into `.test-artifacts/stack-snapshots/`. `node_modules` is shared and its
+   dependency tree is recorded.
+2. Gates, in order, stopping at the first failure. Nothing is packaged after a failure; logs and `RELEASE-FAILED.json`
+   stay in the snapshot.
+   - typecheck, the offline suite and `evidence:check`;
+   - one frontend build, then the browser suite, the full E2E run and the challenge run, all against that build. The
+     E2E runs use `--prebuilt-web`, so they test the frozen build instead of rebuilding it; a rebuild isn't
+     byte-reproducible. The command refuses if an E2E manifest's `assets` differs from the candidate's build.
+3. The snapshot is renamed to its run digest, which is the name app recipes use. With `--sdk`, the SDK is packed from it
+   and its skills are checked.
+4. The deploy sources go to `.test-artifacts/releases/<runDigest>/`: the dao package
+   (`scripts/package-shared-frontends.mjs` with the shipped Payables and Treasury releases, B) and the invoices source.
+   `release.json` records the commit, every input digest, the frontend source and build digests, each gate's command,
+   status and counts (E2E run ids and stats, challenge outcomes, browser scenarios), and the package digests.
+
+It deploys nothing, uses no credentials and touches no state directory. Deploying from those sources stays the owner's
+action.
 
 The workspace E2E cases use a separate Portfolio executor, provider identity and store alongside the
 Payables executor and approve-only server. They cover full-document cross-agent navigation and back,

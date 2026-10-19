@@ -9,13 +9,17 @@ import { offlineEnvironment } from '../../scripts/test-environment.mjs';
 const root = resolve(import.meta.dirname, '../..');
 const parent = join(root, '.test-artifacts/e2e'); mkdirSync(parent, { recursive: true });
 const artifacts = mkdtempSync(join(parent, 'run-')), snapshot = join(artifacts, 'snapshot'); mkdirSync(snapshot);
+// `--prebuilt-web`: test the frontend already built in this tree (a frozen candidate's web/dist) instead of rebuilding
+// it, so the build that ships is the build these cases tested. A rebuild isn't byte-reproducible.
+const prebuilt = process.argv.includes('--prebuilt-web'), builtWeb = join(root, 'web/dist');
+if (prebuilt && !existsSync(join(builtWeb, 'index.html'))) throw new Error('--prebuilt-web needs a built web/dist in this tree');
 for (const name of ['src', 'web', 'evidence', 'scripts', 'examples', 'test/e2e', 'test/offline.env', 'test/fixtures/offline-network.cjs', 'package.json', 'pnpm-lock.yaml', 'tsconfig.json']) {
   const target = join(snapshot, name); mkdirSync(resolve(target, '..'), { recursive: true });
-  cpSync(join(root, name), target, { recursive: true, filter: path => !path.endsWith('/node_modules') && !path.endsWith('/dist') });
+  cpSync(join(root, name), target, { recursive: true, filter: path => !path.endsWith('/node_modules') && (!path.endsWith('/dist') || (prebuilt && path === builtWeb)) });
 }
 symlinkSync(join(root, 'node_modules'), join(snapshot, 'node_modules'), 'dir');
 // Explicit consumer input: snapshot the actual Treasury skill, never maintain a second copy here.
-const args = process.argv.slice(2);
+const args = process.argv.slice(2).filter(arg => arg !== '--prebuilt-web');
 // Invoices' release A, and optionally its real release B, staged and activated by the shared release server.
 const take = (flag, name) => {
   const i = args.indexOf(flag); if (i === -1) return undefined;
@@ -73,8 +77,10 @@ function digest(dir) {
 }
 const run = (command, args) => spawnSync(command, args, { cwd: snapshot, env, stdio: 'inherit' });
 console.log(`Isolated E2E release and evidence: ${artifacts}`);
-const build = run(join(root, 'node_modules/.bin/rsbuild'), ['build', '--root', 'web']);
-if (build.status !== 0) process.exit(build.status ?? 1);
+if (!prebuilt) {
+  const build = run(join(root, 'node_modules/.bin/rsbuild'), ['build', '--root', 'web']);
+  if (build.status !== 0) process.exit(build.status ?? 1);
+}
 // The installed dependency tree this run uses (node_modules is shared, not copied). A frozen snapshot that recorded one
 // must run against the same tree, and the tree must not change during the run.
 const dependencies = dependencyTree(root);
