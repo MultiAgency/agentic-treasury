@@ -24,7 +24,8 @@ config.agents = []; delete config.invoiceUpstream;
 for (const site of Object.values(config.hosts)) site.agents = [];
 const data = mkdtempSync('/tmp/shared-image-');
 const state = join(data, 'state'); mkdirSync(state);
-const kept = ['.ops', '.invoices', '.owner-intents', '.strategy', '.plans', '.evidence', '.inbox', '.agreements', '.notify', '.work-orders', '.hosted'];
+// The canonical state directories (docs/operations.md); test/state-directories.test.ts keeps this list equal to it.
+const kept = ['.ops', '.invoices', '.owner-intents', '.strategy', '.plans', '.evidence', '.inbox', '.agreements', '.notify', '.work-orders', '.hosted', '.agent-connections', '.machine-auth'];
 for (const dir of kept) { mkdirSync(join(state, dir)); writeFileSync(join(state, dir, 'preserve'), `retained ${dir}`); }
 writeFileSync(join(state, '.hosted/registry.json'), '{"version":1,"entries":[]}');
 writeFileSync(join(state, '.env.dao'), 'retained treasury settings');
@@ -64,7 +65,7 @@ try {
     assert.equal((await call('unknown.test', '/')).status, 421);
     assert.equal((await call('unknown.test', '/health')).status, 200);
     assert.equal((await call('invoices.multiagency.ai', '/i/own-' + 'f'.repeat(24) + '/?workOrder=exact')).status, 404);
-    assert.match((await call('invoices.multiagency.ai', '/')).body.toString(), /supplier link/);
+    assert.match((await call('invoices.multiagency.ai', '/')).body.toString(), /contributor link/);
     await stop();
     for (const dir of kept) assert.equal(readFileSync(join(state, dir, 'preserve'), 'utf8'), `retained ${dir}`);
     assert.equal(readFileSync(join(state, '.env.dao'), 'utf8'), 'retained treasury settings');

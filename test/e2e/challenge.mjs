@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 const firstJourney = 'invoice, owner approval, and settlement stay distinct across the real stack';
 const lostTransfer = 'accepted transfer with lost response stays unresolved after restart and blocks another send';
 const transferCount = evidence => evidence.requests.filter(r => r.method === 'POST' && r.path.endsWith('/transfer')).length;
+const agentJourney = 'an agent connection reports for the contractor, recovers a lost reply by identity and follows the same request to paid';
 const definitions = [
   { name: 'duplicate-transfer', file: 'src/agent.ts', test: firstJourney, marker: 'E2E_SINGLE_TRANSFER',
     before: '    case "transfer":\n      return grant.transfer(id, action.request, options);',
@@ -17,9 +18,14 @@ const definitions = [
     witness: evidence => transferCount(evidence) === 1 && evidence.records.payments[0]?.status === 'PROCESSING'
       && evidence.records.reservations[0]?.released === 0 },
   { name: 'approve-only-bypass', file: 'src/agent.ts', test: lostTransfer, marker: 'E2E_APPROVE_ONLY_NO_SEND',
-    before: '  if (!executes()) throw new Error("This instance only approves: payouts are sent by the agent\'s executor on its own host");',
+    before: '  if (!executes()) throw new PublicError("This copy only approves: payouts are sent by the agent\'s executor on its own host. Nothing was sent.");',
     after: '  // Deliberately removed in this disposable challenge copy only.',
     witness: evidence => transferCount(evidence) === 2 },
+  // Without the route restriction an agent connection could file a funded order: the agent's own filing sends a payout.
+  { name: 'agent-route-unrestricted', file: 'src/invoice-http.ts', test: agentJourney, marker: 'E2E_AGENT_ROUTE_RESTRICTED',
+    before: '      const permission = CONNECTION_ROUTES[`${req.method} ${url.pathname}`];',
+    after: '      const permission = CONNECTION_ROUTES[`${req.method} ${url.pathname}`] ?? "compensation.read";',
+    witness: evidence => transferCount(evidence) === 1 },
 ];
 const sha = data => createHash('sha256').update(data).digest('hex');
 const specs = suite => [...(suite.specs ?? []), ...(suite.suites ?? []).flatMap(specs)];
@@ -33,6 +39,7 @@ export function validateBaseline(baseline, discovered) {
   const keys = rows => rows.map(row => row.key).sort();
   const successful = ({ test }) => test.expectedStatus === 'passed' && test.status === 'expected'
     && test.results.length === 1 && test.results[0].status === 'passed' && test.results[0].retry === 0;
+
   if (!expected.length || discovered.errors?.length || baseline.errors?.length
     || new Set(keys(expected)).size !== expected.length || new Set(keys(actual)).size !== actual.length
     || JSON.stringify(keys(expected)) !== JSON.stringify(keys(actual))

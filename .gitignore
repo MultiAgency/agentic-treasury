@@ -23,3 +23,6 @@ web/dist/
 .hosted/
 
 .machine-auth/
+.agent-connections/
+/packages/sdk/
+/packages/sdk.tsconfig.json

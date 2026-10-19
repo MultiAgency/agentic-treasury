@@ -23,7 +23,7 @@ export type Scene = z.infer<typeof GuideScene>;
 export type GuideChoice = Scene["choices"][number];
 export const choiceLabels: Record<GuideChoice, string> = {
   next: "Continue rehearsal", approve: "Simulate approval", reject: "Explore rejection", interrupt: "Explore unknown outcome",
-  restart: "Restart rehearsal", policy: "Explain the policy", supplier: "Show supplier view", signing: "Explain this signature",
+  restart: "Restart rehearsal", policy: "Explain the policy", supplier: "Show contributor view", signing: "Explain this signature",
   payments: "Review real payments", agreements: "Review real agreements",
 };
 export function allowedChoices(input: Pick<GuideRequest, "mode" | "stage">): GuideChoice[] {

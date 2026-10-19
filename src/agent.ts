@@ -13,6 +13,7 @@ import { rawBalance } from "./holdings.js";
 import { tokenUsd } from "./valuation.js";
 import { refusalDetails } from "./provider-display.js";
 import { workOrderDispatchProblem } from "./work-order-binding.js";
+import { PublicError } from "./public-error.js";
 
 /** Every money action runs under the agent's grant, never the owner's key. */
 export function agent() {
@@ -76,7 +77,7 @@ export async function dispatch(lock: MoneyLock, kind: string, action: Action, se
   action = structuredClone(action);
   expectedPolicy = expectedPolicy && { ...expectedPolicy };
   // An approve-only instance never sends: refused before anything is recorded, so nothing is left open.
-  if (!executes()) throw new Error("This instance only approves: payouts are sent by the agent's executor on its own host");
+  if (!executes()) throw new PublicError("This copy only approves: payouts are sent by the agent's executor on its own host. Nothing was sent.");
   if (preparedKey && !invoiceOperations().some((op) => op.idempotencyKey === preparedKey && op.submissionState === "PREPARED"))
     throw new Error("Invoice operation is not prepared; replay is blocked");
   assertCanDispatch(lock);
@@ -108,20 +109,23 @@ export async function dispatch(lock: MoneyLock, kind: string, action: Action, se
     usdIn,
     ...(sending?.planned && { planId: sending.planned.plan.id }),
   });
+  // A refusal from these local checks comes before any network call, so nothing was submitted. A prepared invoice
+  // stays prepared on its identity, to be sent once the cause is fixed (every check runs again); anything else is
+  // resolved as refused.
+  const refuseLocally = (code: string, message: string): never => {
+    if (!preparedKey) record({ idempotencyKey, refused: code });
+    throw new LocalRefusal(code, message);
+  };
   // Bind a dashboard confirmation to this dispatch's fresh policy read. This is a local
   // precondition, not an atomic commitment by the remote provider to this policy snapshot.
   if (expectedPolicy && (expectedPolicy.revision !== revision || expectedPolicy.digest !== policyDigest)) {
-    record({ idempotencyKey, refused: "reviewed_policy_changed" });
-    throw new LocalRefusal("reviewed_policy_changed", "The policy changed since review. Refresh and review the payment again.");
+    refuseLocally("reviewed_policy_changed", "The policy changed since review. Refresh and review the payment again.");
   }
   // The provider enforces most of the policy itself; `authorize` refuses what it can't tell apart or
   // doesn't check (what a swap buys, a grant's purpose, a public or duplicate payout, a changed plan).
   const grant = liveGrant(grants, process.env.AGENT_GRANT_TOKEN);
   const orderProblem = workOrderDispatchProblem(action, preparedKey, policy, grant, now);
-  if (orderProblem) {
-    record({ idempotencyKey, refused: "work_order_binding" });
-    throw new LocalRefusal("work_order_binding", orderProblem);
-  }
+  if (orderProblem) refuseLocally("work_order_binding", orderProblem);
   // A payout or invoices grant only transfers: anything else it sends is judged, and refused, as treasury work.
   const payoutGrant = grant?.label === "payout" || grant?.label === "invoices";
   const purpose: Purpose = preparedKey ? "invoice"
@@ -141,10 +145,7 @@ export async function dispatch(lock: MoneyLock, kind: string, action: Action, se
         ? { purpose, facts: { ...common, available, heldPayouts: held.map(({ request: r }) => ({ recipient: String(r.recipient), asset: String(r.asset), amount: String(r.amount) })) } }
         : { purpose, facts: { ...common, available } };
   const refusal = authorize(action, judged);
-  if (refusal) {
-    record({ idempotencyKey, refused: refusal.code });
-    throw new LocalRefusal(refusal.code, refusal.message);
-  }
+  if (refusal) refuseLocally(refusal.code, refusal.message);
   let sent: { correlation_id: string };
   try {
     sent = await send(action, idempotencyKey, lock, FIRST_SUBMISSION);

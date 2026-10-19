@@ -1,5 +1,4 @@
 const { rpcValue } = require('./fixtures/rpc.cjs');
-const { openWorkspaceNavigation } = require("./fixtures/navigation.cjs");
 /**
  * Offline showcase regressions. Build first with pnpm build:web.
  * PLAYWRIGHT_MODULE=/path/to/playwright-core BROWSER_EXECUTABLE=/path/to/chrome \
@@ -112,15 +111,6 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
     assert.equal(challenges, 1);
     assert.deepEqual(calls, []);
   });
-  await check('recovery: known attention survives another agent loading', async context => {
-    const { page } = await open(context, '/', { delay: 'overview', onlyTreasury: true, unresolved: true });
-    await page.getByText(/1 money action has no proven outcome/).waitFor({ timeout: 1800 });
-  });
-  await check('recovery: known attention survives a failed sibling read', async context => {
-    const { page } = await open(context, '/', { error: 'overview', unresolved: true });
-    await page.getByText(/1 money action has no proven outcome/).waitFor({ timeout: 5000 });
-    await page.getByText(/checks.*incomplete/i).first().waitFor();
-  });
   await check('review: connecting initializes the member wallet and signs the challenge', async context => {
     await context.addInitScript(() => {
       // Context scripts also run in the initial blank document, which has no storage origin.
@@ -167,42 +157,6 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
     assert.doesNotMatch(text, /guarantees enforced|View requirements|Observed on mainnet|proposal #/);
     assert.deepEqual(calls, [], 'public entry never reads agent data');
   });
-  await check('recovery: missing setup is not a missing grant', async context => {
-    const { page } = await open(context, '/', { error: 'setup', unresolved: true });
-    await page.getByText(/1 money action has no proven outcome/).waitFor();
-    assert.equal(await page.getByText(/No live grant/).count(), 0);
-  });
-  await check('recovery: held payout survives unavailable balances', async context => {
-    const { page } = await open(context, '/', { error: 'overview', held: true });
-    await page.getByText(/payee.near is held for the owner/).waitFor();
-  });
-  await check('recovery: latest retained run is visible after a quiet day', async context => {
-    const { page } = await open(context, '/a/treasury/', { oldRun: true });
-    await page.getByRole('link', { name: 'Inspect run', exact: true }).waitFor({ timeout: 3000 });
-  });
-  await check('recovery: retained history is discoverable without an ID', async context => {
-    const { page, calls } = await open(context, '/a/treasury/follow/run', { oldRun: true });
-    await page.getByRole('region', { name: 'Run timeline', exact: true }).getByText('Run outcome: book on target', { exact: true }).waitFor({ timeout: 3000 });
-    assert.equal(await page.getByRole('option').count(), 2);
-    assert.ok(!calls.includes('autopilot/log'), 'historical runs do not start automatic recording reads');
-  });
-  await check('recovery: grantless member can inspect operation history', async context => {
-    const { page, calls } = await open(context, '/a/treasury/activity', { noGrant: true });
-    await page.getByRole('heading', { name: 'Operation history', exact: true }).waitFor({ timeout: 3000 });
-    assert.ok(calls.includes('activity'));
-    await page.getByRole('heading', { name: 'Continue setup', exact: true }).waitFor();
-    assert.ok(!calls.includes('autopilot/tick'));
-  });
-  for (const unavailable of ['noGrant', 'approveOnly']) {
-    await check(`recovery: ${unavailable} cannot start a treasury run`, async context => {
-      const { page, calls } = await open(context, '/a/treasury/follow/run', { [unavailable]: true });
-      const action = page.getByRole('button', { name: 'Run now', exact: true });
-      await action.waitFor();
-      assert.ok(await action.isDisabled());
-      assert.ok(!calls.includes('autopilot/tick'));
-      if (unavailable === 'approveOnly') assert.ok(!calls.includes('autopilot/log'));
-    });
-  }
   for (const width of [320, 390, 1280]) {
     await check(`public disclosure and area order at ${width}px`, async context => {
       const { page, calls, errors } = await open(context, '/', { public: true });
@@ -217,91 +171,23 @@ const overview = kind => ({ agentId: 'fixture', digest: 'fixture', notInForce: n
       assert.deepEqual(errors, []);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     });
-    await check(`compact run and directly accessible evidence at ${width}px`, async context => {
-      const { page, calls, errors } = await open(context, '/a/treasury/#evidence');
-      await page.setViewportSize({ width, height: 900 });
-      await page.getByRole('link', { name: 'Inspect run', exact: true }).waitFor();
-      assert.equal(await page.getByRole('region', { name: 'Run timeline', exact: true }).count(), 0, 'Overview retains the compact run preview');
-      assert.equal(await page.getByRole('button', { name: 'Run now', exact: true }).count(), 0);
-      const run = await page.getByRole('heading', { name: 'Latest treasury run', exact: true }).boundingBox();
-      const figures = await page.getByText('Book value', { exact: true }).boundingBox();
-      assert.ok(run.y < figures.y);
-      assert.ok(await page.locator('#evidence details').first().getAttribute('open') !== null);
-      assert.doesNotMatch(await page.locator('#evidence').textContent(), plannedBriefs);
-      assert.equal(await page.locator('#evidence details').count(), 1);
-      assert.ok(await page.getByText(/The autopilot executed a rebalance alone/).isVisible());
-      assert.equal(await page.getByRole('link', { name: /steward/i }).count(), 0);
+  }
+  // The agent page carries its area's running brief: requirements, how each is known, and its evidence.
+  for (const kind of ['treasury', 'payables']) {
+    await check(`${kind} agent page shows only its running brief's requirements and evidence`, async context => {
+      const { page, calls, errors } = await open(context, `/a/${kind}/`);
+      const heading = page.getByRole('heading', { name: /: requirements and evidence$/ });
+      await heading.waitFor();
+      const card = heading.locator('xpath=ancestor::*[.//summary][1]');
+      const briefs = card.locator('summary').filter({ hasText: /^\d{2} / });
+      assert.equal(await briefs.count(), 1);
+      if (kind === 'payables') assert.deepEqual(await briefs.allTextContents(), ['01 Confidential Treasury Facilitator']);
+      await briefs.click();
+      assert.ok(await page.getByText(kind === 'treasury' ? /The autopilot executed a rebalance alone/ : /Invoices filed at invoices.multiagency.ai, voted and paid/).isVisible());
+      assert.doesNotMatch(await card.textContent(), plannedBriefs);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       assert.ok(!calls.includes('autopilot/tick'));
       assert.deepEqual(errors, []);
-    });
-  }
-  await check('workspace leads with tasks and retains contextual evidence', async context => {
-    const { page } = await open(context, '/');
-    await page.getByRole('heading', { name: 'Current status', exact: true }).waitFor();
-    assert.equal(await page.getByRole('link', { name: /^Open (Portfolio|Payables)$/ }).count(), 0);
-    await openWorkspaceNavigation(page);
-    await page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'Portfolio', exact: true }).click();
-    await page.locator('#evidence summary').first().click();
-    assert.ok(await page.getByRole('heading', { name: 'Portfolio: requirements and evidence', exact: true }).isVisible());
-    assert.ok(await page.getByText('Known limitations', { exact: true }).isVisible());
-  });
-  await check('payables evidence shows only its running brief', async context => {
-    const { page } = await open(context, '/a/payables/');
-    const evidence = page.locator('#evidence');
-    await evidence.getByText('Requirements and evidence', { exact: true }).click();
-    assert.doesNotMatch(await evidence.textContent(), plannedBriefs);
-    const briefs = evidence.locator('summary').filter({ hasText: /^\d{2} / });
-    assert.deepEqual(await briefs.allTextContents(), ['01 Confidential Treasury Facilitator']);
-    await briefs.click();
-    assert.ok(await page.getByText(/Invoices filed at invoices.multiagency.ai, voted and paid/).isVisible());
-  });
-  await check('workspace status loading remains explicit', async context => {
-    const { page } = await open(context, '/', { delay: 'overview' });
-    await page.getByText('Checking treasury…', { exact: true }).waitFor();
-    await openWorkspaceNavigation(page);
-    assert.ok(await page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'Portfolio', exact: true }).isVisible());
-  });
-  await check('workspace unavailable read recovers through retry', async context => {
-    const { page, state } = await open(context, '/', { error: 'overview', onlyTreasury: true });
-    await page.getByText(/treasury: checks are incomplete/).waitFor();
-    await openWorkspaceNavigation(page);
-    assert.ok(await page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'Portfolio', exact: true }).isVisible());
-    state.error = undefined;
-    if (await page.getByRole('dialog', { name: 'Workspace navigation' }).isVisible()) await page.getByRole('button', { name: 'Close', exact: true }).click();
-    await page.getByRole('button', { name: /^(Retry|Check again)$/ }).last().click();
-    await page.getByRole('heading', { name: 'Portfolio', exact: true }).waitFor();
-    await page.getByText(/treasury: checks are incomplete/).waitFor({ state: 'hidden' });
-  });
-  await check('failed background refresh labels cached status as stale', async context => {
-    const { page, state } = await open(context, '/', { onlyTreasury: true });
-    const heading = page.getByRole('heading', { name: 'Portfolio', exact: true });
-    await heading.waitFor();
-    state.error = 'overview';
-    await page.getByText(/treasury: checks are incomplete/).waitFor({ timeout: 45_000 });
-    const header = heading.locator('..');
-    assert.ok(await page.getByText(/cached items may be out of date/).isVisible());
-    assert.equal(await header.getByText('Policy in force', { exact: true }).count(), 0);
-  });
-  await check('unavailable attention is never reported as an empty queue', async context => {
-    const { page } = await open(context, '/a/treasury/', { error: 'unresolved' });
-    await page.getByText(/Attention checks are incomplete/).waitFor();
-    assert.ok(await page.getByRole('button', { name: /^(Retry|Check again)$/ }).isVisible());
-    assert.equal(await page.getByText('No items need attention in the records checked.', { exact: true }).count(), 0);
-  });
-  for (const outcome of ['refused', 'failed', 'unknown']) {
-    await check(`${outcome} run never gets green stage-completion marks`, async context => {
-      const { page, calls } = await open(context, '/a/treasury/follow/run', { outcome });
-      if (outcome === 'unknown') await page.getByText(/Current stage and outcome are unknown/).waitFor();
-      else await page.getByRole('region', { name: 'Run timeline', exact: true }).getByText(new RegExp(`^Run outcome: ${outcome}`)).waitFor();
-      if (outcome === 'failed') assert.ok(await page.getByText(/0 of 1 recorded swaps succeeded/).isVisible());
-      if (outcome === 'refused') assert.ok(await page.getByText(/refused:/i).isVisible());
-      if (outcome !== 'unknown') {
-        await page.getByText('Following later operation outcomes.', { exact: true }).waitFor();
-        assert.ok(calls.includes('autopilot/log'), 'recent run reads must validate successfully, not just be ignored by the fixture');
-      }
-      assert.equal(await page.locator('main .bg-success-muted svg').count(), 0);
-      assert.ok(!calls.includes('autopilot/tick'));
     });
   }
   console.log(JSON.stringify(results, null, 2));

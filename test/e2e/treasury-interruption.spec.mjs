@@ -61,6 +61,9 @@ for (const fault of ['lost provider response', 'lost second response after first
         execution.child.kill('SIGKILL');
         const killed = await execution.done; expect(killed.signal).toBe('SIGKILL');
         gate.release();
+        // Killing the client does not stop the server's own execution of the plan: it submits the second leg once
+        // observation resumes. Wait for it, so the replay below meets a finished run.
+        await expect.poll(() => stack.portfolio.swaps.length).toBe(2);
       } else {
         const failed = await execution.done;
         expect(failed.code).toBe(1);
@@ -70,8 +73,10 @@ for (const fault of ['lost provider response', 'lost second response after first
       }
       // This is an explicit adversarial replay, not an automatic client recovery action.
       const replay = await run('execute', plan.id); expect(replay.code).toBe(1);
+      // Exactly one submission per leg the run reached, and none from the replay: both legs of the killed client's
+      // plan (completed by the server), or every swap up to the lost response.
       const count = stack.portfolio.swaps.length;
-      expect(count).toBeGreaterThanOrEqual(1); expect(count).toBeLessThanOrEqual(2);
+      expect(count).toBe(gate ? 2 : lostAt);
       expect(stack.portfolio.swaps.map(swap => swap.body.amount)).toEqual(swaps.slice(0, count).map(swap => swap.amount));
       const actualPosts = () => stack.portfolio.requests.filter(r => r.method === 'POST' && r.path.endsWith('/swap') && !r.body.dry);
       expect(actualPosts()).toHaveLength(count);

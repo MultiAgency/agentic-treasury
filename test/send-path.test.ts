@@ -47,3 +47,33 @@ test("inside src/agent.ts, money methods are called only from send, which only d
   assert.match(text, /const FIRST_SUBMISSION = Symbol\(/);
   assert.doesNotMatch(text, /export\s+(const|let)\s+FIRST_SUBMISSION/);
 });
+
+const MONEY = ["swap", "transfer", "shield", "unshield", "withdraw", "forGrant"];
+const enclosingFunction = (parents: any[]) => [...parents].reverse().find(p => ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression", "ObjectMethod", "ClassMethod"].includes(p.type));
+
+test("the permitted send is called only inside dispatch, and only once", () => {
+  const text = sources.find((s) => s.path === "src/agent.ts")!.text;
+  const permitted: (string | undefined)[] = [];
+  walk(syntax(text), (node, parents) => {
+    if (node.type !== "CallExpression" || node.callee.type !== "Identifier" || node.callee.name !== "send") return;
+    if (!node.arguments.some((a: any) => a.type === "Identifier" && a.name === "FIRST_SUBMISSION")) return;
+    permitted.push(enclosingFunction(parents)?.id?.name);
+  });
+  assert.deepEqual(permitted, ["dispatch"]);
+});
+
+// Known destructurings of a same-named field that is not a grant client method, each with its reason.
+const NOT_GRANT = new Map([["src/owner-requests.ts:policyRequest:swap", "a PolicyChanges field (the policy's swap rules), not a grant method"]]);
+
+test("money methods and the grant factory are never taken out of their object by destructuring", () => {
+  const found: string[] = [];
+  for (const source of sources) walk(syntax(source.text), (node, parents) => {
+    if (node.type !== "ObjectPattern") return;
+    for (const property of node.properties) {
+      const key = property.type === "ObjectProperty" ? (property.key.type === "Identifier" ? property.key.name : property.key.type === "StringLiteral" ? property.key.value : undefined) : undefined;
+      const site = `${source.path}:${enclosingFunction([...parents, node])?.id?.name ?? "(module)"}:${key}`;
+      if (key && MONEY.includes(key) && !NOT_GRANT.has(site)) found.push(site);
+    }
+  });
+  assert.deepEqual(found, []);
+});

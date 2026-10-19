@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSy
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Line, Op } from "./ops.js";
+import { PublicError } from "./public-error.js";
 
 /** One authoritative store for invoice identity, revisions, payment attempts and reservations.
  * All writes are local transactions; none assert exactly-once effects at the remote provider.
@@ -192,7 +193,9 @@ export function markInvoiceUnknown(key: string) {
 export function cancelPreparedInvoice(id: string) {
   return database((db) => transaction(db, () => {
     const invoice = get(db, id);
-    if (!invoice || invoice.operation.submissionState !== "PREPARED") throw new Error("Only a never-submitted invoice can be cancelled locally");
+    // A refused cancellation changes nothing; it does not show whether the payment was submitted.
+    if (!invoice || invoice.operation.submissionState !== "PREPARED")
+      throw new PublicError("Only a never-submitted invoice can be cancelled. This cancellation was refused and the invoice is unchanged; check its recorded status.");
     db.prepare("UPDATE payments SET state = 'RESOLVED', refused = 'invoice_cancelled_before_submission' WHERE key = ?").run(invoice.operation.idempotencyKey);
     db.prepare("UPDATE reservations SET released = 1 WHERE payment_key = ?").run(invoice.operation.idempotencyKey);
     return get(db, id)!;

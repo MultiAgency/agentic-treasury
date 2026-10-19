@@ -1,4 +1,4 @@
-/** Continuous first-owner journey. Real UI/connector, simulated gateway/provider/chain, no live traffic. */
+/** First-owner journey on Proto: sign-in, setup and the guided payment; the agent's app takes over policy, grant and approval. Offline. */
 const assert = require('node:assert/strict');
 const { expect } = require('@playwright/test');
 const { runTask } = require('./fixtures/task.cjs');
@@ -12,24 +12,20 @@ async function firstOwner(browser, root) {
   const account = `fresh-${kind}.near`, daoId = `fresh-${kind}.sputnik-dao.near`;
   const owner = kind === 'dao' ? daoId : account, ownerAccount = kind === 'dao' ? 'a'.repeat(64) : account;
   const name = `own-${kind}-journey`, base = `/a/${name}`, paymentId = `first-payment-${kind}`;
-  const state = { signedIn: false, reserved: false, created: false, releaseCreate: false, grant: false, funded: false, linked: kind === 'dao', payment: null, approved: false, settled: false };
+  const state = { signedIn: false, reserved: false, created: false, releaseCreate: false, grant: false, funded: false, payment: null };
   const records = [], writes = [], walletCalls = [], errors = [], network = [];
   const sessions = new Set();
   const context = await browser.newContext({ viewport: { width: 390, height: 900 } });
   await context.exposeBinding('fixtureWalletCall', async (_, method, payload) => {
     walletCalls.push({ method, payload });
     if (method === 'transaction') {
-      if (payload.receiverId === 'funding.fixture') state.funded = true;
-      else {
-        assert.equal(kind, 'dao');
-        const last = records.at(-1); assert.ok(last);
-        last.stage = 'submitted';
-        if (last.type !== 'agent_create') settle(last);
-      }
+      assert.equal(kind, 'dao');
+      const last = records.at(-1); assert.ok(last);
+      last.stage = 'submitted';
     }
   });
   await context.addInitScript(({ account, daoId }) => {
-    if (!['http://frontend.test', 'https://payables.multiagency.ai'].includes(location.origin)) return;
+    if (location.origin !== 'http://frontend.test') return;
     for (const prefix of ['', 'member:']) localStorage.setItem(prefix + 'selected-wallet:mainnet', 'fixture-wallet');
     const register = (id, accountId) => {
       const accounts = [{ accountId, publicKey: 'ed25519:fixture' }];
@@ -45,17 +41,15 @@ async function firstOwner(browser, root) {
   }, { account, daoId });
   const page = await context.newPage(); page.setDefaultTimeout(10000);
   page.on('pageerror', e => errors.push(e.message));
-  const paymentRequest = { recipient: 'supplier.near', asset: usdc, amount: '1000000', confidential: true };
-  const knownPayment = () => ({ correlationId: paymentId, approvalId: state.payment === 'PENDING_APPROVAL' || state.approved ? 'approval-fixture' : undefined, at: '2026-10-15T12:00:00Z', request: paymentRequest });
+  const paymentRequest = { recipient: 'contributor.near', asset: usdc, amount: '1000000', confidential: true };
+  const knownPayment = () => ({ correlationId: paymentId, at: '2026-10-15T12:00:00Z', request: paymentRequest });
   function settle(record) {
     record.stage = 'settled'; record.ownerSucceeded = true; record.status = 'SUCCESS';
     if (record.type === 'agent_create') state.created = true;
-    if (record.type === 'grant_issue') state.grant = true;
-    if (record.type === 'approval_vote') state.approved = true;
   }
   await page.route('**/*', async route => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname;
-    if (!['frontend.test', 'payables.multiagency.ai'].includes(url.hostname)) {
+    if (url.hostname !== 'frontend.test') {
       if (p.endsWith('manifest.json')) return route.fulfill({ json: { wallets: [] } });
       network.push(req.url()); return route.abort();
     }
@@ -76,11 +70,9 @@ async function firstOwner(browser, root) {
         writes.push(method + ':' + input.action.type);
         const id = `${kind}-${input.action.type}`;
         assert.ok(!records.some(r => r.correlationId === id), 'never prepare a duplicate owner action');
-        const record = { correlationId: id, type: input.action.type, signer: kind, stage: 'prepared', expiresAt, ownerSucceeded: false, status: null,
-          ...(input.action.type === 'approval_vote' ? { payment: { correlationId: input.action.correlationId, verdict: input.action.verdict } } : {}) };
+        const record = { correlationId: id, type: input.action.type, signer: kind, stage: 'prepared', expiresAt, ownerSucceeded: false, status: null };
         records.push(record);
-        if (input.action.type === 'agent_create') { assert.equal(input.action.role, 'payout'); assert.deepEqual(input.action.payees, ['supplier.near']); }
-        if (input.action.type === 'approval_vote') assert.equal(input.action.correlationId, paymentId);
+        if (input.action.type === 'agent_create') { assert.equal(input.action.role, 'payout'); assert.deepEqual(input.action.payees, ['contributor.near']); }
         const transaction = { receiverId: daoId, actions: [{ type: 'FunctionCall', params: { methodName: 'add_proposal', args: { fixture: id }, gas: '1', deposit: '0' } }] };
         return result(kind === 'dao' ? { correlationId: id, expiresAt, digest, dao: { proposal: transaction, proposalAndVote: transaction, transaction } }
           : { correlationId: id, expiresAt, digest, intent: { standard: input.action.type === 'agent_create' ? 'nep366' : 'nep413', payload: input.action.type === 'agent_create' ? { senderId: account, receiverId: 'outlayer.near', actions: [], nonce: '1', maxBlockHeight: '999', publicKey: 'ed25519:fixture' } : { message: id, recipient: 'outlayer.near', nonce: Buffer.alloc(32, 8).toString('base64') } } });
@@ -94,8 +86,6 @@ async function firstOwner(browser, root) {
         const record = records.find(r => r.correlationId === input.correlationId); assert.ok(record);
         return result(record.ownerSucceeded ? { stage: 'submitted', status: 'SUCCESS' } : { stage: kind === 'dao' ? 'voting' : 'submitting' });
       }
-      if (method === 'treasury/link') { assert.equal(input.accountId, account); state.linked = true; writes.push('link'); return result({}); }
-      if (method === 'treasury/fund') { assert.deepEqual(input, { asset: 'USDC', amount: '2000000' }); writes.push('fund'); return result({ transaction: { receiverId: 'funding.fixture', actions: [{ type: 'Transfer', params: { deposit: '1' } }] } }); }
       if (method === 'pay') {
         assert.ok(state.created && state.grant && state.funded); assert.equal(state.payment, null, 'no duplicate payment');
         assert.deepEqual(input, { ...paymentRequest, expectedPolicy: { revision: 1, digest } });
@@ -105,17 +95,17 @@ async function firstOwner(browser, root) {
         grant: state.grant ? { id: 'grant-fixture', label: 'payout', expiresAt } : null,
         dao: kind === 'dao' ? { id: daoId, owner: { account_id: ownerAccount }, funded: true } : null };
       const values = { setup, instance: { agentId: setup.agentId, executor: true, area: 'payables' },
-        overview: { agentId: name, area: 'payables', digest, notInForce: null, agreed: ['supplier.near'], unmanaged: [], target: {}, rebalance: { minLegUsd: 1, maxCostBps: 100 },
+        overview: { agentId: name, area: 'payables', digest, notInForce: null, agreed: ['contributor.near'], unmanaged: [], target: {}, rebalance: { minLegUsd: 1, maxCostBps: 100 },
           grants: state.grant ? [{ grant_id: 'grant-fixture', label: 'payout', expires_at: expiresAt, issued_at: '2026-10-15T12:00:00Z', revoked_at: null }] : [],
           book: [{ asset: usdc, symbol: 'USDC', decimals: 6, public: '0', confidential: state.funded ? '2000000' : '0', usd: state.funded ? 2 : 0, price: 1 }],
-          policy: { status: 'APPLIED', revision: 1, policy: { actions: ['transfer'], owner_approval: true, frozen: false, assets: 'any', budget: {}, limits: {}, destinations: { mode: 'only', list: [{ action: 'transfer', address: 'supplier.near', confidential: true }] } }, usage: { budget: {} }, cooldowns: {} } },
+          policy: { status: 'APPLIED', revision: 1, policy: { actions: ['transfer'], owner_approval: true, frozen: false, assets: 'any', budget: {}, limits: {}, destinations: { mode: 'only', list: [{ action: 'transfer', address: 'contributor.near', confidential: true }] } }, usage: { budget: {} }, cooldowns: {} } },
         'owner/actions': records, 'owner/pending': [], policyHistory: [],
-        'treasury/get': state.linked ? { accountId: owner, confidential: false, balances: { near: '1', usdc: '2000000' }, dao: kind === 'dao' ? { members: [account], approvers: [{ role: 'council', threshold: '1' }] } : null } : null,
-        unresolved: state.payment === 'PROCESSING' && !state.approved ? [{ key: 'first-key', correlationId: paymentId, at: '2026-10-15T12:00:00Z', kind: 'payout', sent: true, status: 'PROCESSING', request: paymentRequest }] : [],
-        held: state.payment === 'PENDING_APPROVAL' && !state.approved ? [knownPayment()] : [],
+        'treasury/get': null,
+        unresolved: state.payment === 'PROCESSING' ? [{ key: 'first-key', correlationId: paymentId, at: '2026-10-15T12:00:00Z', kind: 'payout', sent: true, status: 'PROCESSING', request: paymentRequest }] : [],
+        held: [],
         paymentHistory: { items: state.payment ? [knownPayment()] : [], complete: true },
-        paymentStatus: { status: state.settled ? 'SUCCESS' : state.approved ? 'PROCESSING' : state.payment, request: paymentRequest, approvalId: state.payment === 'PENDING_APPROVAL' || state.approved ? 'approval-fixture' : null, expiresAt, createdAt: '2026-10-15T12:00:00Z' },
-        activity: state.payment ? [{ kind: 'payout', correlationId: paymentId, at: '2026-10-15T12:00:00Z', request: paymentRequest, status: state.settled ? 'SUCCESS' : state.payment }] : [],
+        paymentStatus: { status: state.payment, request: paymentRequest, approvalId: null, expiresAt, createdAt: '2026-10-15T12:00:00Z' },
+        activity: state.payment ? [{ kind: 'payout', correlationId: paymentId, at: '2026-10-15T12:00:00Z', request: paymentRequest, status: state.payment }] : [],
         'agreements/list': [], 'workOrders/list': [], 'inbox/list': [], invoices: [], reconcileBooks: [], ledger: [],
         'autopilot/get': { on: false, everyMin: 60, maxUsd: 1 }, 'autopilot/evidence': { ticks: [] }, 'strategy/get': null,
       };
@@ -140,7 +130,7 @@ async function firstOwner(browser, root) {
   await page.getByRole('button', { name: 'Continue setup', exact: true }).click();
   await page.getByRole('heading', { name: 'Set up the agent', exact: true }).waitFor();
   if (kind === 'wallet' && await page.getByRole('button', { name: 'My wallet', exact: true }).count()) await page.getByRole('button', { name: 'My wallet', exact: true }).click();
-  await page.getByLabel('Agreed payees (NEAR Intents accounts, separated by commas)').fill('supplier.near');
+  await page.getByLabel('Agreed payees (NEAR Intents accounts, separated by commas)').fill('contributor.near');
   await page.getByRole('button', { name: kind === 'dao' ? 'Propose creating the agent' : 'Create agent', exact: true }).click();
   await expect.poll(() => records[0]?.stage).toBe('submitted');
   await page.reload();
@@ -150,21 +140,15 @@ async function firstOwner(browser, root) {
   assert.equal(walletCalls.length, signedBefore); assert.equal(writes.length, writesBefore);
   state.releaseCreate = true; // Simulated external provider/DAO observation, not a second signature.
   await page.getByRole('button', { name: 'Check setup status', exact: true }).click();
-  await page.getByRole('link', { name: 'Review the Payables grant', exact: true }).click();
-  await page.getByRole('button', { name: kind === 'dao' ? 'Propose a new grant' : 'Issue a new grant', exact: true }).click();
-  await expect.poll(() => state.grant).toBe(true);
-  await page.getByRole('link', { name: 'Continue to funding', exact: true }).click();
-  if (kind === 'wallet') {
-    await page.getByText('Link a treasury account', { exact: true }).click();
-    await page.getByRole('button', { name: new RegExp('^Use fresh-wallet') }).click();
-  }
-  await page.getByLabel('Funding amount', { exact: true }).fill('2');
-  if (kind === 'dao' && await page.getByRole('button', { name: 'Connect in Trezu', exact: true }).count()) await page.getByRole('button', { name: 'Connect in Trezu', exact: true }).click();
-  await page.getByRole('button', { name: kind === 'dao' ? 'File funding proposal' : 'Send', exact: true }).click();
-  await expect.poll(() => state.funded).toBe(true);
+  // Policy, grant and funding are signed in the agent's Payables app (covered by its own suites). Setup hands off there.
+  await expect(page.getByRole('link', { name: 'Review the grant in Payables', exact: true })).toHaveAttribute('href', `https://payables.multiagency.ai${base}/policy#grants`);
+  state.grant = true; state.funded = true; // Simulated provider observations of the grant and funding signed in Payables.
+  await page.reload();
+  await page.getByRole('heading', { name: 'Payables agent', exact: true }).waitFor();
+  assert.equal(await page.getByRole('heading', { name: 'Continue setup', exact: true }).count(), 0, 'a reported grant ends the setup hand-off');
   await page.getByRole('link', { name: 'Demos', exact: true }).click();
   await page.getByRole('link', { name: `Start short guide for payables with ${name}`, exact: true }).click();
-  await page.getByLabel('Recipient’s NEAR account', { exact: true }).fill('supplier.near');
+  await page.getByLabel('Recipient’s NEAR account', { exact: true }).fill('contributor.near');
   await page.getByLabel('Amount', { exact: true }).fill('1');
   await page.getByRole('button', { name: 'Review payment', exact: true }).click();
   const review = page.getByRole('dialog', { name: 'Review payment', exact: true });
@@ -175,36 +159,14 @@ async function firstOwner(browser, root) {
   await expect.poll(() => state.payment).toBe('PROCESSING');
   await page.reload();
   await expect(page.getByRole('button', { name: 'Review payment', exact: true })).toBeDisabled();
+  await page.getByText('Unresolved operations: 1 unresolved', { exact: true }).waitFor();
+  // Approval and settlement of the retained payment happen in Payables, at the payment's own record.
   await page.getByText('Find an existing payment', { exact: true }).click();
-  await page.locator(`a[href="${base}/follow/payment?payment=${paymentId}"]`).click();
-  await page.getByText(/Outcome unresolved;/).waitFor();
-  assert.equal(writes.filter(x => x === 'pay').length, 1);
-  state.payment = 'PENDING_APPROVAL'; // Provider evidence resolves the unknown submission to a held payout.
-  await page.reload();
-  await page.getByRole('button', { name: kind === 'dao' ? 'File proposal and vote' : 'Sign approval', exact: true }).click();
-  await page.getByRole('button', { name: kind === 'dao' ? 'Continue to proposal' : 'Continue to wallet', exact: true }).click();
-  await expect.poll(() => state.approved).toBe(true);
-  assert.equal(state.settled, false, 'owner approval never settles the payment');
-  state.settled = true; // Independent provider settlement observation.
-  await page.reload();
-  await page.getByRole('link', { name: 'Link to this payment', exact: true }).waitFor();
-  await expect(page.locator('main')).toContainText('Payment completed');
-  await page.getByRole('link', { name: 'Demos', exact: true }).click();
-  await page.getByRole('link', { name: 'Full confidential payables walkthrough', exact: true }).click();
-  await page.getByRole('link', { name: 'Open full app for Confidential payables', exact: true }).click();
-  await page.getByRole('link', { name: 'Sign in to the owner demo', exact: true }).click();
-  await page.getByRole('button', { name: 'Connect wallet', exact: true }).click();
-  await page.getByRole('heading', { name: 'Your agents', exact: true }).waitFor();
-  assert.equal(writes.filter(x => x === 'signin').length, 2, 'full-app host requires independent sign-in');
-  assert.ok(walletCalls.some(call => call.method === 'message' && call.payload.recipient === 'payables.multiagency.ai'));
-  await page.getByRole('link', { name: `Open agent ${name}`, exact: true }).click();
-  await page.getByRole('radio', { name: /^All records/ }).click();
-  await page.locator(`a[href="${base}/follow/payment?payment=${paymentId}"]`).click();
-  await expect(page.locator('main')).toContainText('Payment completed');
+  await expect(page.locator(`a[href="https://payables.multiagency.ai${base}/follow/payment?payment=${paymentId}"]`)).toHaveCount(1);
   assert.equal(writes.filter(x => x === 'reserve').length, 1);
   assert.equal(writes.filter(x => x === 'pay').length, 1);
-  assert.equal(records.length, 3); assert.deepEqual(errors, []); assert.deepEqual(network, []);
-  console.log(`PASS fresh ${kind}: sign-in, reservation, interrupted owner creation, grant, funding, interrupted payment, approval, exact settlement and full-app reopen`);
+  assert.equal(records.length, 1); assert.deepEqual(errors, []); assert.deepEqual(network, []);
+  console.log(`PASS fresh ${kind}: sign-in, reservation, interrupted owner creation, hand-off to Payables for the grant, interrupted payment blocks resubmission, record opens in Payables`);
   await context.close();
  }
 }

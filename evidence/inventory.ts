@@ -147,7 +147,7 @@ export const PROTOTYPES: Record<Kind, { name: string; tagline: string; briefs: [
             text: "Each work order has a dedicated agent and expiring grant, with owner-approved invoice payment",
             known: "offline",
             evidence:
-              "Buyer flow implemented in Payables and the invoice portal. Offline tests cover fixed policy/grant requests, process isolation, authenticated intake, concurrent filing and restart identity (test/work-order-*.test.ts; test/browser/work-orders.cjs). Funding and settlement on a deployed work-order agent remain unobserved; residual-fund return is not built",
+              "Buyer flow implemented in Payables and the invoice portal. Offline tests cover fixed policy/grant requests, process isolation, authenticated intake, concurrent filing and restart identity (test/work-order-*.test.ts; Payables' test/browser/work-orders.cjs). Funding and settlement on a deployed work-order agent remain unobserved; residual-fund return is not built",
           },
           {
             type: "guarantee",

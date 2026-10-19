@@ -1,8 +1,10 @@
-import { serveSupplierFrontend } from "./supplier-frontend.js";
+import { servePayeeFrontend } from "./payee-frontend.js";
 import { accessFrontend } from "./access-frontend.js";
+import { serveOwnerFrontend } from "./owner-frontend.js";
+import { providedCapabilities } from "../contract/owner-capabilities.js";
 import { resolveMachineManagement } from "./machine-authority.js";
 import { machineRoutes } from "./machine-routes.js";
-import { supplierBase, supplierCookie, supplierEnvironment, supplierRoute } from "./hosted-supplier.js";
+import { payeeBase, supplierCookie, supplierEnvironment, payeeRoute } from "./hosted-supplier.js";
 import { demoHost, demoCrossSite, demoSession, invoiceRoute, assignedToHost } from "./demo-hosts.js";
 import { forwardRpc } from "./rpc-proxy.js";
 import { forwardInvoice } from "./invoice-proxy.js";
@@ -30,6 +32,10 @@ import { HostedAgents, authorizeSetup, hostedEnvironment, setupRequest, type Hos
  */
 
 const config = loadConfig();
+
+/** The host serving each app area, so pages link to the full app on the same deployment (local or hosted). */
+
+const appHosts = Object.fromEntries(Object.entries(config.hosts ?? {}).flatMap(([host, site]) => site.demo === "payables" || site.demo === "treasury" ? [[site.demo, host]] : []).reverse());
 const hosted = new HostedAgents(".hosted", config.agents);
 // Retain existing reservations even if new self-service setup is later disabled.
 const agents = [...config.agents, ...hosted.list()];
@@ -42,7 +48,7 @@ const DIST = join(APP, "web/dist");
 // Signs every session: an empty or missing secret would let anyone forge one, so the gateway won't start.
 const SECRET = process.env.SESSION_SECRET ?? "";
 if (SECRET.length < 32) throw new Error("Set SESSION_SECRET to a random value of at least 32 characters before starting the gateway");
-const supplierHost = Object.entries(config.hosts ?? {}).find(([, site]) => site.demo === "invoices")?.[0];
+const payeeHost = Object.entries(config.hosts ?? {}).find(([, site]) => site.demo === "invoices")?.[0];
 const session = sessions({ cookie: "dao_session", secret: SECRET, secure: true });
 
 const INTERVENTIONS = join(".evidence", "interventions.jsonl");
@@ -69,6 +75,12 @@ async function viewer(req: IncomingMessage, auth = session, selected = agents) {
   return config.selfService || Object.keys(access).length ? { account, access } : null;
 }
 
+/** What this host's owner frontend may rely on: the neutral set plus its agents' and setup areas. Not authorization. */
+function hostCapabilities(selected: typeof agents, site: { hostedAreas?: ("treasury" | "payables")[] }) {
+  const areas = new Set([...selected.flatMap(a => a.area ? [a.area] : []), ...site.hostedAreas ?? []]);
+  return providedCapabilities([...areas]);
+}
+
 /**
  * The agents a visitor may know of, each with its owner and whether that owner is a DAO (signing by
  * proposal): a signed-in viewer's own, or, signed out, only the DAOs' agents. Those are public already,
@@ -76,7 +88,7 @@ async function viewer(req: IncomingMessage, auth = session, selected = agents) {
  */
 async function agentsView(me: Awaited<ReturnType<typeof viewer>>, selected = agents) {
   if (!me && (config.walkthroughs || config.hosts)) return [];
-  const all = await Promise.all(selected.filter(a => !me || me.access[a.name]).map(async (agent) => ({ name: agent.name, owner: agent.owner, ...(agent.area && { area: agent.area }), ...("kind" in agent && { managed: true, invoices: agent.area === "payables" && supplierHost ? `https://${supplierHost}${supplierBase(agent.name)}/` : null }), ...(!("kind" in agent) && agent.invoices !== undefined && { invoices: agent.invoices }), dao: (await ownerOf(agent.owner)).policy !== null })));
+  const all = await Promise.all(selected.filter(a => !me || me.access[a.name]).map(async (agent) => ({ name: agent.name, owner: agent.owner, ...(agent.area && { area: agent.area }), ...("kind" in agent && { managed: true, invoices: agent.area === "payables" && payeeHost ? `https://${payeeHost}${payeeBase(agent.name)}/` : null }), ...(!("kind" in agent) && agent.invoices !== undefined && { invoices: agent.invoices }), dao: (await ownerOf(agent.owner)).policy !== null })));
   return all.filter((a) => (me ? Boolean(me.access[a.name]) : a.dao));
 }
 
@@ -107,21 +119,28 @@ const server = createServer(async (req, res) => {
     const selected = site ? agents.filter(a => assignedToHost(a, site)) : agents;
     if (site && demoCrossSite(req, signingHost)) return json(res, 403, { error: "Cross-origin request" });
     if (pathname.startsWith("/i/")) {
-      const route = site?.demo === "invoices" ? supplierRoute(pathname) : null;
+      const route = site?.demo === "invoices" ? payeeRoute(pathname) : null;
       const agent = route && selected.find(a => a.name === route.name && "kind" in a && a.area === "payables");
-      if (!route || !agent) return json(res, 404, { error: "Supplier entry not found" });
+      if (!route || !agent) return json(res, 404, { error: "Contributor entry not found" });
       if (route.path === "/" && !["GET", "HEAD"].includes(req.method ?? "")) return json(res, 405, { error: "Use the invoice API" });
-      if (req.method === "GET" && await serveSupplierFrontend(res, route.path)) return;
+      if (req.method === "GET" && await servePayeeFrontend(res, route.path)) return;
       return forwardInvoice(req, res, `http://127.0.0.1:${agent.port}`, `/supplier${route.path}${url.search}`, request as typeof import("node:https").request, supplierCookie(agent.name));
     }
-    if (site?.demo === "invoices" && (config.invoiceUpstream || pathname.startsWith("/invoice-ui/static/")) && req.method === "GET" && await serveSupplierFrontend(res, pathname)) return;
-    // Supplier entry and retained work-order identities stay with the existing Payables executor.
+    if (site?.demo === "invoices" && (config.invoiceUpstream || pathname.startsWith("/invoice-ui/static/")) && req.method === "GET" && await servePayeeFrontend(res, pathname)) return;
+    // Each app serves its own skill from its active release; there is no shared or fallback copy.
+    if (site && pathname === "/skill.md" && ["GET", "HEAD"].includes(req.method ?? "")) {
+      const served = site.demo === "invoices" ? await servePayeeFrontend(res, pathname)
+        : site.frontend ? await serveOwnerFrontend(res, pathname, { ...site.frontend, provided: hostCapabilities(selected, site) }) : false;
+      if (!served) json(res, 404, { error: "Not found" });
+      return;
+    }
+    // Payee entry and retained work-order identities stay with the existing Payables executor.
     const intake = invoiceRoute(site?.demo, url, req.method ?? "");
     if (intake !== null) {
       if (!config.invoiceUpstream) {
         if ((pathname === "/" || pathname === "/submit") && ["GET", "HEAD"].includes(req.method ?? ""))
-          return res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }).end('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Supplier invoices · MultiAgency</title><main style="max-width:42rem;margin:4rem auto;padding:1.5rem;font:1.125rem/1.6 system-ui"><h1>Supplier invoices</h1><p>Open the supplier link shared by the owner to submit an invoice or track a purchase-order payment. Each owner has a separate entry.</p></main></html>');
-        return json(res, 503, { error: "Use the supplier link shared by the owner" });
+          return res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }).end('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Contributor invoices · MultiAgency</title><main style="max-width:42rem;margin:4rem auto;padding:1.5rem;font:1.125rem/1.6 system-ui"><h1>Contributor invoices</h1><p>Open the contributor link shared by the owner to submit an invoice or track a purchase-order payment. Each owner has a separate entry.</p></main></html>');
+        return json(res, 503, { error: "Use the contributor link shared by the owner" });
       }
       return forwardInvoice(req, res, config.invoiceUpstream, intake);
     }
@@ -161,7 +180,7 @@ const server = createServer(async (req, res) => {
 
     if (pathname === "/gw/me") {
       const me = await viewer(req, auth, selected);
-      return json(res, 200, { agents: await agentsView(me, selected), invoices: config.invoices ?? null, viewer: me, ...(site && { demo: site.demo, setupAreas: config.selfService ? site.hostedAreas ?? [] : [] }), ...(config.walkthroughs && { walkthroughs: true }), ...(config.selfService && (!site || site.hostedAreas?.length) && { selfService: true }) });
+      return json(res, 200, { agents: await agentsView(me, selected), invoices: config.invoices ?? null, viewer: me, ...(Object.keys(appHosts).length && { apps: appHosts }), ...(site && { demo: site.demo, capabilities: hostCapabilities(selected, site), setupAreas: config.selfService ? site.hostedAreas ?? [] : [] }), ...(config.walkthroughs && { walkthroughs: true }), ...(config.selfService && (!site || site.hostedAreas?.length) && { selfService: true }) });
     }
 
     if (pathname === "/gw/agents" && req.method === "POST") {
@@ -227,6 +246,11 @@ const server = createServer(async (req, res) => {
     const scoped = pathname.match(/^\/a\/([a-z0-9-]+)(?:\/|$)/);
     if (site && scoped && !selected.some(a => a.name === scoped[1])) return json(res, 404, { error: "Agent is not assigned to this demo" });
     if (site && !["GET", "HEAD"].includes(req.method ?? "")) return json(res, 405, { error: "Not a submission endpoint" });
+    // An owner app's own release serves presentation; consent stays Proto's, and unknown assets fall back to its chunks.
+    if (site?.frontend && !/^\/a\/[a-z0-9-]+\/access\/?$/.test(pathname)) {
+      if (await serveOwnerFrontend(res, pathname, { ...site.frontend, provided: hostCapabilities(selected, site) })) return;
+      if (!pathname.startsWith("/static/")) return json(res, 404, { error: "Not found" });
+    }
     return serveStatic(res, accessFrontend(site?.frontendDist, DIST, pathname), pathname.replace(/^\/a\/[a-z0-9-]+/, "") || "/");
   } catch (error) {
     sendFailure(res, error);
@@ -235,7 +259,7 @@ const server = createServer(async (req, res) => {
 
 const supervisor = new Supervisor((agent: AgentEntry & { envFile: string }) => {
   const managed = "kind" in agent ? agent as HostedAgent : undefined;
-  const environment = managed ? { ...hostedEnvironment(managed, process.env), ...supplierEnvironment(managed, supplierHost, SECRET) } : childEnv(agent);
+  const environment = managed ? { ...hostedEnvironment(managed, process.env), ...supplierEnvironment(managed, payeeHost, SECRET) } : childEnv(agent);
   return spawn(process.execPath, workerArguments(...(managed ? [] : ["--env-file-if-exists=.env"]), join(APP, "src/server.ts")), {
     env: environment,
     stdio: ["ignore", "inherit", "inherit"],

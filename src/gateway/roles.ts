@@ -18,7 +18,8 @@ import type { Router } from "../router.js";
  * the wrong people.
  */
 
-export type Access = { canSign: boolean; canPropose: boolean; canVote: boolean; canExecute: boolean; canManage: boolean };
+import type { Access } from "../contract/permissions.js";
+export type { Access };
 /**
  * An agent's configured owner: a DAO with its policy, or an account (`policy: null`) that holds its own
  * keys. `signer` is the account that signs as the agent's owner: the account itself, or for a DAO the

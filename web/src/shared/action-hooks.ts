@@ -40,33 +40,3 @@ export function useAttempt(refreshKeys?: readonly QueryKey[]) {
   }
   return { message, error, busy, attempt };
 }
-
-/**
- * Follows one strategy stream into React state. Every run refreshes the book and the
- * activity log when it ends, whether it executed, stopped or failed. Plan previews may select narrower refreshes.
- */
-export function useRun<I, E>(start: (input: I) => Promise<AsyncIterable<E>>, refreshKeys?: readonly QueryKey[]) {
-  const queryClient = useQueryClient();
-  const [events, setEvents] = useState<E[]>([]);
-  const [state, setState] = useState<"idle" | "running" | "done" | "error">("idle");
-  const [input, setInput] = useState<I>();
-  const [error, setError] = useState<string>();
-
-  async function run(next: I) {
-    setInput(next);
-    setEvents([]);
-    setError(undefined);
-    setState("running");
-    try {
-      for await (const event of await start(next)) setEvents((all) => [...all, event]);
-      setState("done");
-    } catch (e) {
-      setError(errorMessage(e));
-      setState("error");
-    } finally {
-      await refreshQueries(queryClient, refreshKeys);
-    }
-  }
-
-  return { events, state, input, error, run };
-}

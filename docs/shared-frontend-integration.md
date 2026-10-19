@@ -24,7 +24,7 @@ Add `frontendDist` to an existing entry in `dashboard.json`'s `hosts` map, for e
 The value must be an absolute directory containing the built `index.html`. Configuration loading
 fails if that entry is missing or is not a file. Paths come from deployment configuration, never
 from a query parameter or forwarded header. Preserve that host's agent assignments and areas.
-Hosts without the field retain Proto's `web/dist`. Supplier intake keeps its existing routing.
+Hosts without the field retain Proto's `web/dist`. Payee intake keeps its existing routing.
 
 The configured build serves the host's page routes, scoped `/a/<instance>/` pages, and static assets.
 `/gw/*` and `/a/<instance>/rpc/*` continue through Proto's gateway. The actual request Host selects
@@ -87,21 +87,21 @@ Payables enables setup only for `selfService: true` with `payables` permitted by
 It reserves through `/gw/agents` using the authenticated wallet owner and `area: "payables"`, then
 navigates to `/a/<name>/`. Its standalone `/gw/payables` behavior remains owned by the Payables repo.
 Managed reservations advertise `managed: true` so setup retains their owner and area.
-Shared supplier links come from the selected agent's `invoices` field; missing links must not fall
-back to the global intake. A supplier page is public entry, while private supplier records require
-that instance's supplier session.
+Shared payee links come from the selected agent's `invoices` field; missing links must not fall
+back to the global intake. A payee page is public entry, while private payee records require
+that instance's payee session.
 
 The Payables browser variant additionally checks a real offline reservation for a second wallet
-owner, scoped navigation, admission after child startup, and its discovered `/i/<name>/` supplier
-URL. A configured agent with no supplier URL displays the unavailable message even when a global
+owner, scoped navigation, admission after child startup, and its discovered `/i/<name>/` payee
+URL. A configured agent with no payee URL displays the unavailable message even when a global
 legacy intake is configured. Wallet, chain and agent observations are fixtures; no owner action
 or payment is submitted. The fixture waits for child readiness and reloads after reservation; this
 does not establish automatic UI recovery during a slow production startup.
 
-`test/hosted-gateway.test.ts` separately exercises the real managed supplier routing and verifies
-that a supplier cookie cannot read another instance's work orders, even if its cookie name is
+`test/hosted-gateway.test.ts` separately exercises the real managed payee routing and verifies
+that a payee cookie cannot read another instance's work orders, even if its cookie name is
 changed. These server checks complement the browser check; they are not a single deployed journey.
-Positive supplier-link rendering and exact work-order query preservation remain covered by the
+Positive payee-link rendering and exact work-order query preservation remain covered by the
 Payables repository's reported adapter/browser tests, not by this real-gateway browser fixture.
 Deployed wallet behavior, positive work-order journeys across both built frontends, image packaging,
 DNS and rollout remain unverified here.
@@ -114,18 +114,18 @@ separate run passed. No sibling source edits, deployment, restart of live servic
 live-funds tests were performed.
 
 
-## Explicit supplier entry for an existing payout agent
+## Explicit payee entry for an existing payout agent
 
 The shared-frontend candidate configures `agents[].invoices` for the existing static `payout` as
 `https://invoices.multiagency.ai/submit`. This is a deliberate mapping to its retained invoice
 executor, not a global fallback. The field is optional, allowed only for `area: "payables"`, and
 must be HTTPS without credentials or a fragment. Query fields are preserved. Static entries
-without it still advertise no supplier URL. Managed registrations retain their generated scoped
-supplier URL and never inherit this static mapping.
+without it still advertise no payee URL. Managed registrations retain their generated scoped
+payee URL and never inherit this static mapping.
 
 The Payables integration test verifies discovery, the selected static agent's invoice link, the
 exact retained work-order query and reload, alongside a separate missing-link agent and managed
-supplier routing. `test/static-supplier-route.test.ts` checks the production route/proxy forwarding
+payee routing. `test/static-payee-route.test.ts` checks the production route/proxy forwarding
 two different work-order IDs and other query fields without replay; only its HTTPS transport is
 adapted to a loopback fixture. The public `/submit` route still reaches the retained invoice
 executor. No executor assignment, grant, owner signing or state format changes are included.
@@ -162,7 +162,7 @@ that source compatibility was not checked and retain the existing browser-only c
 
 This conservatively compares all procedures within declared groups, including unused members. It does not
 prove built-artifact provenance, runtime schema refinements, serialization/version compatibility,
-discovery, gateway authorization, supplier routing or safe error content. Retain build provenance
+discovery, gateway authorization, payee routing or safe error content. Retain build provenance
 and HTTP/browser tests for those boundaries. No contract package or source copying is required.
 
 Local source observation on 2026-10-16: Treasury passes. Current Payables fails on `compensation`,
@@ -196,23 +196,23 @@ infrastructure hardening. The recorded deployed baseline remains r2
 | Journey step | Evidence and limit |
 | --- | --- |
 | Owner entry and selection | Existing authenticated hosted Agreements rendered; prior r2 records cover Payments and owner admission. No work order was created. |
-| Exact supplier link | Hosted Agreements opened its advertised `/submit` entry. Exact work-order query forwarding is covered by `static-supplier-route.test.ts` and the frozen consumer contract, not a live order. |
-| Supplier request and status | The existing browser session rendered the authenticated supplier interface; its read-only work-order check returned no orders for that account. This establishes retained access, not fresh wallet sign-in. `invoices.cjs` covers synthetic request, agreement, held payout and subsequent outcomes. |
+| Exact payee link | Hosted Agreements opened its advertised `/submit` entry. Exact work-order query forwarding is covered by `static-payee-route.test.ts` and the frozen consumer contract, not a live order. |
+| Payee request and status | The existing browser session rendered the authenticated payee interface; its read-only work-order check returned no orders for that account. This establishes retained access, not fresh wallet sign-in. `invoices.cjs` covers synthetic request, agreement, held payout and subsequent outcomes. |
 | Owner review | Existing work-order UI separates authorization, funding and held-payout approval. Browser and protocol tests cover those boundaries; no live owner signature or approval was attempted. |
 | Recovery | `work-orders.cjs` reproduced selecting order B while the address retained order A. Reload could therefore return to the previous order. Store/restart tests separately retain the payment identity. |
 
 The selected improvement fixes that demonstrated navigation failure in Proto's existing
 `src/invoice-browser.js`: selecting **Review work order** replaces the URL's `workOrder`
-parameter before reading the selected record. It preserves the supplier path, other query
+parameter before reading the selected record. It preserves the payee path, other query
 fields and fragment. It neither submits an invoice nor changes payment identity. This is
-a narrow correction to the served supplier runtime; Payables retains product ownership,
+a narrow correction to the served payee runtime; Payables retains product ownership,
 and no sibling source or compensation implementation was copied or changed.
 
 The new two-order browser regression failed before the fix and passed afterward for both
 `/submit` and managed `/i/<instance>/` entry. Reload reads only the selected order, retains
-its unknown outcome with filing disabled, and sends no mutation. Invoice and scoped-supplier
+its unknown outcome with filing disabled, and sends no mutation. Invoice and scoped-payee
 browser regressions also passed. These synthetic observations do not establish an exact live
-owner-to-supplier work-order journey, which remains unverified. The hosted visual inspection
+owner-to-payee work-order journey, which remains unverified. The hosted visual inspection
 also showed generic invoice guidance above work-order content; that is a usability judgment,
 whereas the lost selection was reproducible and directly obstructed following an existing payment.
 
@@ -220,7 +220,7 @@ A follow-up offline regression reproduced another recovery failure: after the ex
 initial read failed, **Check work orders** refreshed the list and cleared the error without
 retrying the selected record. The handler now uses the validated URL reference when no order
 has loaded. With polling paused, the test verifies an explicit retry, a persistent error while
-the read still fails, and recovery to the same order when the read succeeds. Both supplier
+the read still fails, and recovery to the same order when the read succeeds. Both payee
 entry forms retain the unknown outcome and issue no mutation. This is local browser evidence;
 no hosted outage or production recovery is claimed.
 
@@ -228,6 +228,6 @@ No deployment, production restart, wallet signature or money action occurred. Mo
 executor assignments and state formats were unchanged. The frozen r2 artifact was not modified.
 
 Validation: `pnpm typecheck`, all 775 offline tests, `pnpm evidence:check`, the three targeted
-browser suites (`work-orders.cjs`, `invoices.cjs`, `hosted-supplier.cjs`) and `git diff --check`
+browser suites (`work-orders.cjs`, `invoices.cjs`, `hosted-payee.cjs`) and `git diff --check`
 passed. Browser/IPC checks required execution outside the filesystem sandbox; offline test
 network restrictions remained enabled. The initial sandbox failures are not passing evidence.

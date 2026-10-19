@@ -49,8 +49,8 @@ exported. Repeated CLI/Node process entries alone do not establish duplicate exe
 
 ## Architecture and reviewable configuration
 
-Use [deploy/shared-demos.json](../deploy/shared-demos.json) on **dao**, with the existing
-Dockerfile.dashboard and existing /data/state. It explicitly assigns four hosts to demos and agents.
+Use [deploy/shared-demos.json](../deploy/shared-demos.json) on **dao**, with the packaged gateway
+(`scripts/package-shared-frontends.mjs` → `Dockerfile.gateway`) and existing /data/state. It explicitly assigns four hosts to demos and agents.
 Do not replace the default deployment configuration until the rollout is approved. Existing
 settings, credentials, record formats, grants and executor assignments are preserved. New owners may
 reserve isolated setup instances; no provider agent or grant is created until the owner separately signs.

@@ -1,16 +1,18 @@
 # MultiAgency shared infrastructure
 
 This repository provides shared owner onboarding, isolated agent execution, host-bound access,
-and supplier intake for MultiAgency prototypes. Regular NEAR wallet owners and authorized Sputnik
+and payee intake for MultiAgency prototypes. Regular NEAR wallet owners and authorized Sputnik
 DAO members can reserve their own Treasury or Payables setup; owner policy and grant signatures
 remain separate. The public showcase reads no private records.
 
 The [shared frontend integration](docs/shared-frontend-integration.md) keeps Proto as the static
 three-idea showcase and serves independently built Treasury and Payables frontends. Invoices is
-Payables' supplier-facing entry. The 2026-10-16 UTC [release record](docs/proto-release-execution.md)
+Payables' payee-facing entry. The 2026-10-16 UTC [release record](docs/proto-release-execution.md)
 identifies the deployed artifact and verified sign-in, private access and routing boundaries.
 Agents retain separate balances, authority and executors. [Source ownership and scope](docs/shared-backend-scope.md)
 describe how this integration relates to the sibling Treasury and Payables directories.
+A new prototype reuses the platform through the [integration path](docs/integration-path.md);
+the [reuse map](docs/reuse-map.md) lists which platform pieces each existing workflow used (offline runs).
 
 
 An AI agent manages a treasury on [NEAR Intents](https://near.org/intents) through the
@@ -85,9 +87,9 @@ Four public entry points share Railway routing. Signing in with a NEAR wallet si
   The public showcase links the three ideas; owner workspaces and guides require sign-in.
 - **Treasury**, https://treasury.multiagency.ai: the independent Treasury frontend using the shared gateway.
 - **Payables**, https://payables.multiagency.ai: the independent Payables frontend using the shared gateway.
-- **Invoices**, https://invoices.multiagency.ai: supplier routing to the existing payout executor,
+- **Invoices**, https://invoices.multiagency.ai: payee routing to the existing payout executor,
   where payees request agreements, file invoices and follow their existing payment identities.
-  Hosted sign-in, retained private access and supplier page routing were checked in the
+  Hosted sign-in, retained private access and payee page routing were checked in the
   [2026-10-16 UTC release](docs/proto-release-execution.md); no money action was performed.
 
 With `walkthroughs: true` or `selfService: true`, the signed-in entry is **Your agents**. Choose an existing
@@ -108,10 +110,10 @@ The **Guided walkthrough** link opens the real rebalance or payment controls. Th
 prerequisite observations and follows the exact confirmed plan or returned payment. Funding,
 policy, grants, agreements and Activity remain linked where needed. Unknown outcomes remain
 unresolved; approval does not establish settlement. Opening or reloading a guide submits nothing.
-When a supplier host is configured, owner-created Payables agents receive an isolated supplier entry
+When a payee host is configured, owner-created Payables agents receive an isolated payee entry
 at `/i/<instance>/` after provider agent creation. The existing approve-only payout agent retains its
 separate invoice executor. New owner-created agents never share that executor’s state or grant.
-The shared routing is deployed. New-owner provisioning and scoped supplier journeys retain
+The shared routing is deployed. New-owner provisioning and scoped payee journeys retain
 offline coverage only; the release did not create an agent or issue a grant.
 
 There are no public read-only walkthroughs or requirement cards at the entry. Legacy example hashes
@@ -226,10 +228,20 @@ of maintaining separate requirement statuses.
 
 ## Not done yet
 
-- Current Payables frontend requires `compensation` procedures absent from Proto. Its frontend
-  contract preflight blocks that candidate; retain the frozen r2 artifact for infrastructure work.
-  Payables' gateway-only `platformPayments` dependency requires separate backend integration.
+- A new prototype must reuse a fixed host `demo` value and agent area. Owner-app `contract.json` is checked at
+  runtime only on hosts served through the shared release server (offline E2E; not deployed). See the
+  [integration path](docs/integration-path.md#gaps).
+- Agent connections exist only for a contractor's own reports and are offline-tested and stack-tested, not deployed.
+  A connection token is a bearer: whoever holds it can act within its permissions until it expires (at most 24 hours)
+  or is revoked. Owner connections are not built. See [agent access](docs/agent-access.md#agent-connections-contractor-reports).
+- Payables' frontend (`97ddec7`, re-checked 2026-10-16) passes the source contract preflight now that
+  Proto serves `compensation`; this is a source-type check only. Its build is not yet exercised in the
+  real-stack E2E suite, and owner-app builds are not checked for compatibility at runtime.
   See [consumer compatibility](docs/shared-frontend-integration.md#consumer-source-contract-preflight).
+
+- A send whose provider reply is lost blocks its executor's later sends until reviewed, and no review procedure exists
+  yet. Nothing is sent twice, and the payout stays approvable from the provider's history, but the block does not clear
+  after settlement, and `pnpm reconcile` does not clear it. See [enforcement](docs/enforcement.md) (lost provider reply).
 
 - FastNear deposit batching awaits a verified raw-transaction hash mapping; deployed indexer
   freshness remains unverified. Single-hash receipt reads remain in place. See the
@@ -243,15 +255,15 @@ of maintaining separate requirement statuses.
 - General live AG-UI agent orchestration is not implemented. Short-guide guidance is deterministic
   UI observation; the existing Treasury run recordings remain separate evidence.
 
-- Multi-owner shared-host onboarding and scoped supplier journeys remain offline-tested only. Complete hosted
+- Multi-owner shared-host onboarding and scoped payee journeys remain offline-tested only. Complete hosted
   owner creation, grant issuance and payments for arbitrary wallet and DAO owners have not been
-  observed on mainnet through this build. Supplier conversion and forwarding remain unimplemented.
+  observed on mainnet through this build. Payee conversion and forwarding remain unimplemented.
 
 
 Self-service hosted creation is offline-tested only. Mainnet wallet and Trezu setup, capacity under load, and invoice intake for newly created Payables agents have not been demonstrated. Reservations are bounded to 32 instances; the cap is not abuse-resistant admission or distributed execution.
 
 Work orders have no mainnet lifecycle evidence yet. Partial invoices, amendments, automatic residual-fund
-return, automatic archival, and supplier conversion/forwarding are not implemented. Work-order executors
+return, automatic archival, and payee conversion/forwarding are not implemented. Work-order executors
 run on one host, with a default capacity of eight; this is not distributed fencing. Exact invoice matching
 and one retained payment identity are local checks, not provider guarantees of lifetime spending or
 settlement by a deadline. See [operations](docs/operations.md#work-order-executors) before rollout.
@@ -290,10 +302,10 @@ a manual payout matching an existing held payout; provider replay deduplication 
   but not yet verified on a deployed host. It reuses the authenticated payee’s stored terms and operation
   identity; revised or submission-attempted invoices are refused. It does not resolve unknown outcomes.
 
-- Supplier work-order selection now retains the selected order in the URL across reloads;
+- Payee work-order selection now retains the selected order in the URL across reloads;
   **Check work orders** retries that exact record after an initial read failure
-  (offline browser-tested, not deployed). An exact live owner-to-supplier work-order journey
-  and fresh supplier-wallet sign-in remain unverified; see the
+  (offline browser-tested, not deployed). An exact live owner-to-payee work-order journey
+  and fresh payee-wallet sign-in remain unverified; see the
   [bounded journey check](docs/shared-frontend-integration.md#bounded-payables-journey-check--2026-10-16-utc).
 
 - The AG-UI run-log adapter, private dashboard export and read-only recording inspector are offline-tested

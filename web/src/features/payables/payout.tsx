@@ -1,14 +1,14 @@
-import { Link, type LinkProps } from "@tanstack/react-router";
 import { useEffect, useId, useRef, useState } from "react";
 import { client, fromUnits, toUnits, type Overview, useAttempt } from "../../shared/lib";
-import { type Destination, type Setup, useOwnerAction, useSigner } from "../owner/owner";
+import { type Destination } from "../owner/owner";
 import { Badge, Button, Details, input, reviewDialog, StatusBadge } from "../../shared/ui";
 import { Field } from "../../shared/form";
 import { useCanCall } from "../../app/viewer";
 import { refusalText } from "../../shared/words";
 import type { ReviewedPolicy } from "../../../../src/mandate";
-import { reviewedPolicyOf, sameReviewedPolicy } from "../policy/policy-review";
+import { sameReviewedPolicy } from "../policy/policy-review";
 import { providerDetailText } from "../../shared/provider-message";
+import { useAppHref } from "../demo/app-link";
 
 /** What the agent's transfers share: where it may send, and how a payout is sent and reported. */
 
@@ -17,37 +17,6 @@ export function destinationsOf(data: Overview): Destination[] {
   return (data.policy.policy?.destinations.list ?? []).flatMap((d) =>
     d.action === "transfer" ? [{ address: d.address, confidential: d.confidential }] : [],
   );
-}
-
-/** Policy edits share a 10-minute cooldown per agent; freezing is exempt. */
-function cooldownLeft(data: Overview) {
-  const at = data.policy.cooldowns.policy_change_available_at;
-  const ms = at ? new Date(at).getTime() - Date.now() : 0;
-  return ms > 0 ? `${Math.ceil(ms / 60_000)} min` : null;
-}
-
-/** Owner-signed edits to the destination list, shared by returns and payees. */
-export function useDestinations(data: Overview, setup: Setup) {
-  const action = useOwnerAction(setup);
-  const { canSign: isOwner, viaDao, needsWallet, connectedNotOwner } = useSigner(setup);
-  const ownerAccount = setup.owner?.type === "near" ? ` (${setup.owner.account_id})` : "";
-  const signerHelp = needsWallet
-    ? `Connect the owner’s wallet${ownerAccount} to change agreed payees.`
-    : connectedNotOwner
-      ? `Switch to the owner’s wallet${ownerAccount} to change agreed payees.`
-      : viaDao ? "Your account cannot propose a change to the agreed payees." : "Only the owner can change the agreed payees.";
-  const current = destinationsOf(data);
-  const cooldown = cooldownLeft(data);
-  const expectedPolicy = reviewedPolicyOf(data);
-  return {
-    current,
-    action,
-    blocked: !isOwner ? signerHelp : !expectedPolicy ? "Refresh the policy before changing payees." : cooldown ? `The policy can change again in ${cooldown}.` : null,
-    add: (destination: Destination) =>
-      expectedPolicy ? action.run({ type: "policy_update", changes: { destinations: [...current, destination] }, expectedPolicy }) : Promise.resolve(false),
-    remove: (address: string) =>
-      expectedPolicy ? action.run({ type: "policy_update", changes: { destinations: current.filter((d) => d.address !== address) }, expectedPolicy }) : Promise.resolve(false),
-  };
 }
 
 /** Sends one transfer and reports it the way the policy answered: settled, or refused. */
@@ -66,7 +35,7 @@ export function usePayout() {
 }
 
 /** Navigation only: a refusal never creates a replacement payment or changes authorization. */
-const REFUSAL_ACTIONS: Record<string, { to: LinkProps["to"]; hash?: string; label: string }> = {
+const REFUSAL_ACTIONS: Record<string, { to: string; hash?: string; label: string }> = {
   grant_missing: { to: "/policy", hash: "grants", label: "Review the grant" },
   grant_purpose_denied: { to: "/policy", hash: "grants", label: "Review the grant" },
   insufficient_balance: { to: "/funding", label: "Review funding" },
@@ -78,15 +47,10 @@ const REFUSAL_ACTIONS: Record<string, { to: LinkProps["to"]; hash?: string; labe
   per_transaction_exceeded: { to: "/policy", label: "Review the payment cap" },
 };
 
-export function PayoutResult({ result, agentBase }: {
-  result?: Awaited<ReturnType<typeof client.pay>>;
-  /** A top-up belongs to the treasury agent, even when initiated from Payables. */
-  agentBase?: string;
-}) {
-  const action = result?.outcome === "refused" ? REFUSAL_ACTIONS[result.code] ?? { to: "/activity" as const, label: "Review the refusal in Activity" } : undefined;
-  const link = ({ to, hash, label }: { to: LinkProps["to"]; hash?: string; label: string }) => agentBase === undefined
-    ? <Link to={to} hash={hash} className="break-words underline">{label}</Link>
-    : <a href={`${agentBase}${to}${hash ? `#${hash}` : ""}`} className="break-words underline">{label}</a>;
+export function PayoutResult({ result }: { result?: Awaited<ReturnType<typeof client.pay>> }) {
+  const app = useAppHref("payables");
+  const action = result?.outcome === "refused" ? REFUSAL_ACTIONS[result.code] ?? { to: "/activity", label: "Review the refusal in Activity" } : undefined;
+  const link = ({ to, hash, label }: { to: string; hash?: string; label: string }) => <a href={app(to, hash)} className="break-words underline">{label} in Payables</a>;
   return <div role="status" aria-atomic="true" className="min-w-0 max-w-full text-sm">
     {result && (result.outcome === "refused" ? (
       <div className="flex flex-col items-start gap-2">
@@ -98,7 +62,7 @@ export function PayoutResult({ result, agentBase }: {
     ) : result.status === "PENDING_APPROVAL" ? (
       <div className="flex flex-col items-start gap-2">
         <Badge tone="info">Held payout</Badge>
-        {link({ to: "/", label: "Awaiting the owner's approval. Review Payments on Overview." })}
+        {link({ to: "/", label: "Awaiting the owner's approval. Review Payments" })}
       </div>
     ) : <div className="flex flex-col items-start gap-2">
       <StatusBadge status={result.status} failureCode={result.failureCode} />

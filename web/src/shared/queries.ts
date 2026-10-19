@@ -1,5 +1,4 @@
 import { activityQueriesFor } from "../features/activity/queries";
-import { portfolioQueriesFor } from "../features/portfolio/queries";
 import { ownerQueriesFor } from "../features/owner/queries";
 import { payablesQueriesFor } from "../features/payables/queries";
 import { queryOptions } from "@tanstack/react-query";
@@ -11,13 +10,9 @@ export function queriesFor(api: ReturnType<typeof clientFor>, scope: readonly st
   return {
     ...payablesQueriesFor(api, key),
     ...ownerQueriesFor(api, key),
-    ...portfolioQueriesFor(api, key),
     ...activityQueriesFor(api, key),
-
-    policyHistory: queryOptions({ queryKey: key(["policyHistory"]), queryFn: () => api.policyHistory() }),
     setup: queryOptions({ queryKey: key(["setup"]), queryFn: () => api.setup(), retry: false }),
     overview: queryOptions({ queryKey: key(["overview"]), queryFn: () => api.overview(), refetchInterval: 30_000 }),
-    treasury: queryOptions({ queryKey: key(["treasury"]), queryFn: () => api.treasury.get() }),
   };
 }
 export const queries = queriesFor(client);

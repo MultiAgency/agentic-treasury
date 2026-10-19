@@ -39,14 +39,14 @@ not live-provider, distributed-fencing or screen-reader-hardware acceptance.
    service from the deployment context; do not create a service or change host assignments.
 2. Confirm no unattended run or freeze is active. Follow the stopped-writer backup procedure in
    [operations](operations.md). Preserve the existing `/data` volume, settings, session secret, host
-   registry, supplier routes and executor assignments. Preserve `.machine-auth/`, `.ops/`, `.invoices/`,
-   `.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`, `.agreements/`, `.notify/`,
-   `.work-orders/` and `.hosted/`, including plan execution claims and all revocations. This release
+   registry, supplier routes and executor assignments. Preserve every state directory in
+   the canonical list of [operations](operations.md): `.ops/`, `.invoices/`, `.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`, `.agreements/`, `.notify/`, `.work-orders/`, `.hosted/`, `.agent-connections/` and `.machine-auth/`,
+   including plan execution claims and all revocations. This release
    requires no conversion of existing records and must not initialize replacement identities.
 3. Package the reviewed Proto commit with `scripts/package-shared-frontends.mjs`, supplying the
    verified currently deployed Treasury and Payables frontend artifacts. Build Proto's own frontend
    from the reviewed commit. The live four-domain service uses the packaged root Dockerfile from
-   `deploy/Dockerfile.shared-frontends`, not the plain repository's root Dockerfile or a single-frontend
+   `Dockerfile.gateway`, not `Dockerfile.payouts` or a single-frontend
    dashboard image. Verify every preserved product asset and `deploy/shared-frontends.json` against
    the current deployment. Retain the effective root Dockerfile setting, one replica, zero overlap,
    `/data` mount and `DASHBOARD_FILE=/app/deploy/shared-frontends.json`. Gateway and loopback agent servers must use the same release.

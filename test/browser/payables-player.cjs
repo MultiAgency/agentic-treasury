@@ -18,7 +18,7 @@ async function player(browser, root) {
     const { page, calls, errors } = await open(context, '/a/payables/demos/payables/play', { clock: true, onlyPayables: true });
     await page.getByRole('region', { name: 'Interactive Payables demo' }).waitFor();
     await page.getByRole('heading', { name: 'Good work starts with an agreement.' }).waitFor();
-    await page.getByText('Simulation · fictional records · no funds move', { exact: true }).waitFor();
+    await page.getByText('Fictional rehearsal · no funds move', { exact: true }).waitFor();
     assert.ok(!calls.includes('demoGuide/compose'), 'entry never invokes inference');
     await assertResponsive(page, `payables-player-${width}`);
     mkdirSync('/tmp/proto-payables-player', { recursive: true });
@@ -85,7 +85,7 @@ async function player(browser, root) {
     assert.equal(await page.getByRole('heading', { name: 'A tailored view of permissions' }).count(), 0);
 
     await page.getByRole('radio', { name: 'Use my agent', exact: true }).click();
-    await page.getByText('Live workspace · real funds', { exact: true }).waitFor();
+    await page.getByText('Live · real funds', { exact: true }).waitFor();
     await page.getByRole('heading', { name: 'Run with real funds', exact: true }).waitFor();
     assert.equal(await page.getByText('25 USDC · sample', { exact: true }).count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Simulate approval', exact: true }).count(), 0);

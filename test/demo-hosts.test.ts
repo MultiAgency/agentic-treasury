@@ -65,10 +65,12 @@ test("real gateway isolates host APIs, preserves Proto, and refuses writes witho
   });
   for (const host of Object.keys(hosts)) {
     const answer = await call(host, "/gw/me"); assert.equal(answer.status, 200); assert.deepEqual(JSON.parse(answer.text).agents, []);
+    // Every host names the hosts serving each app area, so pages link to the full app on this deployment.
+    assert.deepEqual(JSON.parse(answer.text).apps, { treasury: "treasury.multiagency.ai", payables: "payables.multiagency.ai" });
     const challenge = await call(host, "/gw/challenge"); assert.equal(JSON.parse(challenge.text).recipient, host);
   }
   assert.equal(upstreamReads, 0, "signed-out views do not read agents");
-  assert.match((await call("invoices.multiagency.ai", "/")).text, /Open the supplier link shared by the owner/, "a fresh installation lists no owners and never defaults to another intake");
+  assert.match((await call("invoices.multiagency.ai", "/")).text, /Open the contributor link shared by the owner/, "a fresh installation lists no owners and never defaults to another intake");
   assert.equal((await call("invoices.multiagency.ai", "/", "POST", {}, '{"amount":"1"}')).status, 405);
   const page = await call("proto.multiagency.ai", "/"); assert.notEqual(page.status, 302); assert.equal(page.headers.location, undefined);
   assert.equal((await call("evil.test", "/gw/me", "GET", { "x-forwarded-host": "proto.multiagency.ai" })).status, 421);
@@ -139,7 +141,7 @@ test("demo configuration rejects cross-area access and unsafe intake origins", (
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("Invoices is the supplier-facing Payables entry with exact identities and no page-body forwarding", () => {
+test("Invoices is the contributor-facing Payables entry with exact identities and no page-body forwarding", () => {
   for (const path of ["/", "/?workOrder=retained%2Fid", "/submit?workOrder=retained%2Fid", "/api/work-orders/retained/file", "/internal/agreements"]) {
     const url = new URL(path, "https://invoices.multiagency.ai");
     const expected = path.replace(/^\/submit/, "/");

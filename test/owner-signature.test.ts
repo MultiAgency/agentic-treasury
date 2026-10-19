@@ -52,11 +52,12 @@ const nep366 = {
 };
 
 /** A signed delegate action as a wallet returns it: `call` overrides what it calls, `signer` signs, `sender` sends. */
-function signDelegate({ call = {}, signer = key, sender = owner.account_id } = {} as { call?: object; signer?: ReturnType<typeof generateKey>; sender?: string }) {
+function signDelegate({ call = {}, signer = key, sender = owner.account_id, forgedBy }: { call?: object; signer?: ReturnType<typeof generateKey>; sender?: string; forgedBy?: ReturnType<typeof generateKey> } = {}) {
   const publicKey = parsePublicKey(signer.publicKey.toString());
   const functionCall = { functionCall: { methodName: "freeze_wallet", args: new TextEncoder().encode('{"wallet":"w"}'), gas: 30_000_000_000_000n, deposit: 1n, ...call } };
   const action = new DelegateAction(sender, "outlayer.near", [functionCall], 5n, 100n, publicKey);
-  const signature = signer.sign(createHash("sha256").update(serializeDelegateAction(action)).digest());
+  // `forgedBy`: the action names the owner's key, but another key produced the signature.
+  const signature = (forgedBy ?? signer).sign(createHash("sha256").update(serializeDelegateAction(action)).digest());
   const signed = encodeSignedDelegateAction({
     signedDelegate: {
       delegateAction: { senderId: sender, receiverId: "outlayer.near", actions: [functionCall], nonce: 5n, maxBlockHeight: 100n, publicKey: { ed25519Key: { data: Array.from(publicKey.data) } } },
@@ -76,6 +77,10 @@ test("a delegate action calling something else, from another account or key, is 
   assert.match(ownerSignatureProblem(nep366, owner, signDelegate({ call: { deposit: 2n } }))!, /not the one prepared/);
   assert.match(ownerSignatureProblem(nep366, owner, signDelegate({ sender: "mallory.near" }))!, /not from the owner's account/);
   assert.match(ownerSignatureProblem(nep366, owner, signDelegate({ signer: generateKey() }))!, /isn't the owner's/);
+});
+
+test("a delegate action naming the owner's key with a signature the owner's key did not make is refused", () => {
+  assert.match(ownerSignatureProblem(nep366, owner, signDelegate({ forgedBy: generateKey() }))!, /doesn't verify/);
 });
 
 test("arguments are compared as JSON, so a wallet's key order doesn't matter", () => {

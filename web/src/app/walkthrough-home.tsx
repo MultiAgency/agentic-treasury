@@ -5,7 +5,7 @@ import { Button, ErrorBox, Spinner } from "../shared/ui";
 import { errorMessage, gw } from "../shared/lib";
 import { dao } from "../features/owner/wallet";
 import { loadGateway, type Gateway } from "./session";
-import { areaName } from "./workspace";
+import { AgentList } from "../features/demo/launcher";
 
 /** Reserve a private setup first; the existing onboarding asks for the actual owner signature. */
 export function WalkthroughHome({ gateway }: { gateway: Gateway }) {
@@ -37,7 +37,7 @@ export function WalkthroughHome({ gateway }: { gateway: Gateway }) {
       // The executor must answer ownership checks before opening its private setup.
       for (let attempt = 0; attempt < 15; attempt++) {
         const session = await loadGateway();
-        if (session?.viewer?.access[result.name]) { location.assign(`/a/${result.name}/workspace`); return; }
+        if (session?.viewer?.access[result.name]) { location.assign(`/a/${result.name}/`); return; }
         await new Promise(resolve => setTimeout(resolve, 1_000));
       }
       throw new Error("Your setup is saved, but its agent is still starting. Continue setup again to reopen the same agent.");
@@ -46,23 +46,11 @@ export function WalkthroughHome({ gateway }: { gateway: Gateway }) {
   return <main id="workspace-main" tabIndex={-1} className="mx-auto flex max-w-3xl flex-col gap-10 px-4 py-8 sm:px-8">
     <header className="flex flex-col gap-3">
       <h1 className="font-heading text-3xl font-semibold tracking-tight">Your agents</h1>
-      <p className="text-muted-foreground">Run agents for your NEAR wallet or Sputnik DAO. Each agent keeps its own balance, policy and grant. You approve its authority; MultiAgency hosts its executor.</p>
+      <p className="text-muted-foreground">Run agents for your NEAR wallet or Sputnik DAO. Each agent keeps its own balance, policy and grant. You approve its authority; MultiAgency hosts its executor. Each agent’s balances, policy, actions and records are in its app.</p>
     </header>
-    {gateway.agents.length > 0 ? <section aria-label="Your agents">
-      <ul className="divide-y">{gateway.agents.map(agent => <li key={agent.name} className="flex flex-col gap-4 py-5">
-        <div className="flex min-w-0 flex-col gap-1"><h2 className="font-semibold">{areaName(agent)} agent</h2><p className="break-all text-sm text-muted-foreground">Owner: {agent.owner}{agent.dao ? " · Sputnik DAO" : " · NEAR wallet"}</p></div>
-        <div className="flex flex-wrap gap-3"><Button asChild><a href={`/a/${agent.name}/workspace`}>Open agent<span className="sr-only"> {agent.name}</span></a></Button>
-          {agent.area === "payables" && <Button asChild variant="outline"><a href={`/a/${agent.name}/payees`}>Agreements and work orders</a></Button>}
-          {agent.area === "treasury" && <Button asChild variant="outline"><a href={`/a/${agent.name}/automations`}>Strategy</a></Button>}
-        </div>
-        <nav aria-label={`${areaName(agent)} agent ${agent.name}`} className="flex flex-wrap gap-x-5 gap-y-2 text-sm">
-          <a className="underline" href={`/a/${agent.name}/policy`}>Policy and grants</a>
-          <a className="underline" href={`/a/${agent.name}/funding`}>Balances and funding</a>
-          <a className="underline" href={`/a/${agent.name}/activity`}>Activity and recovery</a>
-          <a className="underline" href={`/a/${agent.name}/demo`}>Guided walkthrough</a>
-        </nav>
-        <p className="text-sm text-muted-foreground">Open the agent to check its current setup and permissions. Appearing here does not mean it is funded or authorized to act.</p>
-      </li>)}</ul>
+    {gateway.agents.length > 0 ? <section aria-label="Your agents" className="flex flex-col gap-3">
+      <AgentList gateway={gateway} />
+      <p className="text-sm text-muted-foreground">Appearing here does not mean an agent is funded or authorized to act. Its app shows its current setup and permissions.</p>
     </section> : <p>You have no agents available on this host yet. {gateway.selfService ? "Choose an owner and task below to start." : "Access depends on the owner’s permissions."}</p>}
     {gateway.selfService && <section aria-labelledby="create-heading" className="flex flex-col gap-6 border-t pt-8">
       <div className="flex flex-col gap-2"><h2 id="create-heading" className="text-xl font-semibold">Create your own agent</h2><p className="text-sm text-muted-foreground">Choose its owner and task. Continue an existing setup for that owner and task, or reserve a new one. Then review and sign its policy and grant separately.</p></div>

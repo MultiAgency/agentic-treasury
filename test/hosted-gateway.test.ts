@@ -149,10 +149,10 @@ for (const sharedHosts of [false, true]) test(`${sharedHosts ? "shared hosts" : 
       assert.equal((await call(`/i/${instance}/internal/agreements`, undefined, undefined, undefined, "invoices.test")).status, 404);
     }
     const env = supplierEnvironment({ name: daoName, owner: daoInput.owner, kind: "dao", area: "payables", port: 9000, executor: true, envFile: "unused" }, "invoices.test", secret);
-    const cookie = `${supplierCookie(daoName)}=${sessionToken("supplier.near", env.INVOICES_SESSION_SECRET!)}`;
+    const cookie = `${supplierCookie(daoName)}=${sessionToken("contributor.near", env.INVOICES_SESSION_SECRET!)}`;
     const read = (instance: string) => localFetch(`http://127.0.0.1:${port}/i/${instance}/api/work-orders`, { headers: { host: "invoices.test", cookie } });
     assert.deepEqual(await (await read(daoName)).json(), { orders: [] });
-    assert.equal((await read(walletPayout!)).status, 401, "supplier sessions cannot cross owner instances");
+    assert.equal((await read(walletPayout!)).status, 401, "contributor sessions cannot cross owner instances");
     const renamed = cookie.replace(supplierCookie(daoName), supplierCookie(walletPayout!));
     const copied = await localFetch(`http://127.0.0.1:${port}/i/${walletPayout!}/api/work-orders`, { headers: { host: "invoices.test", cookie: renamed } });
     assert.equal(copied.status, 401, "renaming another instance's cookie cannot bypass its distinct signing key");
@@ -162,4 +162,11 @@ for (const sharedHosts of [false, true]) test(`${sharedHosts ? "shared hosts" : 
     assert.equal((await call(`/i/own-${"f".repeat(24)}/`, undefined, undefined, undefined, "invoices.test")).status, 404);
   }
   assert.deepEqual(await (await call("/gw/agents", "alice.near", input)).json(), { name });
+});
+
+test("a hosted contributor entry's environment is pinned: changing it is a deliberate decision", () => {
+  const env = supplierEnvironment({ name: `own-${"a".repeat(24)}`, owner: "alice.near", kind: "wallet", area: "payables", port: 9000, executor: true, envFile: "unused" }, "invoices.test", "pinned-gateway-secret");
+  // A changed derivation signs every existing contributor session out (0.0.1 did so once, by decision, from 1.5.0's "supplier:").
+  assert.deepEqual(env, { HOSTED_INVOICE_BASE: `/i/own-${"a".repeat(24)}`, INVOICES_PUBLIC_HOST: "invoices.test", INVOICES_HTTPS: "true",
+    INVOICES_SESSION_COOKIE: `__Host-invoice_own-${"a".repeat(24)}`, INVOICES_SESSION_SECRET: "a4ca7d1fb98e4fe04d40572c985e71cc57f9711c60b0199760e0c3ce743afc9d" });
 });

@@ -267,7 +267,8 @@ Each host has its own sign-in audience and session key. Host assignment bounds a
 current membership and permissions still determine what each request may do. Payables covers
 ideas 01 and 03: confidential invoice intake, agreements and owner-approved payouts, plus isolated
 purchase orders, supplier invoices and payment tracking. Invoices is the supplier-facing entry
-into Payables, with no separate repository. Both wallet owners and DAO owners retain their approval flows.
+into Payables, with a standalone frontend repository and shared Proto backend. Its independent frontend
+integration remains undeployed. Both wallet owners and DAO owners retain their approval flows.
 The shared-host implementation was deployed on 2026-10-16 UTC; the bounded hosted
 observations and unverified flows are recorded in docs/proto-release-execution.md.
 

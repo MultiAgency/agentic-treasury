@@ -41,6 +41,7 @@ test(`independent ${area} build signs into the real gateway and keeps reads host
       '/rpc/setup': { ...setup, owner: { type: 'near', account_id: 'alice.near' } },
       '/rpc/overview': overview('facilitator'), '/rpc/instance': { agentId: 'fixture', executor: false },
       '/rpc/treasury/get': null, '/rpc/invoices': [], '/rpc/activity': [], '/rpc/owner/pending': [],
+      '/rpc/compensation/list': { agreements: [], requests: [], history: [], payments: [] },
       '/rpc/paymentHistory': { items: [], complete: true }, '/rpc/workOrders/list': [order],
       '/rpc/workOrders/get': { order, agentId: null, wallet: null, balance: null, policyReady: false, grant: null, invoice: null, ownerActions: [], approval: null, error: null },
     });
@@ -131,6 +132,7 @@ test(`independent ${area} build signs into the real gateway and keeps reads host
       const values: Record<string, unknown> = {
         setup: { ...setup, owner: { type: 'near', account_id: 'bob.near' } }, overview: overview('facilitator'), instance: { agentId: 'b'.repeat(64), executor: false },
         'owner/actions': [], 'owner/pending': [], 'treasury/get': null, held: [], unresolved: [], 'inbox/list': [], 'agreements/list': [], invoices: [], activity: [],
+        'compensation/list': { agreements: [], requests: [], history: [], payments: [] },
         paymentHistory: { items: [], complete: true }, 'autopilot/get': { on: false }, 'workOrders/list': [order],
         'workOrders/get': { order, agentId: null, wallet: null, balance: null, policyReady: false, grant: null, invoice: null, ownerActions: [], approval: null, error: null },
       };

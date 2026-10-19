@@ -1,11 +1,11 @@
-import { Snowflake, Sun, Wallet as WalletIcon } from "@phosphor-icons/react";
+import { Wallet as WalletIcon } from "@phosphor-icons/react";
 import { Badge as WalletBadge } from "@/components/ui/badge";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { observeOwnerAction } from "./owner-observation";
 import { client, errorMessage, minutesSeconds, short, useCountdown } from "../../shared/lib";
-import { Badge, Button, ErrorBox, Spinner } from "../../shared/ui";
+import { Button, Spinner } from "../../shared/ui";
 import { useCanCall, useViewer } from "../../app/viewer";
 import { connect, dao, disconnect, ownerWallet, sendAsMember, signIntent, useWallet } from "./wallet";
 
@@ -207,33 +207,5 @@ export function WalletButton() {
       {wallet.status === "connecting" ? <Spinner /> : <WalletIcon size={16} />}
       Connect wallet
     </Button>
-  );
-}
-
-/** Freeze and unfreeze, signed by the owner: a frozen agent can move nothing. */
-export function OwnerControls({ setup, frozen }: { setup: Setup; frozen: boolean }) {
-  const wallet = useWallet();
-  const action = useOwnerAction(setup);
-  const { viaDao, needsWallet, connectedNotOwner, permitted } = useSigner(setup);
-  const type = frozen ? "agent_unfreeze" : "agent_freeze";
-  const verb = frozen ? "unfreeze" : "freeze";
-
-  const onClick = async () => {
-    if (needsWallet) await connect().catch(() => {});
-    else await action.run({ type });
-  };
-
-  return (
-    <div className="flex flex-col items-end gap-2">
-      <div className="flex items-center gap-3">
-        {action.label && <span className="text-sm text-muted-foreground">{action.label}</span>}
-        <Button variant="outline" size="sm" disabled={action.busy || connectedNotOwner || !permitted} onClick={onClick}>
-          {action.busy ? <Spinner /> : frozen ? <Sun size={16} /> : <Snowflake size={16} />}
-          {viaDao ? `Propose to ${verb}` : wallet.status === "connected" ? (frozen ? "Unfreeze" : "Freeze") : `Connect to ${verb}`}
-        </Button>
-      </div>
-      {connectedNotOwner && <span className="text-xs text-muted-foreground">Only {ownerName(setup)} can {verb}</span>}
-      <ErrorBox error={action.error} />
-    </div>
   );
 }

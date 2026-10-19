@@ -43,12 +43,12 @@ runs emphasize **Check operation outcomes in Activity**. Existing held-payout ap
 review/enable controls remain permission checked and retain their confirmations. Missing reads
 never advance the flow or automatically trigger a money action.
 
-`test/browser/run-history.cjs` exercises automatic updates, start/end transitions, later outcomes,
+The Treasury app's `test/browser/run-history.cjs` exercises automatic updates, start/end transitions, later outcomes,
 read failure/retry, identity rejection, pause, expiry while paused, manual refresh after expiry,
 run changes, navigation cleanup and no writes using synthetic responses at 390px. The loaded view
 also receives layout checks at 320px and 1280px. These checks do not establish hosted behavior,
 actual screen-reader speech, or provider latency.
-`test/browser/run-receipt.cjs` checks a terminal v3 recording while the receipt is delayed or fails
+Its `test/browser/run-receipt.cjs` checks a terminal v3 recording while the receipt is delayed or fails
 to refresh: the known run end stays visible, a missing stage return stays missing, and the original
 outcome appears when its receipt becomes readable. No money action is triggered by those reads.
 

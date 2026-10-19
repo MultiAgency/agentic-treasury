@@ -1,11 +1,8 @@
 import type { Policy } from "@near-intents-agent-api/sdk";
 import type { Action } from "./agent.js";
 
-export const ASSETS = {
-  wNEAR: "nep141:wrap.near",
-  USDC: "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
-  ETH: "nep141:eth.omft.near",
-} as const;
+import { ASSETS } from "./contract/assets.js";
+export { ASSETS };
 
 /**
  * Treasury spending policy: swaps, configured per-asset caps and a shared USD budget, with no

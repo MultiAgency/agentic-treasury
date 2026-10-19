@@ -55,12 +55,12 @@ function Panel({ panel, stage, live, role }: { panel: Scene["panels"][number]; s
         <p className="text-sm text-muted-foreground">{stage === "unresolved" ? "Keep this identity. Review retained records before any new send; never infer failure from a missing response." : "In live mode, the provider’s retained evidence determines the outcome. Animation and approval never prove settlement."}</p>
       </>}
       {panel === "roles" && <ol className="flex list-decimal flex-col gap-4 pl-5 text-sm">
-        <li><strong>Contributor</strong> files the invoice through the supplier link.</li>
+        <li><strong>Contributor</strong> files the invoice through the contributor link.</li>
         <li><strong>Executor</strong> submits within the owner-signed policy and live grant.</li>
         <li><strong>Owner</strong> reviews the held payout and approves or rejects it.</li>
         <li><strong>Provider evidence</strong> establishes the payment’s outcome.</li>
       </ol>}
-      {panel === "roles" && live && <p className="text-sm text-muted-foreground">{role === "approve-only" ? "This host is approve-only. Share the supplier link and review the held payout here; that is the expected flow." : role === "executor" ? "This instance is the executor. Existing review controls still determine what your account can do." : "This instance’s role is unconfirmed. Check the real controls below."}</p>}
+      {panel === "roles" && live && <p className="text-sm text-muted-foreground">{role === "approve-only" ? "This host is approve-only. Share the contributor link and review the held payout here; that is the expected flow." : role === "executor" ? "This instance is the executor. Existing review controls still determine what your account can do." : "This instance’s role is unconfirmed. Check the real controls below."}</p>}
       {panel === "policy" && <div className="flex flex-col gap-4 text-sm">
         <p><strong>Policy:</strong> the owner-signed limits on actions, assets, amounts and destinations.</p>
         <p><strong>Grant:</strong> permission for the executor to act for this purpose, within those limits.</p>
@@ -117,7 +117,7 @@ export function PayablesPlayer() {
     if (!allowedChoices(context).includes(choice)) return;
     setPlaying(false); clearGeneration();
     if (choice === "policy" || choice === "supplier" || choice === "signing") {
-      setDetour({ title: choice === "policy" ? "Three permissions, three different jobs." : choice === "supplier" ? "Follow the contributor’s side." : "Know what your signature authorizes.", narration: choice === "supplier" ? "The supplier files an invoice; the owner reviews the held payout. Each person keeps their own account and responsibilities." : "The explanation helps you review. The application and provider still verify every real action.", layout: "focus", panels: [choice === "policy" ? "policy" : choice === "supplier" ? "roles" : "signature"], choices: [] });
+      setDetour({ title: choice === "policy" ? "Three permissions, three different jobs." : choice === "supplier" ? "Follow the contributor’s side." : "Know what your signature authorizes.", narration: choice === "supplier" ? "The contributor files an invoice; the owner reviews the held payout. Each person keeps their own account and responsibilities." : "The explanation helps you review. The application and provider still verify every real action.", layout: "focus", panels: [choice === "policy" ? "policy" : choice === "supplier" ? "roles" : "signature"], choices: [] });
     } else if (mode !== "live") {
       const next = nextStage(stage, choice);
       setHistory(previous => choice === "restart" ? ["agreement"] : next === stage ? previous : [...previous, next]);
@@ -156,7 +156,7 @@ export function PayablesPlayer() {
         <ToggleGroupItem value="live"><ShieldCheck aria-hidden="true" />Use my agent</ToggleGroupItem>
       </ToggleGroup>
       <Alert role="note" variant={mode === "live" ? "warning" : "default"}>
-        <AlertTitle>{mode === "live" ? "Live workspace · real funds" : "Simulation · fictional records · no funds move"}</AlertTitle>
+        <AlertTitle>{mode === "live" ? "Live · real funds" : "Fictional rehearsal · no funds move"}</AlertTitle>
         <AlertDescription>{mode === "live" ? "Each money action uses the existing review and confirmation controls. The guide never signs or submits for you." : "No wallet signatures or payment calls. Watch plays the sample approval path; Try lets you choose. Reload starts this rehearsal again."}</AlertDescription>
       </Alert>
     </header>

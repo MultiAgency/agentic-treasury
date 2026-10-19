@@ -1,0 +1,193 @@
+{
+  "scenario": "Move 5 USDC into wNEAR in two chosen swaps",
+  "fault": "lost-response",
+  "simulated": "provider, chain, settlement and owner wallet signatures are simulated; no real funds or credentials",
+  "steps": [
+    {
+      "step": 1,
+      "actor": "owner",
+      "action": "strategy fixture written",
+      "simulated": true,
+      "strategy": {
+        "targetBps": {
+          "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1": 7500,
+          "nep141:wrap.near": 2500,
+          "nep141:eth.omft.near": 0
+        },
+        "minLegUsd": 2,
+        "maxCostBps": 250
+      }
+    },
+    {
+      "step": 2,
+      "actor": "owner",
+      "action": "machine credential issued",
+      "simulatedSignature": true,
+      "credentialId": "6b990748-f2f4-47e9-bc14-3444791ab909",
+      "scopes": [
+        "read",
+        "prepare",
+        "execute-plan"
+      ],
+      "expiresAt": 1792309935710
+    },
+    {
+      "step": 3,
+      "actor": "agent",
+      "action": "observed",
+      "book": [
+        {
+          "symbol": "wNEAR",
+          "public": "0",
+          "confidential": "0"
+        },
+        {
+          "symbol": "USDC",
+          "public": "0",
+          "confidential": "100000000"
+        },
+        {
+          "symbol": "ETH",
+          "public": "0",
+          "confidential": "0"
+        }
+      ],
+      "budget": {
+        "daily": {
+          "limit_usd": "50",
+          "spent_usd": "0",
+          "remaining_usd": "50",
+          "resets_at": null
+        },
+        "weekly": {
+          "limit_usd": null,
+          "spent_usd": "0",
+          "remaining_usd": null,
+          "resets_at": null
+        },
+        "monthly": {
+          "limit_usd": "200",
+          "spent_usd": "0",
+          "remaining_usd": "200",
+          "resets_at": null
+        }
+      },
+      "strategyDigest": "sha256:c4eff28b0beaa2c844832e9c6453aad7f2e5ee2ba982f99f4eacfbd05fa3ec6f",
+      "unresolved": 0
+    },
+    {
+      "step": 4,
+      "actor": "agent",
+      "action": "plan saved",
+      "planId": "c4c56e09-f366-4cde-8db0-40ea696b41f2",
+      "source": "external",
+      "expiresAt": "2026-10-18T06:57:16.137Z",
+      "actions": [
+        {
+          "type": "swap",
+          "from": "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+          "to": "nep141:wrap.near",
+          "amount": "3000000",
+          "amountOut": "1500000000000000000000000",
+          "minAmountOut": "1498500000000000000000000",
+          "costBps": 0
+        },
+        {
+          "type": "swap",
+          "from": "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+          "to": "nep141:wrap.near",
+          "amount": "2000000",
+          "amountOut": "1000000000000000000000000",
+          "minAmountOut": "999000000000000000000000",
+          "costBps": 0
+        }
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "owner",
+      "action": "execution authorized",
+      "planId": "c4c56e09-f366-4cde-8db0-40ea696b41f2",
+      "submissionsBefore": 0
+    },
+    {
+      "step": 6,
+      "actor": "agent",
+      "action": "execution returned",
+      "exitCode": 1,
+      "events": [],
+      "error": "Treasury request failed (INTERNAL_SERVER_ERROR). Execution outcome may be unknown; inspect activity and unresolved operations before another send."
+    },
+    {
+      "step": 7,
+      "actor": "agent",
+      "action": "outcome observed",
+      "planId": "c4c56e09-f366-4cde-8db0-40ea696b41f2",
+      "operations": [
+        {
+          "purpose": "external",
+          "amount": "3000000",
+          "from": "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+          "to": "nep141:wrap.near",
+          "status": null,
+          "refused": null,
+          "correlationId": null,
+          "at": "2026-10-18T06:52:16.286Z"
+        }
+      ],
+      "unresolved": [
+        {
+          "key": "external:beb91f8d-946b-481f-98fd-0fa746804d0d",
+          "kind": "external"
+        }
+      ],
+      "simulatedSubmissions": 1,
+      "distinctSubmissionIdentities": 1,
+      "submittedLegs": [
+        {
+          "from": "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+          "to": "nep141:wrap.near",
+          "amount": "3000000",
+          "minAmountOut": "1498500000000000000000000"
+        }
+      ],
+      "submittedTotal": "3000000",
+      "floorsKept": true
+    },
+    {
+      "step": 8,
+      "actor": "agent",
+      "action": "unresolved-send block probed",
+      "probes": {
+        "replay": {
+          "exitCode": 1,
+          "error": "Treasury request failed (CONFLICT). Execution outcome may be unknown; inspect activity and unresolved operations before another send.",
+          "submissionsAfter": 1
+        },
+        "newAction": {
+          "prepareExitCode": 0,
+          "prepareError": null,
+          "planId": "1a5d3c8b-ab06-4ead-b094-9a23d2f8526f",
+          "executeExitCode": 1,
+          "executeError": "Treasury request failed (CONFLICT). Execution outcome may be unknown; inspect activity and unresolved operations before another send.",
+          "submissionsAfter": 1
+        }
+      }
+    }
+  ],
+  "provenance": {
+    "node": "v24.22.0",
+    "treasurySkill": "976dbc0356325281aeab1cb5ee8f9c4187fe6c63663dd46df30f04b4a04c6a59",
+    "protoSnapshot": {
+      "path": "<local>/e27183cb27da43c7bd1caa1f96a2544f1f8f2f93fc2428f0bbdd4017d1217d6e",
+      "runDigest": "e27183cb27da43c7bd1caa1f96a2544f1f8f2f93fc2428f0bbdd4017d1217d6e",
+      "verifiedBeforeRun": "e27183cb27da43c7bd1caa1f96a2544f1f8f2f93fc2428f0bbdd4017d1217d6e",
+      "sourceHead": "af6c03bbdf9070399da534b91dba4a5c26b21aec",
+      "overlayDiffSha256": "3a7e26d0dac2b0a59b843291119aa50206384c7f2924de053208a3b0fd9f438d",
+      "unchangedAfterRun": true
+    },
+    "protoSource": "5381aeb1cdbac38351d0786b50e6f8903af902c2e5d11b4ba35b5dded7217aa2",
+    "protoHarness": "f2b23bf62586a5b6c82412b9dd9d0e33180da0db9f79ee3174008cd02a2ee3f8"
+  },
+  "result": "as expected"
+}

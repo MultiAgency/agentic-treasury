@@ -31,8 +31,8 @@ copy(builds.proto, join(output, 'web/dist'));
 for (const area of ['treasury', 'payables']) copy(builds[area], join(output, 'frontends', area));
 for (const name of ['dashboard-entrypoint.sh', 'shared-frontends.json']) copy(join(root, 'deploy', name), join(output, 'deploy', name));
 chmodSync(join(output, 'deploy/dashboard-entrypoint.sh'), 0o755);
-copy(join(root, 'deploy/Dockerfile.shared-frontends'), join(output, 'Dockerfile'));
-copy(join(root, 'deploy/railway.shared-frontends.json'), join(output, 'railway.json'));
+copy(join(root, 'Dockerfile.gateway'), join(output, 'Dockerfile'));
+copy(join(root, 'deploy/railway.gateway.json'), join(output, 'railway.json'));
 writeFileSync(join(output, '.dockerignore'), 'node_modules\n');
 const revision = path => { try { return execFileSync('git', ['-C', path, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); } catch { return null; } };
 writeFileSync(join(output, 'manifest.json'), JSON.stringify({ version: 1, createdAt: new Date().toISOString(),

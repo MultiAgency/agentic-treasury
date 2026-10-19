@@ -1,0 +1,84 @@
+# domain_map.yaml
+# Library: @multiagency/sdk
+# Version: 0.1.0
+# Date: 2026-10-18
+# Status: draft
+library:
+  name: '@multiagency/sdk'
+  version: '0.1.0'
+  repository: 'MultiAgency/agentic-treasury-private'
+  description: 'Typed owner and payee clients, schemas and the shared release server for MultiAgency agents behind the gateway.'
+  primary_framework: 'framework-agnostic'
+domains:
+  - name: 'Choosing access'
+    slug: 'access'
+    description: 'Which identity an app or agent acts as, what the server enforces for it, and how results report outcomes.'
+  - name: 'Owner work'
+    slug: 'owner'
+    description: 'Reading an agent''s records and taking owner-signed actions and money actions through the gateway.'
+  - name: 'Payee work'
+    slug: 'payee'
+    description: 'A payee''s own reports and payment status, from a browser session or an agent connection.'
+skills:
+  - name: 'Getting started'
+    slug: 'getting-started'
+    domain: 'access'
+    description: 'Choosing the client and identity, reading result kinds, and checking the supported package surface.'
+    type: 'lifecycle'
+    covers: ['ownerClient', 'payeeClient', 'identities', 'result kinds', 'package entries']
+    tasks: ['decide whether an agent acts as owner or payee', 'explain why a call answered forbidden', 'check what this version supports']
+    failure_modes:
+      - mistake: 'Treating a skill or client as authority'
+        mechanism: 'Authorization comes from the gateway, the owner''s signature and the provider policy; a client only carries the session.'
+        wrong_pattern: |
+          // assume the call is allowed because the method exists
+        correct_pattern: |
+          // branch on result.kind: forbidden means this identity may not do it
+        source: 'docs/agent-access.md'
+        priority: 'HIGH'
+        status: 'active'
+  - name: 'Owner workflows'
+    slug: 'owner-workflows'
+    domain: 'owner'
+    description: 'Owner reads, prepare-sign-submit owner actions, and plan execution streams with recovery by kind.'
+    type: 'core'
+    covers: ['ownerClient.call', 'ownerClient.stream', 'owner/prepare', 'owner/submit', 'owner/status', 'executePlan']
+    tasks: ['read held payouts', 'freeze an agent with the owner''s wallet signature', 'execute a saved plan and handle a lost stream']
+    failure_modes:
+      - mistake: 'Resending an action after unknown'
+        mechanism: 'The provider may have accepted the first send; a second send can duplicate the effect.'
+        wrong_pattern: |
+          if (result.kind === "unknown") await owner.call("owner/submit", same);
+        correct_pattern: |
+          if (result.kind === "unknown") await owner.call("owner/status", { correlationId });
+        source: 'src/contract/owner-client.ts'
+        priority: 'CRITICAL'
+        status: 'active'
+      - mistake: 'Retrying money streams automatically'
+        mechanism: 'executePlan, sweep and autopilot/tick may have run in part; a retry can send again.'
+        wrong_pattern: |
+          useMutation({ mutationFn: run, retry: 3 })
+        correct_pattern: |
+          // explicit call, no retry; on unknown read activity and unresolved
+        source: 'src/contract/owner-client.ts'
+        priority: 'CRITICAL'
+        status: 'active'
+  - name: 'Payee workflows'
+    slug: 'payee-workflows'
+    domain: 'payee'
+    description: 'Submitting a report, recovering a lost reply by id, following payment, and managing agent connections.'
+    type: 'core'
+    covers: ['payeeClient', 'submitReport', 'compensation', 'startAgentConnection', 'agentConnections', 'revokeAgentConnection']
+    tasks: ['report work from the payee''s agent', 'recover a lost report reply', 'follow a report to paid', 'connect and revoke an agent']
+    failure_modes:
+      - mistake: 'Minting a new id after a lost reply'
+        mechanism: 'A new commandId or id creates a second report instead of finding the first.'
+        wrong_pattern: |
+          await client.submitReport({ ...command, commandId: crypto.randomUUID(), id: crypto.randomUUID() });
+        correct_pattern: |
+          (await client.compensation()).value.requests.find(r => r.id === command.id);
+        source: 'src/contract/client.ts'
+        priority: 'CRITICAL'
+        status: 'active'
+gaps:
+  - 'Owner clients outside a browser are not covered: owner access outside a browser exists only as Treasury machine credentials (Treasury skill helper).'

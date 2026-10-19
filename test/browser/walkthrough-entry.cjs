@@ -42,7 +42,7 @@ async function entry(browser, root) {
       await page.goto('http://frontend.test/');
       await page.getByRole('heading', { name: 'Your agents', exact: true }).waitFor();
       assert.deepEqual(writes, []);
-      assert.equal(await page.getByRole('navigation', { name: 'Workspace', exact: true }).count(), 0);
+      assert.equal(await page.getByRole('navigation', { name: 'Workspace', exact: true }).count(), 1, 'the same signed-in frame as a launcher-only host');
       await page.getByRole('radio', { name: area === 'payables' ? 'Payables' : 'Portfolio', exact: true }).click();
       if (kind === 'dao') {
         await page.getByRole('radio', { name: 'DAO through Trezu', exact: true }).click();
@@ -58,22 +58,29 @@ async function entry(browser, root) {
       assert.equal(writes.length, 1, 'only a reservation, never an owner signature or payment');
       await page.getByText(/Selected owner:/).waitFor();
       await assertResponsive(page, `reserved setup ${kind} ${width}`);
-      assert.ok(new URL(page.url()).pathname.endsWith('/workspace'));
+      assert.equal(new URL(page.url()).pathname, '/a/own-fixture/', 'the reservation opens the agent page, where onboarding continues');
       await page.reload();
       await page.getByRole('heading', { name: 'Set up the agent', exact: true }).waitFor();
       assert.equal(writes.length, 1);
       await page.goto('http://frontend.test/');
       await page.getByRole('heading', { name: 'Your agents', exact: true }).waitFor();
-      for (const [label, path] of [['Open agent own-fixture', 'workspace'], ['Policy and grants', 'policy'], ['Balances and funding', 'funding'], ['Guided walkthrough', 'demo']]) {
-        await expect(page.getByRole('link', { name: label, exact: true })).toHaveAttribute('href', `/a/own-fixture/${path}`);
-      }
+      const app = area === 'treasury' ? 'Treasury' : 'Payables';
+      await expect(page.getByRole('link', { name: `Open in ${app} for own-fixture`, exact: true })).toHaveAttribute('href', `https://${area}.multiagency.ai/a/own-fixture/`);
+      await expect(page.getByRole('link', { name: 'Walkthroughs for own-fixture', exact: true })).toHaveAttribute('href', '/a/own-fixture/');
       assert.equal(writes.length, 1, 'returning home never provisions or submits');
-      await page.getByRole('link', { name: 'Open agent own-fixture', exact: true }).click();
+      await page.getByRole('link', { name: 'Walkthroughs for own-fixture', exact: true }).click();
       await page.getByRole('heading', { name: 'Set up the agent', exact: true }).waitFor();
       assert.equal(writes.length, 1, 'opening a saved agent resumes without another reservation');
       await page.goto('http://frontend.test/demos');
       await page.getByRole('heading', { name: 'Demos and validation', exact: true }).waitFor();
       const titles = { treasury: 'Treasury', payables: 'Confidential payables', invoices: 'Purchase orders and invoices' };
+      // Each workflow names its data source and limitation, and its recorded simulations come from Proto's own evidence.
+      assert.equal(await page.getByText('Live', { exact: true }).count(), 3);
+      assert.equal(await page.getByText('Limitation:', { exact: true }).count(), 3);
+      await page.getByRole('heading', { name: 'Variation: Recurring builder agreement', exact: true }).waitFor();
+      assert.ok(await page.getByText('Recorded simulation', { exact: true }).count() >= 3);
+      assert.match(await page.locator('body').innerText(), /Recorded 2026-10-18 \d\d:\d\d UTC/);
+      assert.doesNotMatch(await page.locator('body').innerText(), /\/Users\//);
       for (const workflow of ['treasury', 'payables', 'invoices']) {
         const available = workflow === 'treasury' ? area === 'treasury' : area === 'payables';
         const shortLink = page.getByRole('link', { name: `Start short guide for ${workflow} with own-fixture`, exact: true });

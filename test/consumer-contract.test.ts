@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { checkConsumerContract, checkFrontendUsage } from "../scripts/check-consumer-contract.mjs";
 
 test("consumer contract preflight rejects missing procedures and incompatible inputs/outputs without executing routers", () => {
-  const directory = mkdtempSync(join(tmpdir(), "proto-contract-fixture-"));
+  const directory = mkdtempSync(join(tmpdir(), "sdk-fixture-"));
   const provider = join(directory, "provider"), consumer = join(directory, "consumer");
   const imports = `
 import type { os as Os } from ${JSON.stringify(fileURLToPath(import.meta.resolve("@orpc/server")).replace(/\.mjs$/, ".d.mts"))};

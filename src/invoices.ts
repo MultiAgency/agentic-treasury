@@ -1,5 +1,5 @@
 import { agentId } from "./env.js";
-import { dispatch } from "./agent.js";
+import { dispatch, LocalRefusal } from "./agent.js";
 import { held } from "./payouts.js";
 import { api, readStatus, StatusMismatch } from "./api.js";
 import { agreedPayees } from "./authorize.js";
@@ -66,7 +66,8 @@ const serially = <T>(work: () => Promise<T>) => {
   return run;
 };
 
-type Filing = { id: string; status: Status; revisionConflict?: boolean };
+/** `refused` with `code`: Proto's own check refused before submission; the invoice stays prepared on its identity. */
+type Filing = { id: string; status: Status; revisionConflict?: boolean; code?: string };
 
 /** A changed revision never changes the original payment or authorizes another attempt. */
 export const file = (invoice: InvoiceInput, authenticatedPayee: string, expectedPolicy?: ReviewedPolicy): Promise<Filing> => serially(async () => {
@@ -106,6 +107,7 @@ export const file = (invoice: InvoiceInput, authenticatedPayee: string, expected
     return { id, status: paymentStatus(getInvoice(id)!) };
   } catch (error) {
     if (error instanceof MoneyLockBusy || error instanceof UnresolvedOperations) return { id, status: "busy" };
+    if (error instanceof LocalRefusal) return { id, status: "refused", code: error.code };
     const persisted = getInvoice(id);
     if (!persisted) throw error;
     // A send/read error is evidence about this attempt, not permission to create a new one.

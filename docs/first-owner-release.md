@@ -32,8 +32,9 @@ Run `pnpm verify:candidate` after review. Its immutable source directory, `manif
 Only that captured source is eligible for this rollout. Concurrent working-tree changes require
 review and another candidate; they are not silently included. No release commit is implied.
 
-Build the captured source with `Dockerfile.dashboard`, not the root Railway configuration's
-`Dockerfile` (the invoice service image). Pin the resulting image digest in the private release
+Build the `dao` image from a package of the captured source (`scripts/package-shared-frontends.mjs`, whose root
+Dockerfile is `Dockerfile.gateway`), not from the repository's `railway.json`, which selects `Dockerfile.payouts` (the
+invoice service image). Pin the resulting image digest in the private release
 record before deployment. The current Docker base tag is mutable; record the resolved base digest
 and final image. The optional independently built frontend is not enabled by this rollout.
 
@@ -41,7 +42,7 @@ For dao: `DASHBOARD_FILE=/app/deploy/shared-demos.json`, unset `DASHBOARD_HOST`,
 `SESSION_SECRET`, existing settings and `/data` volume, `PORT=8080` matching the domain target, one replica, no deployment overlap.
 Require a stopped old writer before starting the replacement; configuration alone is not fencing.
 Do not alter the root Railway file used by invoices. Confirm the effective service build uses
-`Dockerfile.dashboard` and `/health` before releasing. Keep all existing executor assignments.
+the packaged gateway Dockerfile and `/health` before releasing. Keep all existing executor assignments.
 
 ## Refreshed read-only baseline
 

@@ -32,18 +32,14 @@ export const agreementRecord = z.object({ id: requestId, version: z.number().int
 export const requestRecord = z.object({
   id: requestId, version: z.number().int().positive(), payee: account, agreementVersion: z.number().int().positive(),
   report: compensationReport, state: z.enum(["draft", "submitted", "changes_requested", "approved", "declined"]),
-  payoutMode: z.literal("isolated").optional(), approvedAmount: atomicUsdc.optional(),
+  approvedAmount: atomicUsdc.optional(),
   feedback: z.string(), reviewedBy: z.string().nullable(), at: z.string(),
   payment: z.object({ mode: z.enum(["shared", "isolated"]), id: requestId, until: z.iso.datetime().optional() }).nullable().default(null),
 });
-/** Legacy approved invoices retain their original amount; new reports record owner compensation. */
-export function compensationAmount(request: CompensationRequest): string | undefined {
-  return request.approvedAmount ?? request.report.amount;
-}
+/** The owner's explicitly approved amount: the only amount a payment of this request may carry. */
 export function approvedCompensation(request: CompensationRequest): string {
-  const amount = compensationAmount(request);
-  if (request.state !== "approved" || !amount || (request.payoutMode === "isolated" && !request.approvedAmount)) throw new Error("Approved compensation evidence is missing; restore and review the original record.");
-  return amount;
+  if (request.state !== "approved" || !request.approvedAmount) throw new Error("Approved compensation evidence is missing; restore and review the original record.");
+  return request.approvedAmount;
 }
 export type CompensationAgreement = z.infer<typeof agreementRecord>;
 export type CompensationRequest = z.infer<typeof requestRecord>;
@@ -56,3 +52,5 @@ export const compensationCommand = z.discriminatedUnion("type", [
   z.object({ type: z.literal("review"), command: reviewCommand }).strict(),
   paymentPreparation,
 ]);
+/** Owner send of a prepared shared payment, bound to the reviewed policy revision and digest. */
+export const compensationSend = z.object({ type: z.literal("send"), id: z.uuid(), expectedPolicy: z.object({ revision: z.number().int().nonnegative(), digest: z.string().regex(/^sha256:[0-9a-f]{64}$/) }) }).strict();

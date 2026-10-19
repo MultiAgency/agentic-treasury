@@ -132,12 +132,12 @@ against an independent lifecycle consumer in offline tests; no live client trans
 `test/agui.test.ts` and `test/journal-history.test.ts` cover synthetic success, refusal, partial and
 unresolved execution, interrupted ticks, late reconciliation, missing timing, conflicting operation
 associations, schema validation and read-only file access. No real recording has been validated by
-this change. The dashboard continues using its existing timeline reads for current status. Its
+this change. The Treasury app continues using its existing timeline reads for current status. Its
 optional **Inspect recording** view steps through historical observations with a selector and
 Previous/Next controls, without timed playback or a live stream. It shows missing timing and source
 gaps, and keeps later journal observations separate from the run's original outcome. It cannot
-replay or authorize an operation. `test/recording-view.test.ts` checks version, identity, size and
-completion semantics. `test/browser/run-history.cjs` checks synthetic recording behavior once,
+replay or authorize an operation. The Treasury app's `test/recording-view.test.ts` checks version, identity, size and
+completion semantics, and its `test/browser/run-history.cjs` checks synthetic recording behavior once,
 including identity refusal and separate later settlement, and resizes the loaded inspector to
 320px, 390px and 1280px. All requests are intercepted.
 These are offline checks, not verification of a deployed inspector or a real recording.
@@ -190,8 +190,8 @@ endpoint cannot combine settings changes and enablement. Approve-only
 instances cannot configure strategies; Payables has no Treasury setup and retains stop for an
 existing schedule. No state format migration is required.
 
-`test/strategy-controls.test.ts` and `test/browser/strategy.cjs` cover server refusal/failure paths
-and synthetic wallet/DAO workflows. This is offline-tested behavior, not deployed or mainnet-observed.
+`test/strategy-controls.test.ts` covers server refusal/failure paths, and the Treasury app's `test/browser/strategy.cjs`
+covers synthetic wallet/DAO workflows. This is offline-tested behavior, not deployed or mainnet-observed.
 Dispatch still authorizes every operation; the settings lock is not distributed fencing and does not
 coordinate manual file edits or make provider observations atomic with subsequent sends.
 

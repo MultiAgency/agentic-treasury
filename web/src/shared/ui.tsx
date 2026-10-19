@@ -4,11 +4,10 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge as BadgePrimitive } from "@/components/ui/badge";
 import { Card as CardPrimitive, CardHeader as CardHeaderPrimitive, CardTitle, CardDescription } from "@/components/ui/card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Empty as EmptyPrimitive, EmptyContent, EmptyMedia } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { ASSET_COLOR } from "./format";
 
 export { Button };
 /** Native input/select callers share the same states as the Input component. */
@@ -165,18 +164,6 @@ export function StatusBadge({ status, failureCode, children }: { status: string;
   );
 }
 
-/** A rejection can occur after earlier actions; never infer non-execution from it. */
-export function NotExecuted({ problems, again }: { problems: string[]; again: string }) {
-  return (
-    <Alert variant="warning" role="note">
-      <AlertTitle>Execution stopped. Earlier actions may have completed. Review Activity before creating a new {again.toLowerCase()}.</AlertTitle>
-      <AlertDescription className="flex flex-col gap-1">
-        {problems.map((p) => <span key={p}>– {p}</span>)}
-      </AlertDescription>
-    </Alert>
-  );
-}
-
 export function CopyButton({ text }: { text: string }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ text: string; message: string }>();
@@ -226,10 +213,6 @@ export function CardHeader({ icon, title, description }: { icon: ReactNode; titl
   );
 }
 
-export function Note({ children }: { children: ReactNode }) {
-  return <p className="text-sm text-muted-foreground">{children}</p>;
-}
-
 /** Fills a card's body when there is nothing to list yet. */
 export function Empty({ icon, children }: { icon: ReactNode; children: ReactNode }) {
   return (
@@ -239,6 +222,3 @@ export function Empty({ icon, children }: { icon: ReactNode; children: ReactNode
     </EmptyPrimitive>
   );
 }
-
-/** An asset's chart colour, as a dot beside its name. */
-export const Dot = ({ symbol }: { symbol: string }) => <span className={`size-2 rounded-full ${ASSET_COLOR[symbol] ?? "bg-muted-foreground"}`} />;

@@ -14,6 +14,7 @@ import { acquireMoneyLock, UnresolvedOperations } from "../src/lock.js";
 import { pay } from "../src/agent.js";
 import { readOps, record } from "../src/ops.js";
 import { ASSETS, payoutPolicy } from "../src/policy.js";
+import { PublicError } from "../src/public-error.js";
 import { recover } from "../src/recover.js";
 import { freshDirectory, TSX } from "./fixtures/harness.js";
 
@@ -139,15 +140,23 @@ test("only never-submitted payments can be cancelled and release their reservati
 test("cancellation after submission-attempted cannot erase uncertainty", () => {
   const saved = prepareInvoice(invoice, ASSETS.USDC);
   claimInvoiceSubmission(saved.operation.idempotencyKey, saved.operation.request);
-  assert.throws(() => cancelPreparedInvoice(saved.id), /never-submitted/);
+  const before = stored();
+  // A refused cancellation (typed for the owner), which says nothing about whether the payment was submitted.
+  assert.throws(() => cancelPreparedInvoice(saved.id), (error: unknown) => error instanceof PublicError && /never-submitted/.test(error.message));
+  assert.deepEqual(stored(), before, "the invoice keeps its identity and status");
   assert.equal(stored().reservation, invoice.amount);
 });
 
 test("a payout policy changed to bypass owner approval stops before submission", async () => {
+  // A policy in force (applied, synced) whose owner approval is removed after the first read: only the approval rule refuses it.
   let reads = 0;
-  Object.assign(api, { getPolicy: async () => ({ policy: { ...payoutPolicy([invoice.payee]), owner_approval: ++reads === 1 }, revision: reads }) });
-  assert.equal((await file(invoice, invoice.payee)).status, "refused");
-  assert.equal(stored().reservation, "0");
+  Object.assign(api, { getPolicy: async () => { reads++; return policyView({ ...payoutPolicy([invoice.payee]), owner_approval: reads === 1 }, reads); } });
+  assert.deepEqual(await file(invoice, invoice.payee), { id: stored().id, status: "refused", code: "owner_approval_required" });
+  assert.ok(reads >= 2, "the changed policy was read before submission");
+  // Refused before submission: the invoice stays prepared on its identity, its reservation retained for a retry.
+  assert.equal(stored().operation.submissionState, "PREPARED");
+  assert.equal(stored().operation.refused, undefined);
+  assert.equal(stored().reservation, invoice.amount);
   assert.equal(sends.length, 0);
 });
 
@@ -203,7 +212,9 @@ for (const boundary of ["before_prepare_commit", "after_prepare_commit", "before
     const restart = child("recover", dir);
     assert.equal(restart.status, 0, restart.stderr);
     const after = JSON.parse(restart.stdout).invoice as ReturnType<typeof stored>;
-    if (before) assert.equal(after.operation.idempotencyKey, before.operation.idempotencyKey);
+    // Only a crash before the preparation commits leaves no invoice; at every later boundary it exists and keeps its identity.
+    assert.equal(Boolean(before), boundary !== "before_prepare_commit", "an invoice exists exactly after its preparation committed");
+    if (boundary !== "before_prepare_commit") assert.equal(after.operation.idempotencyKey, before!.operation.idempotencyKey);
     const attemptedWithoutSend = boundary === "after_attempt_commit";
     assert.equal(providerLines(dir).length, attemptedWithoutSend ? 0 : 1);
     if (attemptedWithoutSend || boundary === "after_remote_acceptance" || boundary === "before_correlation_commit") {

@@ -20,8 +20,8 @@ test("a configured frontend must be an absolute directory containing index.html"
 });
 
 
-test("static supplier links are explicit HTTPS Payables configuration", t => {
-  const dir = mkdtempSync(join(tmpdir(), "supplier-config-"));
+test("static contributor links are explicit HTTPS Payables configuration", t => {
+  const dir = mkdtempSync(join(tmpdir(), "contributor-config-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, "gateway.json");
   const write = (invoices?: string, area = "payables") => writeFileSync(file, JSON.stringify({
@@ -34,4 +34,21 @@ test("static supplier links are explicit HTTPS Payables configuration", t => {
   }
   write("https://invoices.test/submit", "treasury"); assert.throws(() => loadConfig(file));
   write(); assert.equal((loadConfig(file).agents[0] as { invoices?: string }).invoices, undefined);
+});
+
+test("an owner app release origin is HTTPS or loopback, names its product, and excludes a legacy directory", t => {
+  const dir = mkdtempSync(join(tmpdir(), "owner-frontend-config-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, "index.html"), "<title>Legacy</title>");
+  const file = join(dir, "gateway.json");
+  const write = (host: object, demo = "treasury") => writeFileSync(file, JSON.stringify({ host: "treasury.test", selfService: true, agents: [], hosts: { "treasury.test": { demo, agents: [], hostedAreas: demo === "invoices" ? [] : ["treasury"], ...host } } }));
+  write({ frontend: { origin: "https://releases.test/", product: "treasury" } });
+  assert.equal(loadConfig(file).hosts?.["treasury.test"]?.frontend?.origin, "https://releases.test/");
+  write({ frontend: { origin: "http://127.0.0.1:3020", product: "treasury" } });
+  assert.equal(loadConfig(file).hosts?.["treasury.test"]?.frontend?.product, "treasury");
+  for (const origin of ["http://releases.test/", "https://user:pw@releases.test/", "https://releases.test/build/"]) {
+    write({ frontend: { origin, product: "treasury" } }); assert.throws(() => loadConfig(file), origin);
+  }
+  write({ frontend: { origin: "https://releases.test/", product: "treasury" }, frontendDist: dir }); assert.throws(() => loadConfig(file), /one owner frontend/);
+  write({ frontend: { origin: "https://releases.test/", product: "Treasury!" } }); assert.throws(() => loadConfig(file));
 });

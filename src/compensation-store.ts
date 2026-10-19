@@ -115,7 +115,6 @@ export function saveCompensationRequest(payee: string, raw: z.infer<typeof repor
     if (old && old.report.agreementId !== agreement.id) refuse("agreement_changed", "A request must retain its original agreement.");
     if (c.report.start < agreement.terms.start || c.report.end > agreement.terms.end) refuse("outside_period", "The report period must fit the agreement period.");
     const next: CompensationRequest = { id: c.id, version: c.expectedVersion + 1, payee, agreementVersion: agreement.version,
-      ...(old ? old.payoutMode && { payoutMode: old.payoutMode } : { payoutMode: "isolated" as const }),
       report: c.report, state: c.submit ? "submitted" : "draft", feedback: old?.feedback ?? "", reviewedBy: null, payment: null, at: new Date().toISOString() };
     save(db, "requests", next); return next;
   });
@@ -133,7 +132,8 @@ export function reviewCompensationRequest(actor: string, raw: z.infer<typeof rev
     let amount: string | undefined;
     if (c.decision !== "approved" && c.approvedAmount) refuse("invalid_review", "Compensation is recorded only with approval.");
     if (c.decision === "approved") {
-      amount = c.approvedAmount ?? request.report.amount;
+      // The owner states the amount on every approval; a requested amount is only a proposal.
+      amount = c.approvedAmount;
       if (!amount) refuse("amount_required", "Set the compensation amount before approving this report.");
       if ((!request.report.amount || amount !== request.report.amount) && !c.feedback)
         refuse("explanation_required", "Provide an explanation for the approved compensation.");
@@ -165,7 +165,6 @@ export function bindCompensationPayment(actor: string, c: { commandId: string; i
     }
     if (r.version !== c.expectedVersion || r.state !== "approved") refuse("stale_request", "Refresh the approved request before preparing payment.");
     approvedCompensation(r);
-    if ((r.payoutMode === "isolated" || !r.report.amount) && c.mode !== "isolated") refuse("isolated_required", "This submission requires its isolated payout.");
     if (c.mode === "isolated" && (!c.until || !Number.isFinite(Date.parse(c.until)) || Date.parse(c.until) <= Date.now() || Date.parse(c.until) > Date.now() + 365 * 86400000)) refuse("invalid_deadline", "Choose a future payment deadline within 365 days.");
     const next: CompensationRequest = { ...r, version: r.version + 1, payment: { mode: c.mode, id: r.id, ...(c.until && { until: c.until }) }, at: new Date().toISOString() };
     save(db, "requests", next); return next;

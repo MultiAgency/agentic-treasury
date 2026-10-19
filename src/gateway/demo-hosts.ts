@@ -3,7 +3,7 @@ import type { IncomingMessage } from "node:http";
 import { sessions } from "../signin.js";
 
 export type Demo = "showcase" | "payables" | "treasury" | "invoices";
-export type DemoHost = { frontendDist?: string; demo: Demo; agents: string[]; hostedAreas?: ("treasury" | "payables")[] };
+export type DemoHost = { frontendDist?: string; frontend?: { origin: string; product: string }; demo: Demo; agents: string[]; hostedAreas?: ("treasury" | "payables")[] };
 export const hostSessionSecret = (secret: string, host: string) => createHmac("sha256", secret).update(`demo-session:${host}`).digest("hex");
 export const demoSession = (secret: string, host: string) => sessions({ cookie: "__Host-demo_session", secret: hostSessionSecret(secret, host), secure: true });
 /** Actual authority only. Forwarded host headers never select a demo or a signing audience. */
@@ -20,7 +20,7 @@ export function demoCrossSite(req: IncomingMessage, host: string) {
     || (write && req.headers["sec-fetch-site"] === "same-site" && origin === undefined);
 }
 
-/** Supplier entry belongs to Payables. Only page reads map /submit to the existing intake page. */
+/** Payee entry belongs to Payables. Only page reads map /submit to the existing intake page. */
 export function invoiceRoute(demo: Demo | undefined, url: URL, method: string) {
   if (demo !== "invoices") return null;
   const page = url.pathname === "/" || url.pathname === "/submit";

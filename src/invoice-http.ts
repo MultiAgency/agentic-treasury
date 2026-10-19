@@ -1,5 +1,5 @@
-import { supplierContract } from "./supplier-contract.js";
-import { serveSupplierFrontend } from "./gateway/supplier-frontend.js";
+import { payeeContract } from "./payee-contract.js";
+import { servePayeeFrontend } from "./gateway/payee-frontend.js";
 import { invoiceBrowser, invoicePage } from "./invoice-page.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
@@ -11,12 +11,16 @@ import { agreed, file, mine, validate } from "./invoices.js";
 import { BadRequest, readJson, SECURITY_HEADERS, sendFailure, sendJson as send } from "./http.js";
 import { compensationList, compensationHistory, saveCompensationRequest, CompensationError } from "./compensation-store.js";
 import { reportCommand } from "./compensation-contract.js";
+import { payeeWorkOrderRequest } from "./contract/payee.js";
 import { localCompensation, compensationOwnerCommand } from "./compensation.js";
 import { chainKeyLookup, challengeAnswer, clientAddress, hourlyLimit, parseSignIn, sessions, verifySignIn } from "./signin.js";
 import { getWorkOrder, listWorkOrders } from "./work-order-store.js";
 import { callWorkOrder } from "./work-order-pool.js";
-import { publicWorkOrder } from "./work-order-protocol.js";
+import { publicWorkOrder, WorkOrderRefusal } from "./work-order-protocol.js";
 import { localWorkOrders, workOrderRequest } from "./work-orders.js";
+import { AgentConnections, connectionMay } from "./agent-connections.js";
+import { agentConnectionIssue, PAYEE_REPORT_PERMISSIONS, PAYEE_ROLE, type AgentConnection, type AgentConnectionPermission } from "./contract/agent-connection.js";
+import { appendSynced } from "./synced.js";
 
 /**
  * The public invoice listener in the payout executor process. It uses the same grant, database,
@@ -49,15 +53,25 @@ const ORIGIN = `${SECURE ? "https" : "http"}://${PUBLIC_HOST}`;
 const session = sessions({ cookie: process.env.INVOICES_SESSION_COOKIE ?? "invoices_session", secret: SECRET, secure: SECURE });
 
 /** Attempts allowed per hour: sign-ins per address, invoices per signed-in account. */
-const LIMITS = { signin: hourlyLimit(10), file: hourlyLimit(10) };
+const LIMITS = { signin: hourlyLimit(10), file: hourlyLimit(10), connect: hourlyLimit(20) };
+/** Agent connections for this payee entry: bound to its public host, its instance and its payout agent. */
+const connections = new AgentConnections(".agent-connections");
+const INSTANCE = process.env.HOSTED_INVOICE_BASE || "/";
+const connectionUse = hourlyLimit(600);
+/** The only routes an agent connection reaches, each by one explicit permission. Everything else is refused. */
+const CONNECTION_ROUTES: Record<string, AgentConnectionPermission> = {
+  "GET /api/compensation": "compensation.read", "POST /api/compensation": "compensation.submit", "GET /api/compensation/session": "compensation.read",
+};
+const attribute = (connection: AgentConnection, method: string, path: string, write?: { commandId: string; id: string }) =>
+  appendSynced(".agent-connections/access.jsonl", { at: new Date().toISOString(), account: connection.account, host: connection.host,
+    instance: connection.instance, agentId: connection.agentId, connectionId: connection.id, method, path, ...write });
 const allowed = (kind: keyof typeof LIMITS, who: string) => LIMITS[kind](who);
 
-const contributorOrder = z.object({ submission: z.uuid(), amount: z.string(), note: z.string().trim().min(1).max(200), until: z.iso.datetime() }).strict();
 // Serialize public intake across awaited owner reads, so parallel requests cannot bypass slot limits.
 let orderIntake = Promise.resolve();
 function requestWorkOrder(payee: string, raw: unknown) {
   const run = orderIntake.then(async () => {
-    const parsed = contributorOrder.safeParse(raw);
+    const parsed = payeeWorkOrderRequest.safeParse(raw);
     if (!parsed.success) throw new BadRequest("Enter an amount, work description and deadline. Work order recipients are fixed to your signed-in account.");
     const draft = parsed.data;
     const valid = validate({ ...draft, payee });
@@ -91,8 +105,8 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
     // A malformed request target (`GET http://[/`) throws here: answered 400 below, never a crash.
     const url = URL.parse(req.url ?? "/", ORIGIN);
     if (!url) throw new BadRequest("Malformed request.");
-    if (req.method === "GET" && url.pathname === "/api/capabilities") return send(res, 200, supplierContract);
-    if (req.method === "GET" && await serveSupplierFrontend(res, url.pathname)) return;
+    if (req.method === "GET" && url.pathname === "/api/capabilities") return send(res, 200, payeeContract);
+    if (req.method === "GET" && await servePayeeFrontend(res, url.pathname)) return;
     if (req.method === "GET" && url.pathname === "/api/compensation/schema")
       return send(res, 200, { version: 2, submit: z.toJSONSchema(reportCommand), reads: ["GET /api/compensation"], writes: ["POST /api/compensation"], authentication: "Contributor NEP-413 session; no anonymous private reads or writes", semantics: "Atomic USDC strings; expectedVersion and commandId required. Submission never sends a payment." });
     if (req.method === "GET" && url.pathname === "/") {
@@ -114,6 +128,36 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
 
     if (url.pathname.startsWith("/internal/agreements") || url.pathname === "/internal/work-orders" || url.pathname === "/internal/compensation") return await internal(req, res, url.pathname);
 
+    // Agent connections are managed only from the contractor's own browser session; an agent can never mint one.
+    const managed = url.pathname.match(/^\/api\/agent-connections(?:\/([0-9a-f-]{36}))?$/);
+    if (managed) {
+      if (req.headers.authorization !== undefined) return send(res, 403, { error: "Manage agent connections from your signed-in browser session." });
+      const account = session.account(req);
+      if (!account) return send(res, 401, { error: "Sign in with the account being paid." });
+      const principal = { role: PAYEE_ROLE, account, host: PUBLIC_HOST, instance: INSTANCE, agentId: agentId() };
+      if (req.method === "GET" && !managed[1]) return send(res, 200, { connections: connections.list(principal) });
+      if (req.method === "DELETE" && managed[1]) return connections.revoke(managed[1], principal) ? send(res, 200, { revoked: true }) : send(res, 404, { error: "No such agent connection." });
+      if (req.method === "POST" && !managed[1]) {
+        if (!allowed("connect", account)) return send(res, 429, { error: "Too many agent connections started. Try again later." });
+        const parsed = agentConnectionIssue.safeParse(await readJson(req));
+        if (!parsed.success) throw new BadRequest("Choose a label and a duration between one minute and 24 hours.");
+        if (session.account(req) !== account) return send(res, 401, { error: "Sign in again before connecting an agent." });
+        return send(res, 201, connections.issue({ ...principal, ...parsed.data, permissions: PAYEE_REPORT_PERMISSIONS }));
+      }
+      return send(res, 405, { error: "Use GET or POST, or DELETE on an existing connection." });
+    }
+    // A request carrying credentials is an agent connection or nothing: the cookie is never consulted, and only
+    // the connection's explicitly permitted routes are reachable. It can never open or become a browser session.
+    let viaConnection: AgentConnection | null = null;
+    if (url.pathname.startsWith("/api/") && req.headers.authorization !== undefined) {
+      viaConnection = connections.authenticate(req.headers.authorization, { host: PUBLIC_HOST, instance: INSTANCE, agentId: agentId() });
+      if (!viaConnection) return send(res, 401, { error: "Invalid, expired or revoked agent connection." });
+      if (!connectionUse(viaConnection.id)) return send(res, 429, { error: "Request limit reached." });
+      const permission = CONNECTION_ROUTES[`${req.method} ${url.pathname}`];
+      if (!permission || !connectionMay(viaConnection, permission)) return send(res, 403, { error: "This agent connection does not permit that action." });
+      if (req.method === "GET") attribute(viaConnection, req.method, url.pathname);
+    }
+
     if (req.method === "GET" && url.pathname === "/api/session") {
       const account = session.account(req);
       return send(res, 200, { account, agreed: account ? (await agreed()).has(account) : false });
@@ -122,7 +166,7 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
     if (req.method === "POST" && url.pathname === "/api/signin/challenge") return send(res, ...challengeAnswer(PUBLIC_HOST, allowed("signin", ip)));
 
     // Report intake needs its authenticated recipient and retained terms, not provider availability.
-    if (req.method === "GET" && url.pathname === "/api/compensation/session") return send(res, 200, { account: session.account(req) });
+    if (req.method === "GET" && url.pathname === "/api/compensation/session") return send(res, 200, { account: viaConnection?.account ?? session.account(req) });
 
     // A signature by a full-access key opens a session; whether the account is agreed decides what it files.
     if (req.method === "POST" && ["/api/signin", "/api/compensation/signin"].includes(url.pathname)) {
@@ -141,7 +185,7 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
     if (req.method === "POST" && url.pathname === "/api/signout")
       return send(res, 200, { account: null }, { "set-cookie": session.close() });
 
-    const payee = session.account(req);
+    const payee = viaConnection ? viaConnection.account : session.account(req);
     if (url.pathname.startsWith("/api/") && !payee) return send(res, 401, { error: "Sign in with the account being paid." });
 
     if (req.method === "GET" && url.pathname === "/api/compensation") {
@@ -170,6 +214,12 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
       if (!allowed("file", payee!)) return send(res, 429, { code: "rate_limited", error: "Too many attempts. Keep this draft and try later." });
       const parsed = reportCommand.safeParse(await readJson(req));
       if (!parsed.success) return send(res, 400, { code: "invalid_request", error: parsed.error.issues[0]?.message ?? "Check your request.", issues: parsed.error.issues });
+      if (viaConnection) {
+        // Re-checked immediately before acting: a connection revoked or expired since admission sends nothing.
+        if (!connections.authenticate(req.headers.authorization, { host: PUBLIC_HOST, instance: INSTANCE, agentId: agentId() }))
+          return send(res, 401, { error: "Invalid, expired or revoked agent connection." });
+        attribute(viaConnection, req.method, url.pathname, { commandId: parsed.data.commandId, id: parsed.data.id });
+      }
       return send(res, 200, saveCompensationRequest(payee!, parsed.data));
     }
 
@@ -179,7 +229,7 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
     }
     if (req.method === "POST" && url.pathname === "/api/work-orders") {
       const body = await readJson(req);
-      if (!contributorOrder.safeParse(body).success) throw new BadRequest("Enter an amount, work description and deadline. Work order recipients are fixed to your signed-in account.");
+      if (!payeeWorkOrderRequest.safeParse(body).success) throw new BadRequest("Enter an amount, work description and deadline. Work order recipients are fixed to your signed-in account.");
       if (!allowed("file", payee!)) return send(res, 429, { error: "Too many attempts. Try again later." });
       const result = await requestWorkOrder(payee!, body);
       if ("conflict" in result) return send(res, 409, { error: "This request already has different terms. Review the existing work order before starting another." });
@@ -199,7 +249,13 @@ export const invoiceHandler = async (req: IncomingMessage, res: ServerResponse) 
         const body = await readJson(req);
         if (Object.keys(body).length) return send(res, 400, { error: "Work order terms cannot be changed when filing an invoice." });
         getWorkOrder(agentId(), id);
-        return send(res, 200, await callWorkOrder(agentId(), id, { type: "file", payee: payee! }));
+        try { return send(res, 200, await callWorkOrder(agentId(), id, { type: "file", payee: payee! })); }
+        catch (error) {
+          // Refused before any send. Disconnects and timeouts are not refusals and stay generic.
+          if (error instanceof WorkOrderRefusal) return send(res, 409, { code: error.code,
+            error: "This order can't be filed yet: the owner must authorize it and fund exactly the agreed amount. Nothing was sent. Check this order again later." });
+          throw error;
+        }
       }
     }
 
@@ -265,7 +321,9 @@ async function internal(req: IncomingMessage, res: ServerResponse, path: string)
     return await answerInternal(res, path, (await readJson(req)) as Record<string, unknown>);
   } catch (error) {
     // The caller is this agent's own dashboard: it sees why, unlike a payee.
-    return send(res, 400, { error: error instanceof Error ? error.message : "Malformed request.", ...(error instanceof CompensationError && { code: error.code }) });
+    return send(res, 400, { error: error instanceof Error ? error.message : "Malformed request.", ...(error instanceof CompensationError && { code: error.code }),
+      // A work order's proven pre-send refusal crosses to the approve-only host; nothing else is marked as one.
+      ...(error instanceof WorkOrderRefusal && { refusal: error.code }) });
   }
 }
 

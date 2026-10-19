@@ -30,8 +30,8 @@ const root = path.resolve(process.argv[2] || 'web/dist');
         for (const demo of ['Payables', 'Treasury']) assert.equal(await page.getByRole('link', { name: `Open ${demo}`, exact: true }).getAttribute('href'), `https://${demo.toLowerCase()}.multiagency.ai`);
         assert.equal(await page.getByRole('link', { name: 'Open work orders in Payables', exact: true }).getAttribute('href'), 'https://payables.multiagency.ai/workspace');
       }
-      if (host === 'proto' || host === 'payables') assert.equal(await page.getByRole('link', { name: /Supplier: submit/ }).getAttribute('href'), 'https://invoices.multiagency.ai');
-      if (host === 'payables') await page.getByText(/Supplier conversion and forwarding remain unimplemented/).waitFor();
+      if (host === 'proto' || host === 'payables') assert.equal(await page.getByRole('link', { name: /Payee: submit/ }).getAttribute('href'), 'https://invoices.multiagency.ai');
+      if (host === 'payables') await page.getByText(/Payee conversion and forwarding remain unimplemented/).waitFor();
       await assertResponsive(page, `${host} entry`); assert.deepEqual(errors, []);
       if (host === 'proto') await page.screenshot({ path: `/tmp/proto-shared-${width}.png`, fullPage: true });
       await context.close(); console.log(`PASS ${host} static entry ${width}px`);

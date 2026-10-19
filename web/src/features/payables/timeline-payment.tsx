@@ -3,7 +3,6 @@ import { accessDenied, ReadFailure } from "../../shared/read-failure";
 import { usePayment } from "./use-payment";
 import { PaymentOutcome } from "./payment-outcome";
 import { ConfirmButton } from "../owner/confirm-button";
-import { Link, useSearch } from "@tanstack/react-router";
 
 import { useQuery } from "@tanstack/react-query";
 import { type PaymentRecord as Known } from "./payment-records";
@@ -20,6 +19,7 @@ import { buildPaymentQueue, filterPaymentQueue } from "./payment-queue";
 import { ago, client, exactPayment, fromUnits, kindOf, minutesSeconds, queries, short } from "../../shared/lib";
 
 import { useAgent } from "../../app/agent-context";
+import { useAppHref } from "../demo/app-link";
 import { Badge, Button, Card, CopyButton, Details, ErrorBox, Loading, LoadingRecords, QueryError, Section, Spinner } from "../../shared/ui";
 import { refusalText } from "../../shared/words";
 
@@ -39,7 +39,6 @@ import { WorkOrders } from "./work-orders";
  * observed: the proposal and the MPC signature are public; the payout shows no public transfer.
  */
 
-const TERMINAL = new Set(["SUCCESS", "FAILED", "REFUNDED"]);
 type Status = "complete" | "current" | "upcoming" | "stopped" | "unverified";
 
 const time = (iso?: string | null) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null);
@@ -106,6 +105,7 @@ function TermsCheck({ request, agreements }: { request: Record<string, unknown>;
 
 /** One payment's timeline, with Approve and Reject in its vote step while it is held. */
 function PaymentCard({ id, payment: knownPayment, agreements, historyOpen = false }: { historyOpen?: boolean; id: string; payment: Known; agreements?: Agreement[] }) {
+  const app = useAppHref("payables");
   const { viewer, pending, dao, proposals, ownerActions, action, canSign, status, approval, vote, proposal, windowLeft, payment, expiresAt, s, paid, failed, isHeld, recovering, approved, rejected, expired, final, heldEvidence, step, VOTE_WORDS, approvable, decide, what, signer, progress } = usePayment(id, knownPayment);
 
   const denied = [status, pending, vote, ownerActions].find(query => accessDenied(query.error));
@@ -135,10 +135,10 @@ function PaymentCard({ id, payment: knownPayment, agreements, historyOpen = fals
       {failed && <p className="text-sm">This provider status alone does not establish that a replacement payment is safe. Review the existing operation before preparing another payment.</p>}
       {!payment.request && <p className="text-sm">Payment details are unavailable on this instance. The status below identifies this operation; it is not a complete payment receipt.</p>}
       {ownerActions.error && <QueryError error={ownerActions.error} retry={() => ownerActions.refetch()} />}
-      {recovering && !final && <p role="status" className="text-sm">{recovering.stage === "submitted" ? "Submission attempted—checking the existing owner action’s outcome. Do not sign again." : "An owner action is already prepared. Review it or wait for its signing window to close before starting another."} <Link to="/activity" hash={`owner-${recovering.correlationId}`} className="underline">Review the existing owner action</Link></p>}
+      {recovering && !final && <p role="status" className="text-sm">{recovering.stage === "submitted" ? "Submission attempted—checking the existing owner action’s outcome. Do not sign again." : "An owner action is already prepared. Review it or wait for its signing window to close before starting another."} <a href={app("/activity", `owner-${recovering.correlationId}`)} className="underline">Review the existing owner action in Payables</a></p>}
       {rejected && <p className="text-sm">Rejection submitted. The payment outcome is reported separately.</p>}
       {!heldEvidence && <p className="text-sm">Approval history is unverified. This payment status does not establish that it was held or approved here.</p>}
-      {s && !isHeld && !final && <p role="status" className="text-sm">Outcome unresolved; <Link to="/activity" className="underline">review the existing operation in Activity</Link>. Do not create a replacement.</p>}
+      {s && !isHeld && !final && <p role="status" className="text-sm">Outcome unresolved; <a href={app("/activity")} className="underline">review the existing operation in Payables Activity</a>. Do not create a replacement.</p>}
       {action.label && <p className="text-sm text-muted-foreground">{action.label}</p>}
       {isHeld && (
           <div className="flex flex-col gap-2 text-sm ">
@@ -219,7 +219,7 @@ function PaymentCard({ id, payment: knownPayment, agreements, historyOpen = fals
           <CopyButton text={approval.hash} />
         </div>}
       </Details>
-      <Link to="/follow/payment" search={{ payment: id }} className="self-start text-sm underline">Link to this payment</Link>
+      <a href={app(`/follow/payment?payment=${encodeURIComponent(id)}`)} className="self-start text-sm underline">Open this payment in Payables</a>
     </Card>
   );
 }
@@ -228,14 +228,14 @@ function PaymentCard({ id, payment: knownPayment, agreements, historyOpen = fals
 export function Payments({ title = "Payments", historyOpen = false, compact = false, selection }: {
   title?: string; historyOpen?: boolean; compact?: boolean; selection?: { payment?: string; invoice?: string };
 }) {
+  const app = useAppHref("payables");
   const { data } = useAgent();
   const canReadInvoices = useCanCall("invoices");
   const { list, held, pending, activity, history, ownerActions, invoices, invoiceRecords, invoicesEnabled } = usePayments(5_000);
   const [view, setView] = useState<"review" | "all">("review");
   const [query, setQuery] = useState("");
   const filterId = useId();
-  const routeSearch = useSearch({ strict: false });
-  const search = selection ?? routeSearch;
+  const search: { payment?: string; invoice?: string } = selection ?? {};
   const invoice = invoiceRecords.find(invoice => search.invoice ? invoice.id === search.invoice : invoice.operation.correlationId === search.payment);
   const mismatched = Boolean(search.invoice && search.payment && invoice && invoice.operation.correlationId !== search.payment);
   // A local invoice/key never becomes a provider reference. Wait for an explicit recorded link.
@@ -294,7 +294,7 @@ export function Payments({ title = "Payments", historyOpen = false, compact = fa
       {showQueue && !initialRead && <p role="status" aria-live="polite" className="text-sm text-muted-foreground">Showing {visibleQueue.length} of {queue.length} retained records{!complete ? " · checks incomplete" : ""}.</p>}
       {showQueue && !checking && !visibleQueue.length && <Empty className="items-start py-4"><EmptyContent className="items-start text-left">
         {query.trim() ? <><p>No matching records.</p><p className="text-muted-foreground">Try another recipient or reference, or search All records. Source warnings still apply.</p><Button variant="outline" onClick={() => setQuery("")}>Clear search</Button></>
-          : complete && !queue.length ? <><p>No payment records found in the sources checked.</p>{kindOf(data) === "facilitator" ? <Link to="/payees" className="inline-flex min-h-11 items-center underline">Review Agreements</Link> : <Link to="/" className="inline-flex min-h-11 items-center underline">Review portfolio</Link>}</>
+          : complete && !queue.length ? <><p>No payment records found in the sources checked.</p><a href={app("/payees")} className="inline-flex min-h-11 items-center underline">Review Agreements in Payables</a></>
           : complete ? <><p>No records need review.</p><p className="text-muted-foreground">No open items were found in the retained records checked.</p><Button variant="outline" onClick={() => setView("all")}>View all records</Button></>
           : <><p>The available records show no matching items. Some checks are incomplete; review the notices above.</p><Button variant="outline" onClick={() => { for (const source of sources) void source.refetch(); if (invoicesEnabled) void invoices.refetch(); }}>Check records again</Button></>}
       </EmptyContent></Empty>}
@@ -304,7 +304,7 @@ export function Payments({ title = "Payments", historyOpen = false, compact = fa
           const heldAtLastCheck = Boolean(id && heldIds.has(id));
           const label = owner?.recovering ? `Owner action ${owner.recovering.stage}` : owner?.approved ? "Approval recorded" : owner?.rejected ? "Rejection recorded" : heldAtLastCheck ? "Held at last check" : invoice ? invoiceStatus(invoice) : "Recorded payment";
           return <li key={id ? `payment-${id}` : `invoice-${invoice!.id}`}>
-            <Link to="/follow/payment" search={id ? { payment: id } : { invoice: invoice!.id }} className="flex min-h-11 flex-col items-start gap-3 rounded-lg px-2 py-4 hover:bg-muted sm:flex-row sm:items-center sm:justify-between">
+            <a href={app(`/follow/payment?${id ? `payment=${encodeURIComponent(id)}` : `invoice=${invoice!.id}`}`)} className="flex min-h-11 flex-col items-start gap-3 rounded-lg px-2 py-4 hover:bg-muted sm:flex-row sm:items-center sm:justify-between">
               <span className="min-w-0 w-full break-words sm:flex-1">
                 <span className="block font-medium">{payment?.request ? exactPayment(payment.request, data.book) : invoice ? `${fromUnits(invoice.amount, 6)} USDC to ${invoice.payee}` : "Review retained payment details"}</span>
                 <span className="block text-xs text-muted-foreground">{invoice ? "Invoice" : "Reference"} {short(invoice?.id ?? id!)}</span>
@@ -315,7 +315,7 @@ export function Payments({ title = "Payments", historyOpen = false, compact = fa
                 {reason && !invoice?.review && !heldAtLastCheck && !owner?.recovering && <span className="text-sm text-muted-foreground">{reason}</span>}
                 <span className="text-sm underline">{id ? "Review payment" : "Review invoice"}</span>
               </span>
-            </Link>
+            </a>
           </li>;
         })}
       </ul>}
@@ -325,15 +325,4 @@ export function Payments({ title = "Payments", historyOpen = false, compact = fa
       {shown.map(([id, payment]) => <PaymentCard key={id} id={id} payment={payment} agreements={agreements} historyOpen={historyOpen} />)}
     </Section>{showQueue && <WorkOrders payments />}</>
   );
-}
-
-/** A durable payment link retains selection through polling, reload and changes in held status. */
-export function PaymentTimeline() {
-  const { data } = useAgent();
-  return <><Link to="/" className="self-start text-sm underline">{kindOf(data) === "facilitator" ? "All payments" : "Back to portfolio"}</Link><Payments title="Follow this payment" /></>;
-}
-
-/** The queue reads retained summaries; only the selected payment mounts its live review and controls. */
-export function PaymentQueue() {
-  return <Payments compact />;
 }

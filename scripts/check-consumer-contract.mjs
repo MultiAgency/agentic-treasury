@@ -16,7 +16,7 @@ export function checkConsumerContract(consumer, provider = root, groups = undefi
   const actual = resolve(provider, 'src/router.ts');
   const expected = resolve(consumer, 'src/router.ts');
   for (const path of [actual, expected]) if (!existsSync(path)) throw new Error(`Missing router: ${path}`);
-  const temporary = mkdtempSync(join(tmpdir(), 'proto-contract-'));
+  const temporary = mkdtempSync(join(tmpdir(), 'sdk-'));
   try {
     writeFileSync(join(temporary, 'check.ts'), `
 import type { RouterClient } from ${JSON.stringify(fileURLToPath(import.meta.resolve('@orpc/server')).replace(/\.mjs$/, '.d.mts'))};

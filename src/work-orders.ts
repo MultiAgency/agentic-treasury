@@ -5,7 +5,7 @@ import { ASSETS } from "./policy.js";
 import { daoOwner } from "./dao-owner.js";
 import { callWorkOrder } from "./work-order-pool.js";
 import { createWorkOrder, getWorkOrder, listWorkOrders, workOrderId, workOrderInput } from "./work-order-store.js";
-import { workOrderCommand, type WorkOrderReply } from "./work-order-protocol.js";
+import { WorkOrderRefusal, workOrderCommand, type WorkOrderReply } from "./work-order-protocol.js";
 
 export const newWorkOrder = workOrderInput.pick({ id: true, payee: true, amount: true, note: true, until: true });
 export const workOrderRequest = z.discriminatedUnion("type", [
@@ -44,7 +44,9 @@ async function requestWorkOrders(request: Request): Promise<unknown> {
     const response = await fetch(new URL("/internal/work-orders", AGREEMENTS_URL), { method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${AGREEMENTS_SECRET}` },
       body: JSON.stringify({ parentAgentId: agentId(), request }), signal: AbortSignal.timeout(210_000) });
-    const body = await response.json() as { result?: unknown; error?: string };
+    const body = await response.json() as { result?: unknown; error?: string; refusal?: string };
+    // Only the executor's known not-ready refusal is rebuilt; any other failure stays uncertain.
+    if (response.status === 400 && body.refusal === "work_order_not_ready" && body.error) throw new WorkOrderRefusal(body.refusal, body.error);
     if (!response.ok) throw new Error(body.error ?? "Work order executor unavailable. Follow the existing record before repeating an action.");
     return body.result;
   }

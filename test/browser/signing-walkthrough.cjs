@@ -15,87 +15,70 @@ async function signing(browser, root) {
     'owner/pending': [], 'owner/actions': [], policyHistory: [], paymentHistory: { items: [], complete: true },
     'autopilot/get': { on: false }, 'strategy/get': null, 'workOrders/list': [],
   }; } });
-  for (const dao of [false, true]) {
-    const context = await browser.newContext({ viewport: { width: dao ? 1280 : 390, height: 900 }, reducedMotion: 'reduce' });
-    await context.addInitScript(() => {
-      if (location.hostname !== "frontend.test") return;
-      window.fixtureSignatures = [];
-      for (const prefix of ['', 'member:']) localStorage.setItem(prefix + 'selected-wallet:mainnet', 'fixture-wallet');
-      const accounts = [{ accountId: 'owner.near', publicKey: 'ed25519:fixture' }];
-      const wallet = { manifest: { id: 'fixture-wallet', name: 'Offline wallet', features: { signMessage: true, signDelegateActions: true }, permissions: {} },
-        getAccounts: async () => accounts, signIn: async () => accounts, signOut: async () => {},
-        signMessage: async payload => { window.fixtureSignatures.push(payload); return { accountId: 'owner.near', publicKey: 'ed25519:fixture', signature: 'offline-signature' }; },
-        signAndSendTransaction: async payload => { window.fixtureSignatures.push(payload); return { status: { SuccessValue: '' } }; } };
-      window.addEventListener('near-selector-ready', () => window.dispatchEvent(new CustomEvent('near-wallet-injected', { detail: wallet })));
-    });
-    const { page, calls, errors } = await open(context, '/a/payables/demos/payables', { dao });
-    const writes = [];
-    await page.route('**/rpc/owner/prepare', async route => {
-      const input = route.request().postDataJSON().json;
-      writes.push({ method: 'prepare', input });
-      assert.deepEqual(input, { signer: dao ? 'dao' : 'wallet', action: { type: 'grant_issue' } });
-      const prepared = { correlationId: 'walkthrough-grant', expiresAt: '2030-01-01T00:00:00Z', digest: null };
-      if (dao) prepared.dao = { proposal: { receiverId: 'fixture.dao', actions: [] }, proposalAndVote: { receiverId: 'fixture.dao', actions: [] } };
-      else prepared.intent = { standard: 'nep413', payload: { message: 'exact fixture grant', recipient: 'offline', nonce: Buffer.alloc(32).toString('base64') } };
-      await route.fulfill({ json: { json: prepared } });
-    });
-    await page.route('**/rpc/owner/submit', async route => {
-      writes.push({ method: 'submit', input: route.request().postDataJSON().json });
-      await route.fulfill({ json: { json: { status: 'SUCCESS' } } });
-    });
-    await page.route('**/rpc/owner/status**', route => route.fulfill({ json: { json: { stage: 'submitted', status: 'SUCCESS' } } }));
+  // Payables reviews now open the same agent's screens in the Payables app (released and working there): the walkthrough
+  // links to them instead of embedding Proto's copies, and opening chapters sends nothing.
+  for (const workflow of ['payables', 'invoices']) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 900 }, reducedMotion: 'reduce' });
+    const { page, calls, errors } = await open(context, `/a/payables/demos/${workflow}`);
     await page.getByRole('heading', { name: 'Do it with my agent', exact: true }).waitFor();
     const chapters = page.getByRole('radiogroup', { name: 'Live walkthrough chapters', exact: true });
+    assert.equal(await chapters.getByRole('radio').count(), 4);
     for (const radio of await chapters.getByRole('radio').all()) await radio.click();
-    assert.equal(writes.length, 0);
-    assert.deepEqual(await page.evaluate(() => window.fixtureSignatures), []);
-    await page.getByRole('button', { name: 'Review policy and signing controls', exact: true }).click();
-    await page.getByRole('heading', { name: 'Grants', exact: true }).waitFor();
-    const policy = page.locator('details').filter({ has: page.locator('summary', { hasText: 'Policy and owner signing' }) }).first();
-    await policy.getByRole('button', { name: 'Edit', exact: true }).click();
-    const draft = policy.getByRole('textbox').first();
-    if (await draft.count()) await draft.fill('12');
-    await chapters.getByRole('radio').first().click();
-    if (await draft.count()) await expect(draft).toHaveValue('12');
-    assert.equal(writes.length, 0, 'chapter changes and opening reviews never prepare owner actions');
-    await page.getByRole('button', { name: dao ? 'Propose a new grant' : 'Issue a new grant', exact: true }).click();
-    await expect.poll(() => writes.filter(write => write.method === 'prepare').length).toBe(1);
-    await expect.poll(() => page.evaluate(() => window.fixtureSignatures.length)).toBe(1);
-    if (!dao) {
-      await expect.poll(() => writes.filter(write => write.method === 'submit').length).toBe(1);
-      assert.equal(writes[1].input.correlationId, 'walkthrough-grant');
-      assert.equal((await page.evaluate(() => window.fixtureSignatures))[0].message, 'exact fixture grant');
-    } else assert.equal(writes.filter(write => write.method === 'submit').length, 0, 'DAO proposal is followed, not replaced by a member owner signature');
-    await assertResponsive(page, `signing-${dao ? 'dao' : 'wallet'}`);
-    assert.ok(!calls.some(method => ['pay', 'executePlan', 'workOrders/create'].includes(method)));
+    const href = name => page.getByRole('link', { name, exact: true }).getAttribute('href');
+    if (workflow === 'payables') {
+      assert.equal(await href('Review policy and signing in Payables'), 'https://payables.multiagency.ai/a/payables/policy');
+      assert.equal(await href('Follow owner signatures and proposals in Payables'), 'https://payables.multiagency.ai/a/payables/activity');
+      await chapters.getByRole('radio').first().click();
+      assert.match(await page.getByRole('link').filter({ hasText: 'in Payables' }).first().getAttribute('href'), /^https:\/\/payables\.multiagency\.ai\/a\/payables\//);
+    } else {
+      assert.equal(await href('Review orders and their owner actions in Payables'), 'https://payables.multiagency.ai/a/payables/payees');
+      assert.equal(await href('Open orders in Payables'), 'https://payables.multiagency.ai/a/payables/payees');
+    }
+    assert.equal(await page.locator('summary', { hasText: 'Policy and owner signing' }).count(), 0, 'no embedded copy of the app screen');
+    assert.equal(await page.locator('summary', { hasText: 'Agreements and payee authorization' }).count(), 0);
+    await assertResponsive(page, `signing-${workflow}`);
+    assert.ok(!calls.some(method => ['owner/prepare', 'owner/submit', 'pay', 'executePlan', 'workOrders/create'].includes(method)));
     assert.deepEqual(errors, []);
     await context.close();
-    console.log(`PASS ${dao ? 'DAO' : 'wallet'}: chapter navigation preserves review; explicit grant action uses existing exact signing flow`);
+    console.log(`PASS ${workflow}: chapters link to the agent's Payables screens; nothing embedded or sent`);
   }
-  for (const workflow of ['treasury', 'invoices']) {
+  // On a deployment whose gateway names the Payables host (a local stack), links stay on that deployment.
+  {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: 'reduce' });
+    const { page, errors } = await open(context, '/a/payables/demos/payables', { apps: { payables: 'payables.local.test:8443' } });
+    await page.getByRole('heading', { name: 'Do it with my agent', exact: true }).waitFor();
+    const protocol = await page.evaluate(() => location.protocol);
+    assert.equal(await page.getByRole('link', { name: 'Review policy and signing in Payables', exact: true }).getAttribute('href'), `${protocol}//payables.local.test:8443/a/payables/policy`);
+    assert.deepEqual(errors, []);
+    await context.close();
+    console.log('PASS configured Payables host: chapter links use this deployment, not the hosted domain');
+  }
+  for (const workflow of ['treasury']) {
     const context = await browser.newContext({ viewport: { width: 390, height: 900 }, reducedMotion: 'reduce' });
     const { page, calls, errors } = await open(context, `/a/${workflow === 'treasury' ? 'treasury' : 'payables'}/demos/${workflow}`);
     await page.getByRole('heading', { name: 'Do it with my agent', exact: true }).waitFor();
     const chapters = page.getByRole('radiogroup', { name: 'Live walkthrough chapters', exact: true });
     assert.equal(await chapters.getByRole('radio').count(), 4);
-    if (workflow === 'treasury') {
-      await page.getByRole('button', { name: 'Review strategy and grant here', exact: true }).click();
-      await page.getByText('Strategy and grant signing', { exact: true }).waitFor();
-    } else {
-      assert.equal(await page.getByRole('button', { name: 'Follow owner signatures and proposals', exact: true }).count(), 0, 'order signatures must not open parent history');
-      await page.getByRole('button', { name: 'Review the selected order’s owner actions', exact: true }).click();
-      await page.getByText('Create a work order', { exact: true }).click();
-      await page.getByRole('textbox', { name: 'Agreed work', exact: true }).fill('Retain this order draft');
+    // Each Treasury chapter opens the same agent's screen in Treasury (A6): strategy, the guided run's steps, and owner actions.
+    const expected = ['/automations', '/demo#preview', '/demo#preview', '/demo'];
+    for (const [index, radio] of (await chapters.getByRole('radio').all()).entries()) {
+      await radio.click();
+      // Scoped to the walkthrough: the frame's setup step may also link to Treasury while no grant is reported.
+      const guide = chapters.locator('xpath=ancestor::section[1]');
+      assert.equal(await guide.getByRole('link').filter({ hasText: / in Treasury$/ }).first().getAttribute('href'), `https://treasury.multiagency.ai/a/treasury${expected[index]}`);
     }
+    assert.equal(await page.getByRole('link', { name: 'Review policy and signing in Treasury', exact: true }).getAttribute('href'), 'https://treasury.multiagency.ai/a/treasury/policy');
+    assert.equal(await page.getByRole('link', { name: 'Follow owner signatures and proposals in Treasury', exact: true }).getAttribute('href'), 'https://treasury.multiagency.ai/a/treasury/activity#owner-actions');
+    assert.equal(await page.getByRole('link', { name: 'Open the guided run in Treasury', exact: true }).getAttribute('href'), 'https://treasury.multiagency.ai/a/treasury/demo');
+    assert.equal(await page.locator('summary', { hasText: 'Strategy and grant signing' }).count(), 0, 'no embedded copy of the app screen');
     for (const radio of await chapters.getByRole('radio').all()) await radio.click();
-    if (workflow === 'invoices') await expect(page.getByRole('textbox', { name: 'Agreed work', exact: true })).toHaveValue('Retain this order draft');
     await assertResponsive(page, workflow);
     mkdirSync('/tmp/proto-signing-walkthrough', { recursive: true });
     await page.screenshot({ path: `/tmp/proto-signing-walkthrough/${workflow}.png`, fullPage: true });
     assert.ok(!calls.some(method => ['owner/prepare', 'pay', 'executePlan', 'workOrders/create'].includes(method)));
     assert.deepEqual(errors, []);
     await context.close();
-    console.log(`PASS ${workflow}: four chapters, persistent controls, no automatic signing or execution`);
+    console.log(`PASS ${workflow}: four chapters link to the agent's Treasury screens; no automatic signing or execution`);
   }
 }
 runTask([signing]);

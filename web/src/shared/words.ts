@@ -29,17 +29,3 @@ const REFUSALS: Record<string, string> = {
 };
 
 export const refusalText = (code: string) => REFUSALS[code] ?? code.replaceAll("_", " ");
-
-/**
- * The provider's longer messages the autopilot passes on, in a few plain words. Matched on stable
- * phrases; anything else is shown as it came.
- */
-const MESSAGES: [RegExp, string][] = [
-  [/shared USD budget has too little left/i, "this swap was refused because the USD budget has too little left; earlier operations may have completed"],
-  [/Live execution gate closed: observe mode/i, "execution was switched off (observe mode); this operation was not submitted; earlier operations may have completed"],
-];
-
-export const plainMessage = (text: string) => {
-  for (const [pattern, plain] of MESSAGES) if (pattern.test(text)) return text.replace(/:\s.*$/s, `: ${plain}`);
-  return text;
-};

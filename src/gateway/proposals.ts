@@ -9,6 +9,7 @@ import { delegateSigningHash } from "../owner-signature.js";
 import type { Router } from "../router.js";
 import type { AgentEntry } from "./config.js";
 import { type DaoProposal, signRequestOf } from "./sign-requests.js";
+import type { Decoded, ProposalCheck as Check } from "../contract/proposals.js";
 
 /**
  * "What am I voting on?" A proposal asking `v1.signer` to sign shows members only a hash. Every owner
@@ -49,13 +50,6 @@ export function readDelegate(signedDelegate: Uint8Array) {
   return { sender: delegateAction.senderId, receiver: delegateAction.receiverId, methods, hash: delegateSigningHash(signedDelegate).toString("hex") };
 }
 
-type Check =
-  /** The hash is recomputed from the readable payload: this is exactly what the vote signs. */
-  | { kind: "verified"; standard: "nep413"; message: unknown }
-  /** The hash is recomputed from the delegate bytes; receiver and methods are read, the policy blob is encrypted. */
-  | { kind: "verified"; standard: "nep366"; receiver: string; methods: string[] }
-  | { kind: "mismatch"; reason: string };
-
 /** Whether `request`'s hash really is the hash of its payload, and what that payload says. */
 export function checkRequest(request: DaoRequest): Check {
   const { intent } = request;
@@ -80,26 +74,7 @@ export function checkRequest(request: DaoRequest): Check {
   return { kind: "mismatch", reason: `nothing to check a ${intent.standard} request against` };
 }
 
-export type Decoded = {
-  id: number;
-  proposer: string;
-  description: string;
-  status: string;
-  submittedAt: string;
-  votes: Record<string, string>;
-  hash: string;
-} & (
-  | { what: "agent"; agent: string; type: string; correlationId: string; expiresAt: string; state: DaoRequest["state"]; check: Check }
-  /** An agent-owner signature nothing here prepared, every agent having answered: don't approve it without knowing where it's from. */
-  | { what: "unknown" }
-  /** An agent-owner signature no answering agent prepared, while `unanswered` agents couldn't be asked: not yet checkable. */
-  | { what: "unchecked"; unanswered: string[] }
-  /** A finished agent-owner proposal: what it signed was submitted and is no longer waited for. */
-  | { what: "past" }
-  /** Trezu's own confidential payment, signed on the DAO's path rather than the agents'. */
-  | { what: "trezu" }
-  | { what: "other"; path: string }
-);
+export type { Decoded } from "../contract/proposals.js";
 
 /**
  * Every `v1.signer` proposal among `proposals`, newest first, matched against what the agents wait for.

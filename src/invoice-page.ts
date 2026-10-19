@@ -38,7 +38,7 @@ export const AGREEMENT_WORDS: Record<Exclude<AgreementStatus, "filed">, string> 
 };
 
 export function invoicePage(title: string, base = "") {
-  if (base && !/^\/i\/own-[a-f0-9]{24}$/.test(base)) throw new Error("Invalid supplier entry base");
+  if (base && !/^\/i\/own-[a-f0-9]{24}$/.test(base)) throw new Error("Invalid contributor entry base");
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escape(title)}</title>

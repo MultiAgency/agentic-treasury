@@ -1,16 +1,23 @@
 import { UsersThree, Wallet as WalletIcon } from "@phosphor-icons/react";
-import { Link } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useState } from "react";
-import { errorMessage, short, useAttempt } from "../shared/lib";
+import { client, errorMessage, short, useAttempt } from "../shared/lib";
 import { ensureDao, ownerName, ownerSigner, type Setup, type Signer, useOwnerAction, useSigner } from "../features/owner/owner";
-import { linkTrezuDao } from "../features/funding/treasury";
 import { Button, Card, ErrorBox, input, Section, Spinner, Step } from "../shared/ui";
 import { connect, dao, send, useWallet } from "../features/owner/wallet";
 import { SetupActions, useSetupActions } from "./setup-progress";
 import { useCanCall, useViewer } from "./viewer";
 import { useGateway } from "./gateway-context";
 import { BASE } from "../shared/client";
+import { useAppHref } from "../features/demo/app-link";
+
+/** Connects a DAO in Trezu and links it as the treasury. */
+async function linkTrezuDao() {
+  await dao.connect();
+  const id = (await dao.connector.getConnectedWallet()).accounts[0]?.accountId;
+  if (!id) throw new Error("Trezu returned no DAO account");
+  await client.treasury.link({ accountId: id });
+}
 
 function ActionRow({ label, busy, disabled, onClick, children }: { label: ReactNode; busy: boolean; disabled?: boolean; onClick: () => void; children: ReactNode }) {
   return (
@@ -28,6 +35,7 @@ function ActionRow({ label, busy, disabled, onClick, children }: { label: ReactN
  * DAO's votes can sign for owns the agent, and every owner action is one proposal.
  */
 export function Onboarding({ setup }: { setup: Setup }) {
+  const treasuryApp = useAppHref("treasury");
   const queryClient = useQueryClient();
   const wallet = useWallet();
   const daoWallet = dao.use();
@@ -193,7 +201,7 @@ export function Onboarding({ setup }: { setup: Setup }) {
               <p className="text-sm text-warning-muted-foreground">{isDao ? "Proposing a grant requires permission to propose owner actions for this DAO." : `Only ${ownerName(setup)} can issue grants. Connect that wallet.`}</p>
             )}
             <ErrorBox error={action.error} />
-            {role === "treasury" ? <Link to="/automations" className="underline">Review and authorize the Portfolio strategy</Link> : <ActionRow label={action.label} busy={action.busy || !canSign} onClick={() => action.run({ type: "grant_issue" })}>
+            {role === "treasury" ? <a href={treasuryApp("/automations")} className="underline">Review and authorize the strategy in Treasury</a> : <ActionRow label={action.label} busy={action.busy || !canSign} onClick={() => action.run({ type: "grant_issue" })}>
               {isDao ? "Propose the grant" : "Issue grant"}
             </ActionRow>}
           </Step>

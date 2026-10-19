@@ -10,9 +10,16 @@ and all four volumes. No deployment or restart is implied by committing source c
 These instructions describe the repository configuration. Deploys, restarts and money actions are
 performed by the owner. For the product and recorded results, see [README](../README.md).
 
-Preserve the complete state when moving an executor: `.ops/`, `.invoices/` (including SQLite journals),
-`.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`, `.agreements/`, `.work-orders/`, `.notify/` (which alerts were sent: losing it re-sends them), any legacy `.intake/` files, and its
-settings file. Stop writers before copying state; never start the destination before stopping the
+Preserve the complete state when moving an executor. This is the canonical list; AGENTS.md,
+`scripts/check-shared-image.mjs` and `docs/agent-access-release.md` repeat it, and `test/state-directories.test.ts`
+keeps them equal:
+<!-- state-directories -->
+`.ops/`, `.invoices/`, `.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`, `.agreements/`, `.notify/`, `.work-orders/`, `.hosted/`, `.agent-connections/`, `.machine-auth/`, and any legacy `.intake/` files
+<!-- /state-directories -->
+plus each instance's settings file. `.invoices/` includes its SQLite journals and the compensation store
+(`<agent>.compensation.sqlite`); `.notify/` records which alerts were sent (losing it re-sends them); `.agent-connections/`
+holds agent connections and their access log (see [agent access](agent-access.md)); `.machine-auth/` holds Treasury
+machine credentials; `.hosted/` the hosted agent registry. Stop writers before copying state; never start the destination before stopping the
 source. The lease coordinates processes on one host only.
 
 ## Work-order executors
@@ -101,12 +108,12 @@ fixtures and offline tests do not establish hosted behavior or actual screen-rea
 
 | Service | Candidate changes | Persistent state |
 |---|---|---|
-| `dao` (`Dockerfile.dashboard`) | Dashboard simplification; reviewed policy/payment confirmations; strategy save, authorization and enable controls; payment/owner-action recovery views; private AG-UI recording inspector/export. Treasury executes here; payout remains approve-only. | Existing `/data/state`, including both agents' settings and this host's owner intents |
-| `invoices` (`Dockerfile`) | Invoice agreements precede amount fields; stable focus during refresh; continuation of unchanged, never-submitted invoices; shared payout/backend changes. Payout executes here. | Existing `/data`, including invoice SQLite, agreements and payout settings |
+| `dao` (`Dockerfile.gateway`, packaged) | Dashboard simplification; reviewed policy/payment confirmations; strategy save, authorization and enable controls; payment/owner-action recovery views; private AG-UI recording inspector/export. Treasury executes here; payout remains approve-only. | Existing `/data/state`, including both agents' settings and this host's owner intents |
+| `invoices` (`Dockerfile.payouts`) | Invoice agreements precede amount fields; stable focus during refresh; continuation of unchanged, never-submitted invoices; shared payout/backend changes. Payout executes here. | Existing `/data`, including invoice SQLite, agreements and payout settings |
 
-The dashboard image must copy `evidence/` before building the web bundle: its UI imports the
-canonical inventory. `test/dashboard-build.test.ts` builds only the Dockerfile’s declared source
-inputs offline; it does not validate a Linux image or hosted runtime.
+The `dao` image is built only from a package made by `scripts/package-shared-frontends.mjs` (Proto's built
+`web/dist` plus the Treasury and Payables builds), which copies in `Dockerfile.gateway` as the package's root Dockerfile
+and `deploy/railway.gateway.json` as its `railway.json`. The image runs `deploy/shared-frontends.json`.
 
 Both services must use the same reviewed source candidate and frozen lockfile. Rebuilding `dao`
 alone does not update the public invoice page. Preserve `AGREEMENTS_URL` and matching
@@ -232,9 +239,9 @@ resuming schedules are separate owner decisions. `pnpm test:live` requires separ
 
 ## Dashboard
 
-**Deploy the dashboard on Railway** (service `dao`: `Dockerfile.dashboard`, one replica, a volume at
+**Deploy the gateway on Railway** (service `dao`: the packaged `Dockerfile.gateway`, one replica, a volume at
 `/data`). One container runs the public gateway (`src/gateway/server.ts`) and, on loopback beside it,
-each agent server listed in `deploy/dashboard.json`. An agent with `"executor": false` runs approve-only.
+each agent server listed in `deploy/shared-frontends.json`. An agent with `"executor": false` runs approve-only.
 Each agent names its `owner` (a Sputnik DAO, whose members sign in, or a wallet account, which signs in
 itself). Dashboard permissions come from that owner or the DAO's policy; legacy `operators` fields are
 ignored and should be removed from configuration. The gateway closes an agent whose own server reports a different owner, so
@@ -248,9 +255,10 @@ DAO operator needs actual group membership and the relevant onchain permissions.
 continue under their current signed policy and grant; removing dashboard access does not stop them.
 All state lives on the volume in `/data/state`; the app stays in `/app`.
 
-1. Create the service and attach a volume at `/data`. Point it at its Dockerfile with the variable
-   `RAILWAY_DOCKERFILE_PATH=Dockerfile.dashboard`. The repository’s `railway.json` selects the payout
-   `Dockerfile`; the dashboard uses its own Dockerfile. Set the healthcheck path to `/health`.
+1. Create the service and attach a volume at `/data`. Build the package with
+   `node scripts/package-shared-frontends.mjs <new directory> <treasury dist> <payables dist>` after `pnpm build:web`;
+   its root `Dockerfile` (from `Dockerfile.gateway`) and `railway.json` define the build. The repository's own
+   `railway.json` selects `Dockerfile.payouts` for the invoices service. Set the healthcheck path to `/health`.
 2. Set `NEAR_INTENTS_AGENT_API_KEY`, `NEAR_INTENTS_AGENT_API_URL`, `NEARAI_API_KEY`, `FASTNEAR_API_KEY`,
    and `SESSION_SECRET` (random, 32+ characters). `TRUST_PROXY=true` is set in the image.
 3. For the first boot only, give each agent its settings file as a base64 variable: `DAO_ENV` and
@@ -260,8 +268,8 @@ All state lives on the volume in `/data/state`; the app stays in `/app`.
    when the checksum matches and no state exists, and writes a settings file only if it is missing.
    Delete these four variables once the service has started: they hold grant tokens and owner intents,
    which from then on live only on the volume.
-4. Deploy with `railway up --service dao`. To test before DNS is in place, set `DASHBOARD_HOST` to the
-   service's Railway domain. Sign-in is bound to that host instead of `host` in `deploy/dashboard.json`.
+4. Deploy from the package directory with `railway up --service dao`. To test before DNS is in place, set `DASHBOARD_HOST` to the
+   service's Railway domain. Sign-in is bound to that host instead of `host` in `deploy/shared-frontends.json`.
    Then point a CNAME at the target `railway domain status <domain> --service dao` shows, and remove
    `DASHBOARD_HOST`.
 
@@ -305,8 +313,13 @@ file, which is imported in turn; its ids are never filed again. The `.sqlite.ini
 prevents a missing database from silently becoming an empty one; restore the database rather than
 removing the marker. Preserve SQLite journals and use a consistent backup. Do not roll back to an
 old writer after new SQLite payments without reconciling/exporting the new records.
+The compensation store refuses a newer schema version (`compensation-store.ts`), and no build before SDK 0.1.0 has
+been tested against records written by it (shared payout mode, required `approvedAmount`, no `payoutMode`), nor this
+build against older approved records without `approvedAmount`. Treat a payout-executor rollback below SDK 0.1.0, after
+its first compensation record, as unsupported until a compatibility test exists. A rollback to r2 leaves all
+compensation and agent-connection state unread.
 
-**Deploy on Railway** (`Dockerfile`, `railway.json`, one replica, one executor host per agent):
+**Deploy on Railway** (`Dockerfile.payouts`, selected by `railway.json`, one replica, one executor host per agent):
 
 1. Move the payout executor and its persistent state together. Any other instance of this agent, such
    as the owner's local dashboard, runs with `EXECUTOR=off`. The database cannot coordinate with an
@@ -329,7 +342,10 @@ unversioned preparation. These historical records remain unchanged and are ignor
 decisions: they never establish that an operation was submitted, settled or safe to retry. Unknown
 versions, orphan snapshots and snapshots mixed with lifecycle fields still refuse. No conversion
 is required. Validate the retained journal with the candidate reader on a disposable backup copy
-before starting the executor; source-only tests do not establish compatibility with every history.
+before starting the executor: from the candidate's source, `pnpm journal:check <backup state directory>` copies the
+backup to a temporary directory, reads every `.ops/<agent>.jsonl` (with its invoice SQLite) with this build's reader, and
+prints each agent's operation and blocking counts or the first invalid line; exit 1 means sends would refuse after the
+deploy. Source-only tests do not establish compatibility with every history.
 
 This is an additive state-format migration. Stop the executor and every server/CLI that writes this
 agent's operations or this instance's owner intents before installing the new build. Do not perform
@@ -533,7 +549,7 @@ from a hostile host. Load capacity and admission abuse resistance remain unverif
 
 New agents start with autopilot off and no grant, and inherit no existing owner’s notification or invoice destinations. Setup requires an explicit wallet signature or
 DAO proposal, then the existing policy/grant/funding checks. New Payables agents use manual
-payments; their supplier invoice intake is not provisioned. The existing payout executor and its
+payments; their payee invoice intake is not provisioned. The existing payout executor and its
 invoice service keep their current roles. Offline tests cover reservations, restart, ownership
 binding and browser setup; real wallet/Trezu creation must be separately observed after user deployment.
 

@@ -9,7 +9,7 @@ import { getInvoice, invoiceId } from "./invoice-store.js";
 import { ownerActions, prepare, status, submit, type OwnerAction } from "./owner-intents.js";
 import { held } from "./payouts.js";
 import { currentWorkOrder, workOrderInvoice, workOrderPolicy } from "./work-order-store.js";
-import { workOrderCommand, type WorkOrderCommand, type WorkOrderSnapshot } from "./work-order-protocol.js";
+import { WorkOrderRefusal, workOrderCommand, type WorkOrderCommand, type WorkOrderSnapshot } from "./work-order-protocol.js";
 
 function order() {
   const value = currentWorkOrder();
@@ -67,7 +67,7 @@ export async function handleWorkOrderCommand(raw: WorkOrderCommand) {
     workOrderInvoice(record, record.payee);
     const snapshot = await workOrderSnapshot();
     if (snapshot.error || !snapshot.policyReady || !snapshot.grant || snapshot.invoice)
-      throw new Error("Authorize the work order and review its existing invoice before funding.");
+      throw new WorkOrderRefusal("work_order_not_ready", "Authorize the work order and review its existing invoice before funding.");
     return depositAddress(record.asset);
   }
   if (command.type === "status") { ownAction(command.correlationId); return status(command.correlationId); }
@@ -82,7 +82,7 @@ export async function handleWorkOrderCommand(raw: WorkOrderCommand) {
     const input = workOrderInvoice(record, command.payee);
     const snapshot = await workOrderSnapshot();
     if (snapshot.error || !snapshot.policyReady || !snapshot.grant || snapshot.balance === null || BigInt(snapshot.balance) !== BigInt(record.amount))
-      throw new Error("This payout is not ready: it requires signed authorization and exactly the approved funding. Review current records; do not add funds or create a replacement.");
+      throw new WorkOrderRefusal("work_order_not_ready", "This payout is not ready: it requires signed authorization and exactly the approved funding. Review current records; do not add funds or create a replacement.");
     return file(input, command.payee);
   }
   if (command.signer === "dao" && !record.dao) throw new Error("This work order has no DAO owner.");

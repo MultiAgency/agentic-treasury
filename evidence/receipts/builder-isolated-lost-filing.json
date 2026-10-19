@@ -1,0 +1,340 @@
+{
+  "story": "A builder's period agreement: assignments reported during the period, each reviewed, paid and settled up to the earnings cap",
+  "scenario": "<local>/contribution-report.json",
+  "inputs": {
+    "story": "A builder's period agreement: assignments reported during the period, each reviewed, paid and settled up to the earnings cap",
+    "payeeLabel": "Alex (builder)",
+    "payee": "payee.near",
+    "agreement": {
+      "title": "October design support",
+      "document": "https://example.org/agreements/october-design",
+      "signedOn": "2026-10-01",
+      "start": "2026-10-01",
+      "end": "2026-10-31",
+      "ceilingUsdc": "40",
+      "scope": "Design reviews and delivery assets"
+    },
+    "deadlineDays": 7,
+    "reports": [
+      {
+        "label": "early assignment: onboarding review and icon set",
+        "start": "2026-10-01",
+        "end": "2026-10-15",
+        "contributions": "Reviewed onboarding screens and delivered the icon set.",
+        "assessment": "Delivered on schedule; two review rounds.",
+        "evidence": [
+          "https://example.org/deliverables/icons"
+        ],
+        "reviews": [
+          {
+            "approvedUsdc": "25",
+            "feedback": "Accepted: icon set and reviews."
+          }
+        ],
+        "remainingUsdc": "15"
+      },
+      {
+        "label": "later assignment: launch banner set",
+        "start": "2026-10-16",
+        "end": "2026-10-31",
+        "contributions": "Designed the launch banner set in three sizes.",
+        "assessment": "One revision after review.",
+        "evidence": [
+          "https://example.org/deliverables/banners"
+        ],
+        "reviews": [
+          {
+            "approvedUsdc": "20",
+            "feedback": "Accepted: banner set.",
+            "expect": "ceiling_exceeded"
+          },
+          {
+            "approvedUsdc": "15",
+            "feedback": "Accepted at the remaining cap: banner set."
+          }
+        ],
+        "remainingUsdc": "0"
+      },
+      {
+        "label": "work after the period: November newsletter art",
+        "start": "2026-11-01",
+        "end": "2026-11-07",
+        "contributions": "Drew the November newsletter header.",
+        "assessment": "Outside the agreed period.",
+        "evidence": [
+          "https://example.org/deliverables/newsletter"
+        ],
+        "expect": "outside_period"
+      }
+    ]
+  },
+  "proto": {
+    "path": "<local>/9d13e95ad8b85210f2c3188ca8f38f9ecb7c2b7162e8c2a6d61785b63065a3f8",
+    "snapshot": {
+      "runDigest": "9d13e95ad8b85210f2c3188ca8f38f9ecb7c2b7162e8c2a6d61785b63065a3f8",
+      "verified": true,
+      "sourceHead": "af6c03bbdf9070399da534b91dba4a5c26b21aec",
+      "overlay": [
+        ".dockerignore",
+        ".gitignore",
+        "CONTEXT.md",
+        "DEMO.md",
+        "Dockerfile",
+        "Dockerfile.dashboard",
+        "Dockerfile.dashboard.dockerignore",
+        "README.md",
+        "docs/agent-access.md",
+        "docs/architecture.md",
+        "docs/enforcement.md",
+        "docs/integration-path.md",
+        "docs/invoices-extraction.md",
+        "docs/operations.md",
+        "docs/reuse-map.md",
+        "docs/sdk-changes.md",
+        "docs/shared-frontend-integration.md",
+        "docs/testing.md",
+        "examples/minimal-prototype/app.js",
+        "examples/minimal-prototype/contract.json",
+        "examples/minimal-prototype/index.html",
+        "package.json",
+        "pnpm-lock.yaml",
+        "scripts/check-consumer-contract.mjs",
+        "scripts/contract-pack.ts",
+        "scripts/verify-skills-run.ts",
+        "scripts/verify-skills.mjs",
+        "src/agent-connections.ts",
+        "src/agent.ts",
+        "src/agreements.ts",
+        "src/compensation-contract.ts",
+        "src/compensation.ts",
+        "src/contract/agent-connection.ts",
+        "src/contract/assets.ts",
+        "src/contract/client.ts",
+        "src/contract/index.ts",
+        "src/contract/inputs.ts",
+        "src/contract/intents-account.ts",
+        "src/contract/owner-capabilities.ts",
+        "src/contract/owner-client.ts",
+        "src/contract/owner-contract.ts",
+        "src/contract/owner-inputs.ts",
+        "src/contract/owner-outputs.ts",
+        "src/contract/package-version.ts",
+        "src/contract/payee-entry.ts",
+        "src/contract/payee.ts",
+        "src/contract/permissions.ts",
+        "src/contract/proposals.ts",
+        "src/contract/release-server.mjs",
+        "src/contract/run-log-schema.ts",
+        "src/contract/run-progress-schema.ts",
+        "src/contract/skills/_artifacts/domain_map.yaml",
+        "src/contract/skills/_artifacts/skill_spec.md",
+        "src/contract/skills/_artifacts/skill_tree.yaml",
+        "src/contract/skills/getting-started/SKILL.md",
+        "src/contract/skills/owner-workflows/SKILL.md",
+        "src/contract/skills/payee-workflows/SKILL.md",
+        "src/gateway/allowlist.ts",
+        "src/gateway/config.ts",
+        "src/gateway/demo-hosts.ts",
+        "src/gateway/hosted-supplier.ts",
+        "src/gateway/owner-frontend.ts",
+        "src/gateway/payee-frontend.ts",
+        "src/gateway/proposals.ts",
+        "src/gateway/roles.ts",
+        "src/gateway/server.ts",
+        "src/gateway/supplier-frontend.ts",
+        "src/grants.ts",
+        "src/intents-account.ts",
+        "src/invoice-http.ts",
+        "src/invoice-page.ts",
+        "src/invoice-store.ts",
+        "src/payables-guide.ts",
+        "src/payee-contract.ts",
+        "src/planning/store.ts",
+        "src/policy.ts",
+        "src/provider-display.ts",
+        "src/rpc/base.ts",
+        "src/rpc/compensation.ts",
+        "src/rpc/inputs.ts",
+        "src/rpc/observations.ts",
+        "src/rpc/owner.ts",
+        "src/rpc/payables.ts",
+        "src/rpc/read-output.ts",
+        "src/rpc/treasury.ts",
+        "src/rpc/work-orders.ts",
+        "src/run-log-schema.ts",
+        "src/run-progress-schema.ts",
+        "src/server.ts",
+        "src/supplier-contract.ts",
+        "src/work-order-pool.ts",
+        "src/work-order-protocol.ts",
+        "src/work-order-runtime.ts",
+        "src/work-order-worker.ts",
+        "src/work-orders.ts",
+        "test/agent-connections.test.ts",
+        "test/browser/demo-hosts.cjs",
+        "test/browser/first-owner.cjs",
+        "test/browser/hosted-payee.cjs",
+        "test/browser/hosted-supplier.cjs",
+        "test/browser/work-orders.cjs",
+        "test/compensation-http.test.ts",
+        "test/consumer-contract.test.ts",
+        "test/contract-client.test.ts",
+        "test/contract-owner-capabilities.test.ts",
+        "test/contract-owner.test.ts",
+        "test/contract-payee.test.ts",
+        "test/demo-hosts.test.ts",
+        "test/e2e/account-switch.spec.mjs",
+        "test/e2e/agent-connection.spec.mjs",
+        "test/e2e/challenge.mjs",
+        "test/e2e/conformance.mjs",
+        "test/e2e/environment.mjs",
+        "test/e2e/fastnear-fixture.cjs",
+        "test/e2e/minimal-prototype.spec.mjs",
+        "test/e2e/owner-release.spec.mjs",
+        "test/e2e/payables-conformance.spec.mjs",
+        "test/e2e/payables-steps.mjs",
+        "test/e2e/payments.spec.mjs",
+        "test/e2e/provider.mjs",
+        "test/e2e/run.mjs",
+        "test/e2e/shared-reader.spec.mjs",
+        "test/e2e/stack.mjs",
+        "test/e2e/treasury-conformance.spec.mjs",
+        "test/e2e/treasury-journey.mjs",
+        "test/e2e/treasury-migration.spec.mjs",
+        "test/e2e/work-orders.spec.mjs",
+        "test/fixtures/authority.ts",
+        "test/fixtures/owner-wire.ts",
+        "test/frontend-config.test.ts",
+        "test/hosted-gateway.test.ts",
+        "test/invoice-durability.test.ts",
+        "test/invoice-proxy.test.ts",
+        "test/money-safety.test.ts",
+        "test/owner-contract.test.ts",
+        "test/owner-frontend.test.ts",
+        "test/payables-guide.test.ts",
+        "test/payee-frontend.test.ts",
+        "test/provider-display.test.ts",
+        "test/release-server.test.ts",
+        "test/rpc-errors.test.ts",
+        "test/static-payee-route.test.ts",
+        "test/static-supplier-route.test.ts",
+        "test/supplier-frontend.test.ts",
+        "test/test-harness.test.ts",
+        "test/work-order-http.test.ts",
+        "web/src/features/demo/catalog.ts",
+        "web/src/features/demo/live-demo.tsx",
+        "web/src/features/demo/payables-player.tsx",
+        "web/src/features/demo/signing-walkthrough.tsx",
+        "web/src/features/demo/walkthrough.tsx",
+        "web/src/public.tsx"
+      ],
+      "overlayDiffSha256": "2b283a10a8262aeefd70c13e619e82281793e0bdfc3d091488b20928b792d0dc",
+      "validated": "2026-10-18: typecheck; offline 874/874; web built; 4 E2E at freeze. Full run from inside this snapshot run-3gmENY: Invoices G 74c99424 -> H c1032433, Payables B2 085b2793 -> A4 64da28e9 (session-recheck), Treasury A4 fd3adb8c -> A5 07d9542e (session-revalidation) + skill 484304cc: 30 passed, 0 failed; challenges 4/4.",
+      "unchangedAfterRun": true
+    }
+  },
+  "invoicesFrontend": {
+    "path": "<local>/c1032433b85f12960ea9b988daad6d947b43b2b13dbb20d0dfaaf484e8f41633",
+    "digest": "c1032433b85f12960ea9b988daad6d947b43b2b13dbb20d0dfaaf484e8f41633"
+  },
+  "payeeDriver": {
+    "kind": "invoices-ui",
+    "script": "<local>/payee.mjs",
+    "sha256": "e5e21a75472a558c39ecb7b35213a5d43bbaf7af3afdf22ea0e02803730b3820"
+  },
+  "fault": "lost-filing-response",
+  "payeeFault": null,
+  "simulated": [
+    "wallet signatures",
+    "funding arrival",
+    "settlement",
+    "provider"
+  ],
+  "steps": [
+    {
+      "step": "Owner records the signed period agreement",
+      "actor": "owner.near",
+      "at": "2026-10-18T07:51:14.988Z",
+      "agreementId": "a0310c65-a4d6-48ea-ad33-ae94839a1d51",
+      "recordedBy": "owner.near",
+      "ceiling": "40000000",
+      "remaining": "40000000"
+    },
+    {
+      "step": "Contributor submits report 1: early assignment: onboarding review and icon set",
+      "actor": "payee.near",
+      "at": "2026-10-18T07:51:15.976Z",
+      "requestId": "bf62f1f3-8013-478a-8fe4-610867eeb664",
+      "commandId": "3a687007-6576-4a49-ab78-affd97ea03ad",
+      "state": "submitted",
+      "version": 1,
+      "requestsForAgreement": 1
+    },
+    {
+      "step": "Owner reviews report 1 at 25 USDC (no payment)",
+      "actor": "owner.near",
+      "at": "2026-10-18T07:51:16.365Z",
+      "state": "approved",
+      "approvedAmount": "25000000",
+      "contributorSees": "approved",
+      "providerTransfers": 0
+    },
+    {
+      "step": "Owner prepares report 1's isolated payout",
+      "actor": "owner.near",
+      "at": "2026-10-18T07:51:16.396Z",
+      "orderId": "bf62f1f3-8013-478a-8fe4-610867eeb664",
+      "amount": "25000000",
+      "until": "2026-10-25T07:51:16.368Z",
+      "payee": "payee.near"
+    },
+    {
+      "step": "Owner authorizes the order agent (simulated wallet signature)",
+      "actor": "owner.near",
+      "at": "2026-10-18T07:51:16.853Z",
+      "correlationId": "e1b95c2c-a268-467e-bd33-b2cd3273c6c7",
+      "orderAgent": "d8f200ea2790e068d652b0c6e795d5d4b2c2d1b4983c54b7c1f3190c3a69555d",
+      "policyReady": true
+    },
+    {
+      "step": "Owner authorizes the order grant until the deadline (simulated wallet signature)",
+      "actor": "owner.near",
+      "at": "2026-10-18T07:51:16.921Z",
+      "correlationId": "c696fcaa-9f24-4e63-8b93-57132775e518",
+      "grantId": "4663b35a-5098-4d67-a0b0-8d7123772c5d",
+      "expiresAt": "2026-10-25T07:51:16.368Z"
+    },
+    {
+      "step": "Owner funds exactly the order amount (simulated deposit arrival)",
+      "actor": "owner.near",
+      "at": "2026-10-18T07:51:17.100Z",
+      "depositCorrelationId": "7a7b11c0-8a0d-45d1-8035-4153e1ad9118",
+      "depositAddress": "work-1.local-wallet.near",
+      "balance": "25000000"
+    },
+    {
+      "step": "Payee files the order invoice",
+      "actor": "payee.near",
+      "at": "2026-10-18T07:51:18.375Z",
+      "invoiceId": "c47c9d3c3157181c5adbf4a098c77ef2",
+      "status": "unknown",
+      "retry": {
+        "invoiceId": "c47c9d3c3157181c5adbf4a098c77ef2",
+        "status": "unknown"
+      },
+      "providerTransfers": 1
+    }
+  ],
+  "unresolved": {
+    "invoice": {
+      "id": "c47c9d3c3157181c5adbf4a098c77ef2",
+      "amount": "25000000",
+      "note": "Compensation request bf62f1f3-8013-478a-8fe4-610867eeb664",
+      "filedAt": "2026-10-18T07:51:17.733Z",
+      "status": "unknown",
+      "revisionConflict": false
+    },
+    "ownerApproval": null
+  },
+  "stopped": "Filing outcome is unknown. No new send; observe invoice c47c9d3c3157181c5adbf4a098c77ef2 until the provider reports it."
+}

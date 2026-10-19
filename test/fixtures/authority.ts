@@ -32,6 +32,8 @@ const usd = (value: string | null) => value === null ? null : Number(value).toFi
 export function policyView(policy: Policy, revision = 1) {
   const budget = Object.fromEntries((["daily", "weekly", "monthly"] as const).map((w) => [w,
     { limit_usd: usd(policy.budget[`${w}_usd`]), spent_usd: "0", remaining_usd: usd(policy.budget[`${w}_usd`]), resets_at: null }]));
+  // The SDK's PolicyView fields, as the provider reports them.
   return { policy, revision, wallet_id: fixtureWallet.wallet_id, status: "APPLIED", provider_policy_synced: true,
+    policy_hash: null, applied_at: null, transaction_hash: null, cooldowns: { policy_change_available_at: null, unfreeze_available_at: null },
     usage: { budget, timelock: { delay_ms: 0, scheduled_count: 0 } } };
 }

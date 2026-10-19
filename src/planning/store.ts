@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { PublicError } from "../public-error.js";
 import { claimSynced, mkdirSynced } from "../synced.js";
 import type { Plan, PlannedAction, PlanSource, Snapshot } from "./model.js";
 
@@ -33,7 +34,7 @@ export function savePlan(
 export function loadPlan(id: string): Plan {
   if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error("Not a plan id");
   const file = join(DIR, `${id}.json`);
-  if (!existsSync(file)) throw new Error(`No plan ${id}`);
+  if (!existsSync(file)) throw new PublicError("This plan was not found. Prepare a new plan; nothing was sent.");
   const { plan, sha256 } = JSON.parse(readFileSync(file, "utf8")) as { plan: Plan; sha256: string };
   if (digest(plan) !== sha256) throw new Error(`Plan ${id} was modified after it was saved`);
   return plan;

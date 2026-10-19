@@ -38,7 +38,7 @@ test("generated surfaces cannot inject markup handlers, destinations, signatures
 });
 
 test("model output is verified before parsing; a gateway signature is refused", async () => {
-  const input = { mode: "rehearsal", stage: "approval", role: "executor", question: "Show the supplier view" } as const;
+  const input = { mode: "rehearsal", stage: "approval", role: "executor", question: "Show the contributor view" } as const;
   const scene = { ...sceneFor("approval"), panels: ["roles", "signature"] };
   const completion = { id: "completion-fixture", arguments: JSON.stringify(scene) };
   const events: string[] = [];

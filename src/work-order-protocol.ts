@@ -2,6 +2,12 @@ import { z } from "zod";
 import type { WorkOrder } from "./work-order-store.js";
 import type { mine } from "./invoices.js";
 import type { prepare, submit, status, ownerActions } from "./owner-intents.js";
+import { PublicError } from "./public-error.js";
+
+/** A deliberate refusal before anything is sent. Only this crosses the private IPC boundary as public; other failures stay generic. */
+export class WorkOrderRefusal extends PublicError {
+  constructor(readonly code: "work_order_not_ready", message: string) { super(message); }
+}
 
 export const workOrderCommand = z.discriminatedUnion("type", [
   z.object({ type: z.literal("snapshot") }).strict(),

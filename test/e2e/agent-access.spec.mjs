@@ -40,8 +40,9 @@ test('shared consent issues once, machine calls stay guarded, and outage revocat
     const token = await secret.inputValue();
     const client = createORPCClient(new RPCLink({ origin: stack.dashboard, url: '/machine/v1/a/portfolio/rpc', headers: { authorization: `Bearer ${token}` }, fetch: localFetch }));
     expect((await client.instance()).agentId).toBe(stack.portfolio.id);
-    await expect(client.sweep({})).rejects.toThrow();
-    await expect(client.autopilot.tick()).rejects.toThrow();
+    // Outside the credential's scopes: the gateway's plain route refusal (403, surfaced as oRPC's malformed response).
+    await expect(client.sweep({})).rejects.toMatchObject({ response: { status: 403 } });
+    await expect(client.autopilot.tick()).rejects.toMatchObject({ response: { status: 403 } });
     // Offline owner-strategy fixture: one supported swap, autopilot ceiling remains zero.
     const strategyDir = join(stack.directory, 'portfolio/.strategy'); mkdirSync(strategyDir, { recursive: true });
     writeFileSync(join(strategyDir, '.env.json'), JSON.stringify({ targetBps: {
@@ -89,7 +90,8 @@ test('shared consent issues once, machine calls stay guarded, and outage revocat
     await page.getByRole('button', { name: 'Confirm revocation' }).click();
     await expect(page.getByText('Revoked', { exact: true })).toBeVisible();
     stack.portfolio.setUnavailable(false);
-    await expect(client.instance()).rejects.toThrow();
+    // Revoked: the credential no longer authenticates (401), even for a read it was granted.
+    await expect(client.instance()).rejects.toMatchObject({ response: { status: 401 } });
     expect(stack.simulated.transfers).toHaveLength(0);
     expect(stack.portfolio.intents).toHaveLength(0);
     await page.evaluate(() => window.scrollTo(0, 0));

@@ -1,0 +1,215 @@
+{
+  "scenario": "Move 5 USDC into wNEAR in two chosen swaps",
+  "fault": null,
+  "simulated": "provider, chain, settlement and owner wallet signatures are simulated; no real funds or credentials",
+  "steps": [
+    {
+      "step": 1,
+      "actor": "owner",
+      "action": "strategy fixture written",
+      "simulated": true,
+      "strategy": {
+        "targetBps": {
+          "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1": 7500,
+          "nep141:wrap.near": 2500,
+          "nep141:eth.omft.near": 0
+        },
+        "minLegUsd": 2,
+        "maxCostBps": 250
+      }
+    },
+    {
+      "step": 2,
+      "actor": "owner",
+      "action": "machine credential issued",
+      "simulatedSignature": true,
+      "credentialId": "ebe3c3dc-f7f1-4ff6-8ece-1f54c8b29f7d",
+      "scopes": [
+        "read",
+        "prepare",
+        "execute-plan"
+      ],
+      "expiresAt": 1792309929069
+    },
+    {
+      "step": 3,
+      "actor": "agent",
+      "action": "observed",
+      "book": [
+        {
+          "symbol": "wNEAR",
+          "public": "0",
+          "confidential": "0"
+        },
+        {
+          "symbol": "USDC",
+          "public": "0",
+          "confidential": "100000000"
+        },
+        {
+          "symbol": "ETH",
+          "public": "0",
+          "confidential": "0"
+        }
+      ],
+      "budget": {
+        "daily": {
+          "limit_usd": "50",
+          "spent_usd": "0",
+          "remaining_usd": "50",
+          "resets_at": null
+        },
+        "weekly": {
+          "limit_usd": null,
+          "spent_usd": "0",
+          "remaining_usd": null,
+          "resets_at": null
+        },
+        "monthly": {
+          "limit_usd": "200",
+          "spent_usd": "0",
+          "remaining_usd": "200",
+          "resets_at": null
+        }
+      },
+      "strategyDigest": "sha256:c4eff28b0beaa2c844832e9c6453aad7f2e5ee2ba982f99f4eacfbd05fa3ec6f",
+      "unresolved": 0
+    },
+    {
+      "step": 4,
+      "actor": "agent",
+      "action": "plan saved",
+      "planId": "4506206c-0d6b-4916-bb75-25ea243c17ee",
+      "source": "external",
+      "expiresAt": "2026-10-18T06:57:09.551Z",
+      "actions": [
+        {
+          "type": "swap",
+          "from": "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+          "to": "nep141:wrap.near",
+          "amount": "3000000",
+          "amountOut": "1500000000000000000000000",
+          "minAmountOut": "1498500000000000000000000",
+          "costBps": 0
+        },
+        {
+          "type": "swap",
+          "from": "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+          "to": "nep141:wrap.near",
+          "amount": "2000000",
+          "amountOut": "1000000000000000000000000",
+          "minAmountOut": "999000000000000000000000",
+          "costBps": 0
+        }
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "owner",
+      "action": "execution authorized",
+      "planId": "4506206c-0d6b-4916-bb75-25ea243c17ee",
+      "submissionsBefore": 0
+    },
+    {
+      "step": 6,
+      "actor": "agent",
+      "action": "execution returned",
+      "exitCode": 0,
+      "events": [
+        {
+          "type": "action",
+          "index": 0,
+          "action": {
+            "type": "swap",
+            "from": "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+            "to": "nep141:wrap.near",
+            "amount": "3000000",
+            "amountOut": "1500000000000000000000000",
+            "minAmountOut": "1498500000000000000000000",
+            "costBps": 0
+          },
+          "status": "SUCCESS",
+          "correlationId": "cd238ceb-9233-4bf5-a27e-ed940c9a0b24"
+        },
+        {
+          "type": "action",
+          "index": 1,
+          "action": {
+            "type": "swap",
+            "from": "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+            "to": "nep141:wrap.near",
+            "amount": "2000000",
+            "amountOut": "1000000000000000000000000",
+            "minAmountOut": "999000000000000000000000",
+            "costBps": 0
+          },
+          "status": "SUCCESS",
+          "correlationId": "3a11d3c6-0384-4ff1-869c-0812c840bc71"
+        }
+      ],
+      "error": null
+    },
+    {
+      "step": 7,
+      "actor": "agent",
+      "action": "outcome observed",
+      "planId": "4506206c-0d6b-4916-bb75-25ea243c17ee",
+      "operations": [
+        {
+          "purpose": "external",
+          "amount": "2000000",
+          "from": "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+          "to": "nep141:wrap.near",
+          "status": "SUCCESS",
+          "refused": null,
+          "correlationId": "3a11d3c6-0384-4ff1-869c-0812c840bc71",
+          "at": "2026-10-18T06:52:09.717Z"
+        },
+        {
+          "purpose": "external",
+          "amount": "3000000",
+          "from": "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+          "to": "nep141:wrap.near",
+          "status": "SUCCESS",
+          "refused": null,
+          "correlationId": "cd238ceb-9233-4bf5-a27e-ed940c9a0b24",
+          "at": "2026-10-18T06:52:09.678Z"
+        }
+      ],
+      "unresolved": [],
+      "simulatedSubmissions": 2,
+      "distinctSubmissionIdentities": 2,
+      "submittedLegs": [
+        {
+          "from": "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+          "to": "nep141:wrap.near",
+          "amount": "3000000",
+          "minAmountOut": "1498500000000000000000000"
+        },
+        {
+          "from": "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+          "to": "nep141:wrap.near",
+          "amount": "2000000",
+          "minAmountOut": "999000000000000000000000"
+        }
+      ],
+      "submittedTotal": "5000000",
+      "floorsKept": true
+    }
+  ],
+  "provenance": {
+    "node": "v24.22.0",
+    "treasurySkill": "976dbc0356325281aeab1cb5ee8f9c4187fe6c63663dd46df30f04b4a04c6a59",
+    "protoSnapshot": {
+      "path": "<local>/e27183cb27da43c7bd1caa1f96a2544f1f8f2f93fc2428f0bbdd4017d1217d6e",
+      "runDigest": "e27183cb27da43c7bd1caa1f96a2544f1f8f2f93fc2428f0bbdd4017d1217d6e",
+      "verifiedBeforeRun": "e27183cb27da43c7bd1caa1f96a2544f1f8f2f93fc2428f0bbdd4017d1217d6e",
+      "sourceHead": "af6c03bbdf9070399da534b91dba4a5c26b21aec",
+      "overlayDiffSha256": "3a7e26d0dac2b0a59b843291119aa50206384c7f2924de053208a3b0fd9f438d",
+      "unchangedAfterRun": true
+    },
+    "protoSource": "5381aeb1cdbac38351d0786b50e6f8903af902c2e5d11b4ba35b5dded7217aa2",
+    "protoHarness": "f2b23bf62586a5b6c82412b9dd9d0e33180da0db9f79ee3174008cd02a2ee3f8"
+  },
+  "result": "as expected"
+}

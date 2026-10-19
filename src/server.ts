@@ -51,19 +51,19 @@ const dashboard = createServer(async (req, res) => {
 
 async function serveDashboard(req: IncomingMessage, res: ServerResponse) {
   // Loopback only, and only from this page: a malformed Origin (`null`, garbage) is refused like a foreign one.
-  const supplier = req.url?.startsWith("/supplier/") && process.env.HOSTED_INVOICE_BASE;
-  const wrongOrigin = supplier ? req.headers.origin !== undefined && req.headers.origin !== `https://${process.env.INVOICES_PUBLIC_HOST}` : crossSite(req);
+  const payee = req.url?.startsWith("/supplier/") && process.env.HOSTED_INVOICE_BASE;
+  const wrongOrigin = payee ? req.headers.origin !== undefined && req.headers.origin !== `https://${process.env.INVOICES_PUBLIC_HOST}` : crossSite(req);
   if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(req.headers.host ?? "") || wrongOrigin) {
     res.writeHead(403).end();
     return;
   }
   if (["/rpc/instance", "/rpc/autopilot/log", "/rpc/owner/actions", "/rpc/paymentHistory", "/rpc/strategy/get"].includes(req.url?.split("?")[0] ?? "")) res.setHeader("cache-control", "private, no-store");
   await executor.activate(process.env.AGENT_ID);
-  // Hosted supplier HTTP runs inside this same payout executor and its existing lease.
+  // Hosted payee HTTP runs inside this same payout executor and its existing lease.
   // Import only after onboarding establishes the agent identity; never start another writer.
   if (req.url?.startsWith("/supplier/") && process.env.HOSTED_INVOICE_BASE) {
     if (!executes() || !process.env.AGENT_ID) {
-      res.writeHead(503, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify({ error: "The owner must finish agent setup before supplier intake is available." }));
+      res.writeHead(503, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify({ error: "The owner must finish agent setup before contributor intake is available." }));
       return;
     }
     req.url = req.url.slice("/supplier".length);

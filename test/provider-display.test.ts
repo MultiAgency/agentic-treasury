@@ -53,7 +53,7 @@ test("RPC errors retain exact provider codes and allowlisted budget or retry met
     try {
       await assert.rejects(call, (error: unknown) => {
         assert.ok(error instanceof ORPCError, code);
-        assert.deepEqual(error.data, expected, code);
+        assert.deepEqual(error.data, { kind: "provider", ...expected }, code);
         return true;
       });
       assert.equal(read.mock.callCount(), 1, `${code} must come from the selected provider read`);

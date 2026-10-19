@@ -34,7 +34,7 @@ test("invoice proxy streams the original identity once, strips dashboard session
   }
 });
 
-test("supplier timeout after acceptance preserves ambiguity and never replays", async t => {
+test("contributor timeout after acceptance preserves ambiguity and never replays", async t => {
   let accepted = 0;
   const backend = createServer((req, _res) => { req.resume(); req.on("end", () => { accepted++; }); });
   const backendPort = await listen(backend);

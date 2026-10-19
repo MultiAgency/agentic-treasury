@@ -79,7 +79,7 @@ Every sentence in README, DEMO.md and docs states exactly what was shown, and ho
 - `pnpm typecheck` and `pnpm test` pass; new money-path behaviour has a test that fails without it.
 - `CONTEXT.md` updated when a concept is added or renamed.
 - README/DEMO/docs claims match the change (see Calibrated claims).
-- State-format changes ship with a migration that requires a stopped executor and preserves
-  `.ops/`, `.invoices/`, `.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`, `.agreements/`, `.notify/`.
+- State-format changes ship with a migration that requires a stopped executor and preserves every state directory
+  (canonical list in `docs/operations.md`): `.ops/`, `.invoices/`, `.owner-intents/`, `.strategy/`, `.plans/`, `.evidence/`, `.inbox/`, `.agreements/`, `.notify/`, `.work-orders/`, `.hosted/`, `.agent-connections/`, `.machine-auth/`.
   Additive optional records that need no conversion of existing state (such as run progress) need
   compatibility tests and preservation instructions, not a directory-creation migration.

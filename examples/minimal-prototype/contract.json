@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "product": "minimal-prototype",
+  "required": ["gateway-session-v1", "agent-observe-v1", "owner-intents-v1"]
+}

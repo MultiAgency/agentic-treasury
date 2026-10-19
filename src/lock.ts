@@ -19,9 +19,14 @@ export class MoneyLockBusy extends Error {
 
 export class UnresolvedOperations extends Error {
   constructor(readonly ops: Op[]) {
+    // Reconcile resolves only operations with a provider ID; a lost provider reply leaves none and needs review.
+    const polled = ops.filter((op) => op.correlationId), lost = ops.filter((op) => !op.correlationId);
     super(
       `${ops.length} earlier money action(s) have no proven outcome: ${ops.map((op) => op.idempotencyKey).join(", ")}. ` +
-        "Run `pnpm reconcile` before sending new ones.",
+        (polled.length ? "`pnpm reconcile --poll` reads their outcomes. " : "") +
+        (lost.length ? `${lost.map((op) => op.idempotencyKey).join(", ")} ${lost.length === 1 ? "has" : "have"} no operation ID, so reconcile cannot resolve ${lost.length === 1 ? "it" : "them"}: ` +
+          "sends stay paused until reviewed (docs/enforcement.md, lost provider reply). " : "") +
+        "Nothing new is sent meanwhile.",
     );
   }
 }

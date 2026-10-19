@@ -1,7 +1,6 @@
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const { runTask } = require('./fixtures/task.cjs');
-const { workspaceEvidence, workspaceOpener } = require('./fixtures/workspace.cjs');
 const { assertResponsive } = require('./fixtures/layout.cjs');
 const { html, script } = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e',
   'import { invoicePage, invoiceBrowser } from "./src/invoice-page.ts"; console.log(JSON.stringify({html:invoicePage("Work order fixture"),script:invoiceBrowser}));'], { encoding: 'utf8' }));
@@ -10,50 +9,7 @@ const order = { version: 1, id, parentAgentId: 'parent', payee: 'payee.near', am
   until: '2030-01-01T00:00:00.000Z', createdAt: '2026-10-01T00:00:00.000Z', asset: 'usdc',
   owner: { type: 'near', account_id: 'owner.near', public_key: 'fixture' } };
 
-async function ownerWorkOrder(browser, root) {
-  const { setup, overview, budget } = workspaceEvidence({});
-  let records = [];
-  const open = workspaceOpener(root, { budget, values(kind) { return {
-    instance: { agentId: 'fixture', executor: false }, setup: { ...setup, dao: { id: 'fixture.sputnik-dao.near', owner: setup.owner } }, overview: overview(kind),
-    'treasury/get': null, held: [], unresolved: [], 'inbox/list': [], 'agreements/list': [], invoices: [], activity: [],
-    'owner/pending': [], 'owner/actions': [], paymentHistory: { items: [], complete: true }, 'autopilot/get': { on: false },
-    'workOrders/list': records,
-    'workOrders/get': { order: records[0], agentId: null, wallet: null, balance: null, policyReady: false,
-      grant: null, invoice: null, ownerActions: [], approval: null, error: null },
-  }; } });
-  const context = await browser.newContext({ viewport: { width: 390, height: 900 } });
-  const { page, calls, errors } = await open(context, '/a/payables/payees', { dao: true });
-  let writes = 0;
-  await page.route('**/rpc/workOrders/create', route => {
-    writes++;
-    const input = route.request().postDataJSON().json;
-    assert.match(input.id, /^[0-9a-f-]{36}$/);
-    assert.equal(input.amount, '1250000');
-    assert.equal(input.payee, 'payee.near');
-    records = [{ ...order, ...input }];
-    return route.fulfill({ json: { json: records[0] } });
-  });
-  await page.getByText('Create a work order', { exact: true }).click();
-  await page.getByRole('button', { name: 'Save work order', exact: true }).click();
-  assert.equal(writes, 0);
-  await page.getByLabel('Work order payee', { exact: true }).fill('payee.near');
-  await page.getByLabel('Fixed amount (USDC)').fill('1.25');
-  await page.getByLabel('Agreed work').fill('Synthetic design work');
-  await page.getByRole('button', { name: 'Save work order', exact: true }).click();
-  await page.getByText('Needs owner authorization', { exact: true }).waitFor();
-  assert.equal(writes, 1);
-  await page.getByRole('button', { name: 'Authorize work order', exact: true }).click();
-  await page.getByRole('dialog').waitFor();
-  assert.match(await page.getByRole('dialog').innerText(), /1.25 USDC to payee.near/);
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-  assert.ok(!calls.includes('workOrders/prepare'));
-  assert.ok((await page.getByRole('link', { name: 'Open work order on the invoice page' }).getAttribute('href')).includes(records[0].id));
-  await assertResponsive(page, 'work-order-owner');
-  await page.screenshot({ path: '/tmp/work-order-owner.png', fullPage: true });
-  assert.deepEqual(errors, []);
-  await context.close();
-}
-
+// The owner's work-order screen is in Payables, with its own copy of this suite; these cases cover the payee pages Proto serves.
 async function payeeWorkOrder(browser) {
   {
     const width = 390; // File once; resize each retained state for layout coverage.
@@ -166,7 +122,7 @@ async function selectedWorkOrderSurvivesReload(browser) {
     assert.deepEqual(writes, [], 'selection and reload must not submit');
     await page.close();
   }
-  console.log('PASS selected supplier work order survives reload with scoped entry and unknown outcome retained');
+  console.log('PASS selected contributor work order survives reload with scoped entry and unknown outcome retained');
 }
 
-runTask([ownerWorkOrder, payeeWorkOrder, selectedWorkOrderSurvivesReload]);
+runTask([payeeWorkOrder, selectedWorkOrderSurvivesReload]);

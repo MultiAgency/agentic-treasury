@@ -1,19 +1,17 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, type LinkProps } from "@tanstack/react-router";
 import { useEffect, useState, type ReactNode } from "react";
 import { ASSETS } from "../../../../src/policy";
 import { useAgent } from "../../app/agent-context";
 import { useCanCall, useViewer } from "../../app/viewer";
-import { fromUnits, kindOf, queries, swaps } from "../../shared/lib";
+import { fromUnits, queries } from "../../shared/lib";
 import { Badge, Button, Card, Details, QueryError, Section, Spinner, type Tone } from "../../shared/ui";
-import { Activity } from "../activity/activity";
 import { ownerName } from "../owner/owner";
 import { InvoicePageLink } from "../payables/invoice-link";
 import { ManualPayment } from "../payables/payees";
 import { Payments } from "../payables/timeline-payment";
-import { Rebalance } from "../portfolio/automations";
 import { useGateway } from "../../app/gateway-context";
 import { Guidance } from "./guidance";
+import { useAppHref } from "./app-link";
 import { BASE } from "../../shared/client";
 
 // An observation is only a UI hint. Every actual action still goes through existing authorization.
@@ -28,7 +26,7 @@ type Check = {
   detail: string;
   blocked: boolean;
   tone?: Tone;
-  link?: { to: LinkProps["to"]; hash?: string; label: string };
+  link?: { to: string; hash?: string; label: string };
 };
 
 /** The numbered stages describe a real sequence, never scripted progress or inferred completion. */
@@ -42,27 +40,23 @@ function DemoStep({ number, title, children }: { number: number; title: string; 
   </li>;
 }
 
-/** Poll retained operation records without starting or reconciling an operation. */
-function DemoActivity({ planId }: { planId: string }) {
-  useQuery({ ...queries.activity, refetchInterval: 5_000, retry: false });
-  return <Activity planId={planId} />;
-}
-
-/** Private guided actions reuse the area's existing review, submission, and durable outcome views. */
+/**
+ * The Payables walkthrough's run with real funds: request a payment, review its owner approval, follow the provider's
+ * outcome. Policy, agreements, funding and recovery are reviewed in the Payables app for the same agent.
+ */
 export function LiveDemo({ short = false, expanded = false }: { short?: boolean; expanded?: boolean } = {}) {
   const { setup, data } = useAgent();
   const gateway = useGateway();
   const manualOnly = gateway?.agents.find(agent => `/a/${agent.name}` === BASE)?.invoices === null;
   const viewer = useViewer();
   const cache = useQueryClient();
-  const treasury = kindOf(data) === "treasury";
-  const canPrepare = useCanCall(treasury ? "rebalance" : "pay");
-  const canExecute = useCanCall(treasury ? "executePlan" : "pay");
+  const app = useAppHref("payables");
+  const canPrepare = useCanCall("pay");
+  const canExecute = useCanCall("pay");
   const setupRead = useQuery({ ...queries.setup, refetchInterval: 30_000, retry: false });
   const overviewRead = useQuery({ ...queries.overview, retry: false });
   const unresolved = useQuery({ ...queries.unresolved, refetchInterval: 5_000, retry: false });
   const [now, setNow] = useState(Date.now);
-  const [planId, setPlanId] = useState<string>();
   const [paymentId, setPaymentId] = useState<string>();
   useEffect(() => {
     // Expiry and stale observations change the available actions even without another response.
@@ -82,13 +76,9 @@ export function LiveDemo({ short = false, expanded = false }: { short?: boolean;
   const expired = Number.isFinite(expires) && expires <= now;
   const liveGrant = Boolean(grant && expires > now && providerGrant && !providerGrant.revoked_at
     && Date.parse(providerGrant.expires_at) > now && providerGrant.label === grant.label);
-  const grantPurpose = Boolean(grant && (treasury
-    ? grant.label === "treasury" || grant.label.startsWith("treasury:")
-    : grant.label === "payout" || grant.label === "invoices"));
-  const supported = treasury ? swaps(data) : Boolean(data.policy.policy?.actions.includes("transfer"));
-  const funded = data.book.some(holding => treasury
-    ? BigInt(holding.public) + BigInt(holding.confidential) > 0n
-    : holding.asset === ASSETS.USDC && BigInt(holding.confidential) > 0n);
+  const grantPurpose = Boolean(grant && (grant.label === "payout" || grant.label === "invoices"));
+  const supported = Boolean(data.policy.policy?.actions.includes("transfer"));
+  const funded = data.book.some(holding => holding.asset === ASSETS.USDC && BigInt(holding.confidential) > 0n);
   const unresolvedCount = unresolved.data?.length;
   const observationDetail = readFailed ? "An observation failed. Check again before preparing a new action."
     : checking ? "Checking this agent’s policy, grant and unresolved operations."
@@ -102,17 +92,16 @@ export function LiveDemo({ short = false, expanded = false }: { short?: boolean;
     },
     {
       label: "This instance", status: executor ? "Executor" : setup.executor === false ? "Approve-only" : "Unconfirmed", blocked: !executor,
-      tone: !executor && !treasury ? "neutral" : undefined,
+      tone: !executor ? "neutral" : undefined,
       detail: executor ? "This instance submits actions for this agent."
-        : treasury ? "Run a rebalance on this agent’s executor. Existing records remain available here."
-          : "The payee submits through the configured invoice page. Review the held payout and its owner approval here.",
+        : "The payee submits through the configured invoice page. Review the held payout and its owner approval here.",
     },
     {
       label: "Policy", status: !current ? "Unconfirmed" : policyKnown && supported ? "In force at last check" : "Review needed",
       blocked: !policyKnown || !supported,
       detail: !current ? "Refresh observations to confirm the policy."
         : !policyKnown ? data.notInForce ?? "No applied policy was reported."
-          : !supported ? `The current policy does not allow ${treasury ? "swaps" : "transfers"}.`
+          : !supported ? "The current policy does not allow transfers."
             : "The provider enforces the signed policy. The amount, assets and destinations are checked for each action.",
       link: { to: "/policy", label: "Review policy and limits" },
     },
@@ -126,22 +115,21 @@ export function LiveDemo({ short = false, expanded = false }: { short?: boolean;
             : !liveGrant ? "The reported grant could not be matched to a live provider record. Check the grant before proceeding."
               : !grantPurpose ? `The ${grant.label} grant does not permit this demo’s money action.`
                 : `${grant.label} · expires ${new Date(expires).toLocaleString()}.`,
-      link: treasury ? { to: "/automations", label: "Review strategy and grant" } : { to: "/policy", hash: "grants", label: "Review or renew the grant" },
+      link: { to: "/policy", hash: "grants", label: "Review or renew the grant" },
     },
     {
       label: "Funds", status: !current ? "Unconfirmed" : funded ? "Balance observed" : "Funding needed", blocked: !funded,
       detail: !current ? "Refresh observations to confirm balances."
         : funded ? "Observed balances are shown below. Held payouts can reserve part of a balance; each send checks what remains available."
-          : treasury ? "Fund the agent before previewing swaps toward its target allocation."
-            : "The payout agent needs confidential USDC. Review funding and sweep public USDC if appropriate.",
+          : "The payout agent needs confidential USDC. Review funding and sweep public USDC if appropriate.",
       link: { to: "/funding", label: "Balances & funding" },
     },
-    ...(!treasury ? [{
+    {
       label: "Payees", status: !current ? "Unconfirmed" : data.agreed.length ? `${data.agreed.length} agreed` : "Agreement needed",
       blocked: data.agreed.length === 0,
       detail: "Choose an agreed payee and check the amount ceiling and deadline before requesting a payment.",
-      link: { to: "/payees" as const, label: "Review Agreements" },
-    }] : []),
+      link: { to: "/payees", label: "Review Agreements" },
+    },
     {
       label: "Unresolved operations", status: !current ? "Unconfirmed" : unresolvedCount ? `${unresolvedCount} unresolved` : "None recorded here",
       blocked: unresolvedCount === undefined || unresolvedCount > 0,
@@ -153,22 +141,21 @@ export function LiveDemo({ short = false, expanded = false }: { short?: boolean;
   ];
   const firstBlocker = checks.find(check => check.blocked);
   const disabledReason = firstBlocker?.detail;
-  const reviewingOnly = !treasury && setup.executor === false;
-  const guideReason = reviewingOnly ? "Share the supplier link, then review the exact invoice or held payout below. This host handles owner review; the supplier’s executor submits the payment." : disabledReason;
+  const reviewingOnly = setup.executor === false;
+  const guideReason = reviewingOnly ? "Share the contributor link, then review the exact invoice or held payout below. This host handles owner review; the contributor’s executor submits the payment." : disabledReason;
 
-  return <Section title="Run with real funds" description={treasury
-    ? "Preview a rebalance, review its exact swaps, then choose whether to execute on mainnet."
-    : "Request a payment, review its owner approval, and follow the provider’s payment outcome."}>
+  const appLink = (link: { to: string; hash?: string; label: string }) => <a href={app(link.to, link.hash)} className="underline">{link.label} in Payables</a>;
+  return <Section title="Run with real funds" description="Request a payment, review its owner approval, and follow the provider’s payment outcome.">
     <div className="flex flex-wrap items-center gap-3 text-sm">
       <Badge tone="warning">Real funds on mainnet</Badge>
       <p>You choose and confirm each money action.</p>
-      <Link to="/activity" className="underline">Activity and recovery</Link>
+      {appLink({ to: "/activity", label: "Activity and recovery" })}
     </div>
-    {short && <Guidance agentId={data.agentId} workflow={treasury ? "treasury" : "payables"} blocker={guideReason} record={planId ? { kind: "plan", id: planId } : paymentId ? { kind: "payment", id: paymentId } : undefined} />}
+    {short && <Guidance agentId={data.agentId} workflow="payables" blocker={guideReason} record={paymentId ? { kind: "payment", id: paymentId } : undefined} />}
     <ol className="flex min-w-0 flex-col gap-8">
       <DemoStep number={1} title="Check this agent">
         <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-          <p className="max-w-prose text-muted-foreground">{reviewingOnly ? "This host reviews owner approvals. Use the supplier handoff below to request a payment; these checks describe readiness for new submissions." : firstBlocker ? "Resolve the check below before a new action." : "Observations checked. The server and provider check authorization again when you act."}</p>
+          <p className="max-w-prose text-muted-foreground">{reviewingOnly ? "This host reviews owner approvals. Use the contributor handoff below to request a payment; these checks describe readiness for new submissions." : firstBlocker ? "Resolve the check below before a new action." : "Observations checked. The server and provider check authorization again when you act."}</p>
           <Button variant="outline" size="sm" disabled={fetching} onClick={() => { void cache.invalidateQueries(); }}>
             {fetching && <Spinner />} {fetching ? "Checking observations…" : "Check observations"}
           </Button>
@@ -177,7 +164,7 @@ export function LiveDemo({ short = false, expanded = false }: { short?: boolean;
         {firstBlocker && <div className="flex flex-col items-start gap-2 rounded-xl bg-muted px-4 py-3 text-sm">
           <p className="font-medium">{firstBlocker.label}: {firstBlocker.status}</p>
           <p className="max-w-prose text-muted-foreground">{firstBlocker.detail}</p>
-          {firstBlocker.link && <Link to={firstBlocker.link.to} hash={firstBlocker.link.hash} className="underline">{firstBlocker.link.label}</Link>}
+          {firstBlocker.link && appLink(firstBlocker.link)}
         </div>}
         <Details summary="Agent details and prerequisite checks" open={expanded}>
         <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
@@ -193,7 +180,7 @@ export function LiveDemo({ short = false, expanded = false }: { short?: boolean;
             <dd className="flex min-w-0 flex-col items-start gap-2">
               <Badge tone={check.tone ?? (check.blocked ? "warning" : "neutral")}>{check.status}</Badge>
               <p className="max-w-prose break-words text-muted-foreground">{check.detail}</p>
-              {check.link && <Link to={check.link.to} hash={check.link.hash} className="underline">{check.link.label}</Link>}
+              {check.link && appLink(check.link)}
             </dd>
           </div>)}
         </dl>
@@ -212,38 +199,29 @@ export function LiveDemo({ short = false, expanded = false }: { short?: boolean;
         </Details>
         </Details>
       </DemoStep>
-      <DemoStep number={2} title={treasury ? "Preview and execute a rebalance" : "Request a real payment"}>
-        {treasury ? <>
-          <Link to="/automations" className="self-start text-sm underline">Review the allocation and strategy limits</Link>
-          <Rebalance disabledReason={disabledReason} onExecute={setPlanId} />
-        </> : <>
+      <DemoStep number={2} title="Request a real payment">
           <Card size="sm">
             <h4 className="font-medium">{manualOnly ? "Review and request a payment" : "Invoice demo — payee handoff"}</h4>
             {!manualOnly && <>
             <p className="max-w-prose text-sm text-muted-foreground">{short ? "Share the invoice link with the agreed payee. Review its recorded payment here; owner approval is not settlement." : "The invoice demo opens separately. Share it with the agreed payee, who signs in there with their own NEAR account and enters the actual amount and terms. Invoices require a policy with confidential transfers and owner approval. Return here to review the recorded payment; owner approval and payment completion are separate steps."}</p>
             <InvoicePageLink demo />
             </>}
-            <Link to="/payees" className="self-start text-sm underline">Set up or review an agreement</Link>
+            <a href={app("/payees")} className="self-start text-sm underline">Set up or review an agreement in Payables</a>
             {executor && <>
               <p className="text-sm text-muted-foreground">A manual payment follows the reviewed policy. If owner approval is not required, funds may move immediately after you confirm.</p>
               <ManualPayment listed={new Set(data.agreed)} open disabledReason={disabledReason} onPayment={setPaymentId} />
             </>}
             {!executor && <p className="text-sm text-muted-foreground">{setup.executor === false ? "This instance is approve-only." : "This instance’s executor role is unconfirmed."} New payments are submitted by the invoice page’s executor; existing held payouts can be reviewed below.</p>}
           </Card>
-        </>}
       </DemoStep>
       <DemoStep number={3} title="Follow the outcome">
-        {treasury ? planId ? <>
-          <p className="max-w-prose text-sm text-muted-foreground">Following the exact plan you confirmed. A finished execution stream does not prove every operation settled; earlier actions may have completed if execution stopped.</p>
-          <DemoActivity planId={planId} />
-        </> : <p className="text-sm text-muted-foreground">No plan selected in this walkthrough. Confirming execution selects that plan’s recorded operations here; opening or reloading this page submits nothing.</p>
-          : paymentId ? <Payments title="Your payment" selection={{ payment: paymentId }} />
-            : <p className="text-sm text-muted-foreground">No payment selected in this walkthrough. A submitted payment appears here when its response identifies it. For an invoice or earlier payment, choose its recorded entry below.</p>}
-        {!treasury && <Details summary="Find an existing payment" open={!executor}>
+        {paymentId ? <Payments title="Your payment" selection={{ payment: paymentId }} />
+          : <p className="text-sm text-muted-foreground">No payment selected in this walkthrough. A submitted payment appears here when its response identifies it. For an invoice or earlier payment, choose its recorded entry below.</p>}
+        <Details summary="Find an existing payment" open={!executor}>
           <Payments title="Find your payment" compact />
-        </Details>}
+        </Details>
         <p className="max-w-prose text-sm text-muted-foreground">An unresolved outcome needs review before another send. This walkthrough does not mark a payment or plan complete.</p>
-        <Link to="/activity" className="self-start text-sm underline">Review all operations and recovery</Link>
+        <a href={app("/activity")} className="self-start text-sm underline">Review all operations and recovery in Payables</a>
       </DemoStep>
     </ol>
   </Section>;

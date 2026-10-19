@@ -60,31 +60,18 @@ counters, journals and real crash/restart fixtures.
 
 Install the pinned Chromium with `pnpm exec playwright install chromium`, then run
 `pnpm test:browser`. To repeat selected suites against an existing build, use
-`node test/browser/run.cjs payments.cjs` (substitute the desired suite names).
+`node test/browser/run.cjs live-demo.cjs` (substitute the desired suite names).
 
-The task suites group navigation, payment review, agreement terms, funding, invoice filing,
-strategy authorization, setup and run-history checks. For example, `payments.cjs` owns queue,
-invoice-detail, payment-recovery and owner-decision scenarios; `invoices.cjs` owns the payee's
-filing, draft, refresh and session-expiry journey. Access-boundary and harness suites remain separate.
+Proto's suites cover its own pages: sign-in and the public entry (`showcase.cjs`, `public-overview.cjs`), setup and
+onboarding (`setup.cjs`, `first-owner.cjs`, `walkthrough-entry.cjs`), walkthroughs and the rehearsal
+(`live-demo.cjs`, `signing-walkthrough.cjs`, `payables-player.cjs`), the redirect map (`app-redirects.cjs`), agent
+access (`agent-access.cjs`), demo hosts (`demo-hosts.cjs`) and the payee pages Proto serves (`invoices.cjs`, `hosted-payee.cjs`, `work-orders.cjs`).
+The agents' operational screens and their suites (payments, funding, policy, strategy, runs, recovery and Activity)
+are in the Payables and Treasury repositories. A new test belongs beside its task, in the repository that serves it.
 
-Use these existing owners when extending cross-cutting interaction checks:
-
-| Behavior | Browser owner | Primary assertion |
-| --- | --- | --- |
-| Stop with an unfinished draft or missing grant | `strategy.cjs` | One stop request; saved settings stay unchanged; no save or signing request |
-| Payment refusal guidance and treasury top-up routing | `funding.cjs` | Correct next-task link and exactly one request to the intended agent |
-| Copy recovery references, including clipboard failure and retry | `failure-states.cjs` | Accessible failure, available retry and exact copied references |
-| Unavailable held-payout amounts and stale balances | `funding.cjs` | Explicit unavailable/stale evidence, no empty-state or spendability claim |
-
-A new test belongs beside its task even when the regression concerns feedback or presentation.
-A separate catch-all suite would repeat these fixtures and journeys.
-
-Merged suites share one browser and close all contexts between scenario groups. Workspace routing
-and invoice-page rendering are shared fixtures; each scenario retains its explicit response evidence.
-Payment, setup, history-filter and run-recording scenarios run at one width. The layout helper
-resizes an already loaded state at 320, 390 and 1280 pixels; navigation journeys retain mobile and desktop modes, and the wallet-header checks retain
-long account names and enlarged text. New coverage belongs with its task, with extra viewports only
-when the interaction or layout depends on width.
+Merged suites share one browser and close all contexts between scenario groups. The layout helper resizes an already
+loaded state at 320, 390 and 1280 pixels. New coverage adds extra viewports only when the interaction or layout depends
+on width.
 
 The shared browser fixture blocks service workers, unhandled requests and WebSockets. Scenario routes
 provide explicit responses; the shared RPC dispatcher rejects undeclared procedures, including writes.
@@ -114,7 +101,15 @@ settlement, retained invoice identities, restart recovery after an accepted tran
 lost owner-signature response recovery, and approve-only refusal. It does not establish real provider,
 chain or wallet behavior.
 
-Each run retains source/build/lockfile hashes, Playwright results, traces, screenshots, service logs
+A plain run is the whole suite: if any case skips (a missing app release build, Treasury skill or change name), the run
+fails and names the skipped cases. `--narrow` marks a deliberately partial run and is not whole-suite evidence;
+`pnpm verify` passes it because it has no app release builds. Whole-suite evidence is a release-candidate run with every
+release input (`--invoices-dist-release/-next`, `--payables-dist/-next`, `--treasury-dist/-next`, `--treasury-skill`).
+
+Each run records a fingerprint of the installed dependency tree (`scripts/dependency-tree.mjs`: pnpm's installed
+lockfile and every installed package directory); `node_modules` is shared, not copied. A run from a frozen snapshot whose
+`SNAPSHOT.json` names a fingerprint refuses to start against a different tree, and any run fails if the tree changes while
+it runs. Each run also retains source/build/lockfile hashes, Playwright results, traces, screenshots, service logs
 and database observations under `.test-artifacts/e2e/`. `pnpm verify` includes this suite once;
 its isolated build is separate from the UI fixture build. Both must come from the same fixed revision.
 
@@ -149,12 +144,45 @@ The initial cases cover:
 - A retained submission's uncertainty warning stays beside the form after reload. This frontend
   regression was found through agent-browser exploration of the same stack. Draft memory is not
   evidence of a provider outcome, and the notice says so without claiming the payment failed.
+- Work orders (`work-orders.spec.mjs`): a purchase order and an isolated contribution-report payout each
+  run owner-signed agent creation, an invoice grant expiring at the order deadline, a deposit address,
+  simulated funding one unit short (payee filing refused, no transfer) then exact, payee filing,
+  a held payout from the created agent only, owner approval (still not paid), and simulated settlement.
+  Filing again after payment sends nothing. A third case rejects the held payout: nothing settles and
+  filing again sends nothing new. Owner steps use the gateway RPC with a locally signed NEP-413 payload.
+- New-prototype example (`minimal-prototype.spec.mjs`): `examples/minimal-prototype/` served as the
+  `showcase` host's `frontendDist` signs in through the gateway, reads `overview`, and pauses and
+  resumes the agent through owner-signed `agent_freeze`/`agent_unfreeze` (two wallet signatures, two
+  submissions). Signed-out scoped calls are refused with 401; no transfer occurs.
 
 The tests compare browser output with read-only SQLite queries, durable owner-intent records and an
 independent simulator request log. Restarts here are controlled process restarts after a lost response,
 not abrupt termination during a submission. Existing child-process fault tests retain their separate
 crash coverage. The simulator deliberately does not deduplicate submissions: any second submission
 is observable and fails the test. Its behavior is authored test evidence, not a provider specification.
+The simulator keeps per-agent policy, grants and funding: owner-signed `agent_create` creates an agent
+with the signed policy, `grant_issue` adds a grant to the named agent, and transfers must present a live
+grant's token, match a policy destination and stay within the per-transaction limit and funded balance.
+Owner-signed `agent_freeze`/`agent_unfreeze` set the agent's policy `frozen` flag.
+
+Shared builder payouts (`test/e2e/shared-payout.spec.mjs`): one-time setup as owner steps (a signed policy update that
+adds the builder; funding the payout agent), then a report paid once from the shared balance with one held approval
+and recorded settlement; before funding, the send is refused and the payment stays prepared on its identity. A lost
+send response leaves the payment unknown (no operation id to read): it is never sent again, and the payout agent's
+later sends are blocked until it is reviewed.
+
+Owner contract conformance (`test/e2e/conformance.mjs`): in the Payables, Treasury, work-order and example specs, every
+owner RPC answer the page receives, including each streamed event, is decoded with oRPC's serializer and must parse
+against its published schema (`src/contract/owner-outputs.ts`) and deep-equal the decoded value, so a stripped field
+fails. Each case writes `conformance.json`. Reads are also validated on the server (`src/rpc/read-output.ts`, validate
+only); mutations and streams are not, so a completed action is never reported as failed.
+A rejected held payout ending `FAILED` with no movement is an assumption, not observed provider behaviour.
+
+SDK guidance (`pnpm contract:skills`, after `pnpm contract:pack`): installs the packed `@multiagency/sdk` tarball in an
+isolated npm consumer, typechecks every `ts` fence of the shipped `skills/*/SKILL.md` (strict NodeNext, no Node types),
+runs each example against stand-in servers (an oRPC owner agent and a payee entry) asserting what is sent and how often
+(a lost read is read again once; a lost submit, stream or report is read by its kept identity, never resent), then runs
+`intent validate` with the unpublished `_artifacts`, `intent list` and `intent load`. It needs the npm registry.
 
 The runner sanitizes its environment and installs the offline Node network guard in application
 children; browser routing blocks unexpected external requests and WebSockets. Unknown simulator
@@ -174,6 +202,21 @@ actions. Pass `--owner` to explore as the wallet owner. This adapter cannot subm
 Create `exploration/drop-response` to drop the next simulator transfer response; create
 `exploration/stop` to capture the final trace and stop the local processes. These controls are files
 outside the application, not test-control HTTP routes. Close the agent-browser session afterward.
+
+`pnpm test:e2e:stack` (optionally with `--invoices-dist-release <dir>`, `--owner <account>`, repeated
+`--payee <account>`, `--frontend <dir>` to serve a prototype build on the `showcase` host, `--payables-release <dir>` to serve a
+Payables build at `/a/payout/`, `--builder <account>` for an account on chain that is not yet an agreed payee (the
+owner adds it with a signed `policy_update`, which the simulator applies and versions), `--payout-funding <raw USDC>`
+for the payout agent's starting balance, `--headed` or `--no-browser`) builds the same isolated stack for app-owned workflow
+recipes and filming, and keeps it running. `stack/state.json` lists the application URLs, CDP endpoint,
+owner and payee wallet contexts (the owner's starts signed in on `/a/payout/`), the payout policy and revision, created agents, deposits, simulated transfers and invoice records,
+refreshed every 250 ms. Write `stack/controls/<name>.json` with a `command` of `fund`, `fundPayout`, `settle`,
+`dropTransferResponse`, `dropSignatureResponse`, `revealOwnerOutcome` or `setUnavailable`; its result
+appears as `<name>.result.json`. Create `stack/stop` to stop. Signatures, deposits and settlement are simulated.
+Page dialogs (such as the payee's filing `confirm()`) are logged in `state.json` `dialogs` and left open
+for the attached client or person to answer; an attached Playwright client must register its own dialog
+handler, or it dismisses the dialog itself. `--accept-dialog '<exact message>'` (repeatable) instead accepts
+only a confirm with that exact text, and logs it as accepted.
 
 This suite does not cover all DAO roles, scheduled tick execution, arbitrary provider outages,
 or production canaries end to end. Existing narrower tests cover parts of those behaviors; they must

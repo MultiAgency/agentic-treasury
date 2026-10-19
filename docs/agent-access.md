@@ -14,7 +14,7 @@ provides no signing or execution capabilities. It is not a fresh assertion of pr
 On independently packaged product hosts, `/a/<name>/access` serves Proto's shared frontend;
 content-hashed shared assets are available when absent from the product asset directory. Ordinary
 product pages and existing product assets keep their own frontend. Host-local session checks and
-supplier routing remain unchanged.
+payee routing remain unchanged.
 The ordinary workspace still uses `/gw/me` and the existing dashboard authorization rules.
 
 With the existing host-local owner session:
@@ -62,7 +62,7 @@ not browser sessions and cannot authenticate dashboard RPC or credential-managem
 
 Permissions are independent: preparation does not permit execution; execution does not permit sweep;
 execution does not imply reads. There are no owner-signing, policy/grant mutation, scheduling, recovery,
-payments or supplier procedures in this interface. The machine allowlist also intersects the current
+payments or payee procedures in this interface. The machine allowlist also intersects the current
 dashboard capability mapping. Executor assignments remain enforced by the existing agent server.
 
 Each credential binds the actual provider agent ID returned by `ownerIdentity`, configured agent
@@ -109,6 +109,36 @@ checks returned chosen inputs and floors, reports unavailable support on 404/405
 substitutes streamed `rebalance`. An older host without `externalPlan` remains unavailable for chosen
 swaps. No separate gateway, consent, MCP or OAuth interface is introduced.
 
+## Agent connections (contractor reports)
+
+A user can connect an external agent to their workspace with an explicit, fixed set of permitted actions, and list
+or revoke it. One mechanism serves every role, each with its own principal and permission sets
+(`src/agent-connections.ts`, `src/contract/agent-connection.ts`). No connection carries every permission its user
+has. Treasury's execution delegation (machine credentials, above) is a separate mechanism and stays so.
+
+The first permitted set is a contractor's own compensation reports (`compensation.read`, `compensation.submit`) on
+one payee entry:
+- **Issuance:** `POST /api/agent-connections` on the entry, with the contractor's signed-in browser session only (any
+  Authorization header → 403); the account is re-checked immediately before issuing. The `tac_<id>.<secret>`
+  token is shown once and stored hashed. Lifetime is one minute to 24 hours. `GET` lists and `DELETE` revokes the
+  account's own connections on that entry.
+- **Binding:** host, entry (instance), account and payout agent id. Anything else is 401.
+- **Reach:** with a bearer, the cookie is never read. Only `GET`/`POST /api/compensation` and
+  `GET /api/compensation/session` answer; every other route is 403 and causes no business effect. Sign-in and
+  session routes refuse it, so it never opens or becomes a browser session. A report write re-checks the
+  connection immediately before acting.
+- **Attribution:** each bearer call is appended to `.agent-connections/access.jsonl` (account, host, entry, agent,
+  connection id, method, path, and command identity for writes).
+- **Client:** `payeeClient({ base, token })` from `@multiagency/sdk/payee` sends the bearer
+  without cookies, for programs outside a browser.
+- **Consequence:** anyone holding the token can read the contractor's own reports and payment states, and submit
+  reports as that contractor on that entry, until it expires or is revoked. It cannot file invoices or orders,
+  approve, pay, or reach another account, entry or host.
+
+Offline-tested (`test/agent-connections.test.ts`) and shown on the local stack (`agent-connection.spec.mjs`:
+report, lost reply recovered by reading the same request id, owner review and authorization, human filing,
+recorded payment, revocation; mutation challenge `agent-route-unrestricted`). Not deployed; no live credentials.
+
 ## State preservation and rollback
 
 `.machine-auth/` is additive host-local gateway state, owned by one gateway process. It contains
@@ -116,7 +146,10 @@ private version-2 JSON records (SHA-256 secret hashes, mode 0600, directory 0700
 records. Existing version-1 experimental records remain listable and revocable but cannot authenticate;
 there is no automatic authority upgrade. The directory is excluded from Git and both Docker contexts.
 
-Preserve `.machine-auth/` alongside `.ops/`, `.invoices/`, `.owner-intents/`, `.strategy/`, `.plans/`,
+`.agent-connections/` is additive per-entry state in each payee entry's executor directory: private records
+(SHA-256 secret hashes, mode 0600, directory 0700) and `access.jsonl`. No conversion is needed. Losing it ends every
+agent connection on that entry (tokens are refused) and loses their attribution; restoring an older copy can
+restore revoked connections, so preserve the latest. Preserve `.machine-auth/` alongside `.ops/`, `.invoices/`, `.owner-intents/`, `.strategy/`, `.plans/`,
 `.evidence/`, `.inbox/`, `.agreements/`, `.notify/`, `.work-orders/`, and `.hosted/`. No conversion of
 existing records is required. External plans add the `external` source value to new `.plans/` records;
 existing plans, claims and all other state remain unchanged and use the same loader/executor.

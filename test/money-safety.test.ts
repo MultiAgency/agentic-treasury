@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
+import lockfile from "proper-lockfile";
 import { AgentApi, AgentApiError } from "@near-intents-agent-api/sdk";
 import { type Action, dispatch, LocalRefusal, pay, send } from "../src/agent.js";
 import { api } from "../src/api.js";
 import { acquireMoneyLock, type MoneyLock, UnresolvedOperations } from "../src/lock.js";
-import { provenRefusal, readOps, record } from "../src/ops.js";
+import { AuthorizationHeld, type Op, provenRefusal, readOps, record } from "../src/ops.js";
 import { mandateDigest } from "../src/mandate.js";
 import { ASSETS, payoutPolicy, treasuryPolicy } from "../src/policy.js";
 import { authorityFixture, policyView } from "./fixtures/authority.js";
@@ -48,6 +49,10 @@ test("only recognized, consistent, non-retryable provider errors prove refusal",
     assert.equal(provenRefusal(error(503, code)), code);
     assert.equal(provenRefusal(error(503, code, true)), undefined);
   }
+  // SDK 0.5: `retryable: false` never proves nothing was sent. Codes without established non-execution semantics
+  // (including 0.5's deposit quota, expiry and deletion outcomes) stay unproven, so the operation stays unresolved.
+  for (const [status, code] of [[429, "deposit_quota_exceeded"], [409, "deposit_expired"], [409, "agent_deleted"], [500, "internal_error"], [502, "bad_gateway"]] as const)
+    assert.equal(provenRefusal(error(status, code)), undefined, `${status} ${code}`);
   assert.equal(provenRefusal(new AgentApiError(409, { errors: [
     { status: "409", code: "policy_denied", title: "Denied" },
     { status: "409", code: "unknown_error", title: "Unknown" },
@@ -58,12 +63,19 @@ test("only recognized, consistent, non-retryable provider errors prove refusal",
 });
 
 test("a proven first-submission refusal resolves only that operation", async () => {
+  // Another unresolved operation that does not block sends: a payout held for the owner's approval.
+  record({ at: new Date().toISOString(), idempotencyKey: "fixture:held", kind: "fixture", method: action.method, request: { ...action.request, amount: "999" } });
+  record({ idempotencyKey: "fixture:held", correlation_id: "held-correlation", status: "PENDING_APPROVAL" });
   answer = async () => { throw new AgentApiError(409, {
     errors: [{ status: "409", code: "policy_denied", title: "Policy denied" }], meta: {},
   }); };
   const lock = await acquireMoneyLock();
   try { await assert.rejects(dispatch(lock, "fixture", action), AgentApiError); } finally { await lock.release(); }
-  assert.equal(readOps()[0]?.refused, "policy_denied");
+  const ops = new Map(readOps().map(op => [op.idempotencyKey, op]));
+  assert.equal(ops.size, 2);
+  assert.equal([...ops.values()].find(op => op.idempotencyKey !== "fixture:held")?.refused, "policy_denied");
+  assert.equal(ops.get("fixture:held")?.refused, undefined, "the held payout is not resolved by another operation's refusal");
+  assert.equal(ops.get("fixture:held")?.status, "PENDING_APPROVAL");
   assert.equal(calls.length, 1);
 });
 
@@ -85,6 +97,22 @@ test("a swap into an asset outside the policy is refused before sending, and log
   assert.equal(op?.usdIn, 2);
   // A refusal is a proven outcome: it doesn't block the next money action.
   await (await acquireMoneyLock()).release();
+});
+
+test("a lock taken over by another process (proper-lockfile's onCompromised) during preflight sends and records nothing", async () => {
+  // Capture the callback acquireMoneyLock gives proper-lockfile, then fire it as a takeover would.
+  let compromise: (() => void) | undefined;
+  const lock = lockfile.lock;
+  mock.method(lockfile, "lock", (file: string, options: Parameters<typeof lockfile.lock>[1]) => {
+    compromise = () => options!.onCompromised!(new Error("lock taken over"));
+    return lock(file, options);
+  });
+  const money = await acquireMoneyLock();
+  mock.method(api, "getPolicy", async () => { compromise!(); return policy; });
+  await assert.rejects(dispatch(money, "fixture", action), /money lock/);
+  assert.equal(money.held, false);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(readOps(), []);
 });
 
 test("lock lost during asynchronous preflight produces zero sends and zero request records", async () => {
@@ -120,6 +148,16 @@ test("an unknown outcome blocks a subsequent dispatch within the same held lock"
   } finally { await lock.release(); }
 });
 
+test("a direct send under the held lock without dispatch's permit is refused, even for a recorded never-submitted operation", async () => {
+  const lock = await acquireMoneyLock();
+  try {
+    // Recorded under the held lock, as dispatch records before sending.
+    record({ at: new Date().toISOString(), idempotencyKey: "fixture:replay", kind: "fixture", method: action.method, request: action.request });
+    await assert.rejects(send(action, "fixture:replay", lock), (error: unknown) => error instanceof AuthorizationHeld && /direct replay is blocked/.test(error.message));
+    assert.deepEqual(calls, []);
+  } finally { await lock.release(); }
+});
+
 test("replay also refuses a lost lock without sending", async () => {
   const lock: MoneyLock = { held: false, release: async () => {} };
   await assert.rejects(send(action, "fixture:original-key", lock), /money lock/);
@@ -147,4 +185,18 @@ for (const response of [
   assert.equal(readOps()[0]?.submissionState, "SUBMISSION_ATTEMPTED");
   await assert.rejects(pay(action.request as never), UnresolvedOperations);
   assert.equal(calls.length, 1);
+});
+
+test("the unresolved refusal says what reconcile can poll and what it cannot resolve", () => {
+  const op = (idempotencyKey: string, correlationId?: string) => ({ idempotencyKey, at: "2026-10-19T00:00:00Z", kind: "payout", request: {}, ...(correlationId && { correlationId }) }) as Op;
+  const polled = new UnresolvedOperations([op("payout:a", "provider-op")]).message;
+  assert.match(polled, /payout:a/);
+  assert.match(polled, /`pnpm reconcile --poll` reads their outcomes/);
+  assert.doesNotMatch(polled, /no operation ID/);
+  // A lost provider reply leaves no operation ID: reconcile can't resolve it, so the message must not promise it will.
+  const lost = new UnresolvedOperations([op("payout:a", "provider-op"), op("payout:b")]).message;
+  assert.match(lost, /payout:b has no operation ID/);
+  assert.match(lost, /reconcile cannot resolve/);
+  assert.match(lost, /docs\/enforcement\.md/);
+  assert.doesNotMatch(new UnresolvedOperations([op("payout:b")]).message, /reconcile --poll/);
 });

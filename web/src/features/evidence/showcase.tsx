@@ -168,51 +168,6 @@ function ProgressSummary({ brief, name }: { brief: Brief; name: string }) {
   );
 }
 
-/** Static illustrations explain the two workflows without reading agent records. */
-export function PublicWorkflows({ invoices }: { invoices: string | null }) {
-  const workflows = [
-    { kind: "facilitator" as const, title: "Payables", description: "The agent processes invoices. You approve every payout.", steps: [
-      ["The payee submits an invoice", "New payees first request an agreement with the owner."],
-      ["The payout is held", "The owner reviews the invoice and its agreed terms."],
-      ["Approval lets payment proceed", "The payout agent makes the confidential transfer."],
-    ] },
-    { kind: "treasury" as const, title: "Portfolio", description: "The agent rebalances funds. You set the targets and limits.", steps: [
-      ["The owner sets a strategy", "Target allocations and limits define the rebalance."],
-      ["The agent prepares a plan", "Each proposed swap is quoted before execution."],
-      ["Authorization precedes execution", "Scheduled execution requires a live grant and must fit the strategy’s auto-execute limit."],
-    ] },
-  ];
-  return (
-    <section id="workflows" aria-labelledby="workflows-heading" className="scroll-mt-8">
-      <div className="mb-8 flex flex-wrap items-baseline justify-between gap-3">
-        <h2 id="workflows-heading" className="text-3xl font-semibold tracking-tight">Two agents. Two workflows.</h2>
-        <p className="text-sm text-muted-foreground">Illustrative workflows</p>
-      </div>
-      <div className="grid overflow-hidden rounded-2xl border bg-card lg:grid-cols-2">
-        {workflows.map(({ kind, title, description, steps }) => {
-          const Icon = PROTOTYPE_ICON[kind];
-          return (
-            <article key={kind} aria-label={`${title} workflow`} className="flex flex-col gap-6 p-5 first:border-b sm:p-8 lg:p-10 lg:first:border-r lg:first:border-b-0">
-              <div className="flex flex-col gap-3">
-                <h3 className="flex items-center gap-3 text-3xl font-semibold tracking-tight"><Icon size={28} className="shrink-0 text-brand-strong" aria-hidden="true" />{title}</h3>
-                <p className="min-h-18 leading-relaxed text-muted-foreground">{description}</p>
-              </div>
-              <ol className="flex flex-col gap-4">{steps.map(([step, detail], i) => <li key={step} className="grid grid-cols-[2rem_1fr] gap-3">
-                <span aria-hidden="true" className="flex size-8 items-center justify-center rounded-full bg-brand-muted text-sm font-semibold text-brand-strong">{i + 1}</span>
-                <div><p className="font-medium">{step}</p><p className="mt-1 text-sm text-muted-foreground">{detail}</p></div>
-              </li>)}</ol>
-              <a href={`#${kind}-requirements`} className="inline-flex min-h-11 items-center justify-center self-start rounded-full border border-border-strong px-4 py-2 text-sm font-medium hover:bg-accent">{title} requirement stages</a>
-              <div className="mt-auto flex flex-wrap gap-3 pt-2">
-                {kind === "facilitator" && invoices && <a href={invoices} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-primary px-5 py-2 font-medium text-primary-foreground hover:bg-primary/90"><Receipt size={18} aria-hidden="true" />Request a payment (opens invoice service)</a>}
-              </div>
-            </article>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
 /** Public cards disclose requirement stages without private evidence; member cards lead into the area. */
 export function PrototypeCard({ kind, open, invoices, status, compact = false, stagesOnly = false }: { kind: Kind; open?: string; invoices?: string | null; status?: ReactNode; compact?: boolean; stagesOnly?: boolean }) {
   const { tagline, briefs, demo } = PROTOTYPES[kind];

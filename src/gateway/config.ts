@@ -1,6 +1,7 @@
 import { isAbsolute, join } from "node:path";
 import { readFileSync, statSync } from "node:fs";
 import { z } from "zod";
+import { frontendOrigin } from "./owner-frontend.js";
 
 /**
  * The hosted dashboard's configuration, `dashboard.json` (or DASHBOARD_FILE): its agents, each an agent
@@ -15,6 +16,9 @@ const Config = z.object({
     agents: z.array(z.string()),
     /** Trusted deployment path to an independently built frontend; never supplied by a request. */
     frontendDist: z.string().min(1).refine(isAbsolute, "Frontend directory must be absolute").optional(),
+    /** An owner app's own release process (P2): its contract.json is checked before any HTML is served. */
+    frontend: z.object({ origin: z.string().refine(value => { try { frontendOrigin(value); return true; } catch { return false; } }, "Frontend origin must be HTTPS, or loopback HTTP"),
+      product: z.string().regex(/^[a-z0-9-]{1,40}$/) }).strict().optional(),
     hostedAreas: z.array(z.enum(["treasury", "payables"])).default([]),
   })).optional(),
   /** Fixed HTTPS intake origin; never selected by a request or used for dashboard RPC. */
@@ -37,11 +41,11 @@ const Config = z.object({
         name: z.string().regex(/^[a-z0-9-]{1,32}$/),
         /** Stable presentation identity, independent of the policy's current permissions. */
         area: z.enum(["payables", "treasury"]).optional(),
-        /** Explicit supplier entry for this static payout agent; never inferred from global intake. */
+        /** Explicit payee entry for this static payout agent; never inferred from global intake. */
         invoices: z.url().refine(value => {
           const url = new URL(value);
           return url.protocol === "https:" && !url.username && !url.password && !url.hash;
-        }, "Supplier entry must be HTTPS without credentials or a fragment").optional(),
+        }, "Contributor entry must be HTTPS without credentials or a fragment").optional(),
         /**
          * The NEAR account the agent answers to: a Sputnik DAO, whose members sign in, or any other
          * account, which signs in itself (src/gateway/roles.ts).
@@ -61,7 +65,7 @@ export function loadConfig(file = process.env.DASHBOARD_FILE ?? "dashboard.json"
   const config = Config.parse(JSON.parse(readFileSync(file, "utf8")));
   if (!config.agents.length && !config.selfService) throw new Error("Configure agents or enable self-service setup");
   for (const agent of config.agents)
-    if (agent.invoices && agent.area !== "payables") throw new Error("Only a Payables agent may configure a supplier entry");
+    if (agent.invoices && agent.area !== "payables") throw new Error("Only a Payables agent may configure a contributor entry");
   const names = new Set(config.agents.map((a) => a.name));
   if (names.size !== config.agents.length) throw new Error("Agent names must be unique");
   const ports = new Set(config.agents.map((a) => a.port));
@@ -71,6 +75,7 @@ export function loadConfig(file = process.env.DASHBOARD_FILE ?? "dashboard.json"
     if (process.env.DASHBOARD_HOST) throw new Error("DASHBOARD_HOST must be unset with explicit demo hosts");
     if (!config.hosts[config.host]) throw new Error("Default host must have a demo assignment");
     for (const entry of Object.values(config.hosts)) {
+      if (entry.frontend && (entry.frontendDist || entry.demo === "invoices")) throw new Error("A host serves one owner frontend: a release origin or a legacy directory, never with contributor intake");
       if (entry.frontendDist) {
         try {
           if (!statSync(join(entry.frontendDist, "index.html")).isFile()) throw new Error();

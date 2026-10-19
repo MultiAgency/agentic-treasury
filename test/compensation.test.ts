@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { compensationList, compensationHistory, recordCompensationAgreement, saveCompensationRequest, reviewCompensationRequest, bindCompensationPayment } from "../src/compensation-store.js";
-import { type CompensationRequest } from "../src/compensation-contract.js";
+import { approvedCompensation, type CompensationRequest } from "../src/compensation-contract.js";
 import { mayCall } from "../src/gateway/allowlist.js";
 import { freshDirectory, offline } from "./fixtures/harness.js";
 
@@ -17,7 +19,9 @@ const agreement = () => recordCompensationAgreement("owner.near", { commandId: r
 function submit(agreementId: string, amount = "600000000") {
   return saveCompensationRequest("alice.near", { commandId: randomUUID(), id: randomUUID(), expectedVersion: 0, submit: true, report: { agreementId, amount, start: "2026-10-01", end: "2026-10-16", contributions: "Delivered the authorized integration", assessment: "Tested; awaiting acceptance", evidence: ["https://github.com/example/project/pull/1"] } });
 }
-const review = (r: CompensationRequest, decision: "approved" | "changes_requested" | "declined" = "approved", feedback = "") => ({ commandId: randomUUID(), id: r.id, expectedVersion: r.version, decision, feedback });
+// An approval states the owner's amount explicitly; here the requested amount unless a test overrides it.
+const review = (r: CompensationRequest, decision: "approved" | "changes_requested" | "declined" = "approved", feedback = "") =>
+  ({ commandId: randomUUID(), id: r.id, expectedVersion: r.version, decision, feedback, ...(decision === "approved" && r.report.amount && { approvedAmount: r.report.amount }) });
 
 test("intake records a proposal without consuming allowance; exact approval retry reserves once", () => {
   const a = agreement(), r = submit(a.id);
@@ -72,13 +76,29 @@ test("command identities cannot be reused with altered content or actors", () =>
 test("concurrent real processes cannot over-approve a shared ceiling", async () => {
   const a = agreement(), left = submit(a.id), right = submit(a.id);
   const fixture = fileURLToPath(new URL("./fixtures/compensation-review.ts", import.meta.url));
-  const child = (r: CompensationRequest) => new Promise<{ state?: string; error?: string }>((resolve, reject) => {
-    const process = spawn(globalThis.process.execPath, ["--import", import.meta.resolve("tsx"), fixture, JSON.stringify(review(r))], { cwd: globalThis.process.cwd(), env: globalThis.process.env });
+  const barrier = mkdtempSync(join(tmpdir(), "compensation-barrier-"));
+  const child = (r: CompensationRequest, name: string) => new Promise<{ state?: string; error?: string }>((resolve, reject) => {
+    const process = spawn(globalThis.process.execPath, ["--import", import.meta.resolve("tsx"), fixture, JSON.stringify(review(r))], { cwd: globalThis.process.cwd(),
+      env: { ...globalThis.process.env, COMPENSATION_BARRIER: barrier, COMPENSATION_NAME: name } });
     let output = "", stderr = "";
     process.stdout.on("data", chunk => output += chunk); process.stderr.on("data", chunk => stderr += chunk);
     process.on("error", reject); process.on("close", code => { if (code) reject(new Error(stderr)); else { try { resolve(JSON.parse(output)); } catch (e) { reject(e); } } });
   });
-  const outcomes = await Promise.all([child(left), child(right)]);
+  const running = Promise.all([child(left, "left"), child(right, "right")]);
+  // Contention witness: one review holds its decision while the other has attempted its own and stays blocked.
+  const seen = (file: string) => existsSync(join(barrier, file));
+  const until = async (ready: () => boolean) => { for (let i = 0; i < 500 && !ready(); i++) await new Promise(r => setTimeout(r, 20)); return ready(); };
+  let outcomes: { state?: string; error?: string }[];
+  try {
+    assert.ok(await until(() => (seen("left.entered") || seen("right.entered")) && seen("left.attempt") && seen("right.attempt")), "both reviews reached their decision");
+    await new Promise(r => setTimeout(r, 300));
+    assert.equal(["left", "right"].filter(n => seen(`${n}.entered`)).length, 1, "the second review is blocked while the first decides");
+  } finally {
+    // Always let both reviews finish, so a failed witness never leaves processes waiting.
+    writeFileSync(join(barrier, "release"), "");
+    outcomes = await running;
+    rmSync(barrier, { recursive: true, force: true });
+  }
   assert.equal(outcomes.filter(o => o.state === "approved").length, 1);
   assert.equal(outcomes.filter(o => /remaining agreement ceiling/.test(o.error ?? "")).length, 1, JSON.stringify(outcomes));
   assert.equal(compensationList().agreements[0]!.remaining, "300000000");
@@ -89,7 +109,7 @@ test("missing or corrupt state refuses rather than reopening an empty allowance"
   unlinkSync(path);
   assert.throws(() => compensationList(), /missing/);
   writeFileSync(path, "broken sqlite");
-  assert.throws(() => compensationList());
+  assert.throws(() => compensationList(), /file is not a database/, "the corrupt store itself refuses, not an unrelated failure");
 });
 test("a crash after committing approval retains its command receipt and reservation after restart", () => {
   const a = agreement(), r = submit(a.id), c = review(r);
@@ -128,7 +148,9 @@ test("amount-free reports require owner compensation and explanation, reserve th
   assert.deepEqual(reviewCompensationRequest("owner.near", c), accepted);
   assert.equal(compensationList().agreements[0]!.remaining, "700000000");
   assert.equal(accepted.report.amount, undefined);
-  assert.throws(() => bindCompensationPayment("owner.near", { commandId: randomUUID(), id: r.id, expectedVersion: accepted.version, mode: "shared" }), /isolated/);
+  // With the owner's explicit amount, an amount-free report may take the shared payout.
+  const bound = bindCompensationPayment("owner.near", { commandId: randomUUID(), id: r.id, expectedVersion: accepted.version, mode: "shared" });
+  assert.equal(bound.payment?.mode, "shared"); assert.equal(approvedCompensation(bound), "200000000");
 });
 
 test("owner-decided compensation cannot exceed the ceiling or change the contributor's invoice", () => {
@@ -140,20 +162,6 @@ test("owner-decided compensation cannot exceed the ceiling or change the contrib
   assert.equal(accepted.approvedAmount, "200000000");
   assert.equal(compensationList().agreements[0]!.remaining, "700000000");
 });
-
-test("legacy approved records keep their amount and payment identity without rewriting storage", () => {
-  const a = agreement(), r = submit(a.id);
-  const accepted = reviewCompensationRequest("owner.near", review(r));
-  const bound = bindCompensationPayment("owner.near", { commandId: randomUUID(), id: r.id, expectedVersion: accepted.version, mode: "isolated", until: new Date(Date.now() + 86400000).toISOString() });
-  const { approvedAmount: _amount, payoutMode: _mode, ...legacy } = bound;
-  const db = new DatabaseSync(`.invoices/${process.env.AGENT_ID}.compensation.sqlite`);
-  db.prepare("UPDATE requests SET record=? WHERE id=?").run(JSON.stringify(legacy), r.id); db.close();
-  const restored = compensationList();
-  assert.equal(restored.agreements[0]!.remaining, "300000000");
-  assert.deepEqual(restored.requests[0]!.payment, bound.payment);
-  assert.equal(restored.requests[0]!.approvedAmount, undefined);
-});
-
 
 test("missing owner compensation on a new approved invoice refuses instead of trusting its billed amount", () => {
   const a = agreement(), r = submit(a.id);

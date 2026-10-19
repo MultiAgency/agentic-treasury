@@ -69,19 +69,22 @@ separately. Retrying opens the same reserved instance, including after restart.
 ## Guided walkthroughs in the workspace
 
 This is locally prepared behavior, checked with offline browser fixtures, not a deployed-host observation.
+In this build each agent's balances, policy and grants, agreements, payments, strategy, runs and Activity are in its
+app (Payables or Treasury). Proto keeps sign-in, setup, agent access, the walkthroughs, the Payables rehearsal and
+evidence. A saved Proto link to a moved page opens the same path, query and hash in the agent's app.
 
-1. Under **Your guided walkthroughs**, choose the agent’s **Open walkthrough** link.
-   The existing `/a/<agent>/demo` URL opens the same guide.
-   Check the actual agent, owner, balances and prerequisite observations. Opening the page submits nothing.
-2. In Portfolio, preview the actual rebalance, review the quoted swaps, then explicitly confirm execution.
-   A plan may have no executable legs; do not change the signed policy or strategy just to produce a swap.
-3. For the existing approve-only Payables agent, submit an invoice through its configured invoice page as the payee. New self-service Payables agents have no configured supplier invoice intake; use their manual payment controls. An account with execution permission on a payout executor can review and submit a manual payment
-   from the guide. A returned payment appears inline; for an invoice or earlier payment, choose its
-   specific record to review any required owner approval and follow its outcome.
-4. The guide follows the exact confirmed plan's operations or returned payment. Use those records to
-   check what happened. Approval and settlement are separate;
-   a refusal or unresolved operation remains visible. Reloading the guide does not resume or repeat a send.
-   Reloading clears the guide's selection; existing records remain accessible through Payments and Activity.
+1. Under **Your agents**, choose the agent’s **Walkthroughs** link, or **Open in Payables** / **Open in Treasury** for
+   its app. The agent page links to each short guide and complete walkthrough and shows the area's requirements and
+   evidence. Opening a page submits nothing.
+2. For Treasury, the walkthrough's chapters open the strategy, the guided run's preview and owner actions in Treasury;
+   preview and execution happen there.
+3. For Payables, the short guide checks the actual agent, owner, balances and prerequisite observations. For the
+   existing approve-only Payables agent, submit an invoice through its configured invoice page as the payee. New
+   self-service Payables agents have no configured payee invoice intake; an account with execution permission on a
+   payout executor can review and submit a manual payment from the guide. A returned payment appears inline.
+4. The guide follows the returned payment only. Approval and settlement are separate; a refusal or unresolved
+   operation remains visible, and reloading does not resume or repeat a send. Earlier payments, owner approval and
+   recovery open in Payables.
 
 The guide uses the same authorization and submission paths as ordinary work. Its prerequisite observations
 are advisory and cannot promise that a later send will be authorized or that a demonstration will settle.
@@ -291,7 +294,7 @@ people who want to sign in and look for themselves.
      records, followed by **Receive funds**, expandable **Shield public funds** and **Send funds**. Returns to the linked account sit
      with outgoing payments. **Available to spend** remains **Not established**: these independent
      reads do not prove a spendable amount. Failed held-payout reads do not imply zero, and failed
-     linked-account reads do not imply an unlinked account. `test/browser/funding.cjs` checks these
+     linked-account reads do not imply an unlinked account. Payables' `test/browser/funding.cjs` checks these
      states offline, including mobile layout; this is not a deployed observation.
    - **Policy & grants**: the mandate the DAO approved, with a digest anyone can recompute from the policy, and the agent's grants.
    - **Strategy**: the locally implemented strategy editor saves with the schedule off, then opens
@@ -318,7 +321,7 @@ people who want to sign in and look for themselves.
    from **Payment outcome**; approval alone does not establish processing or completion. Current agreement
    terms remain visible after settlement but do not establish which terms applied to that payment.
    Prepared-invoice cancellation is separate from expandable identifiers and retains its confirmation,
-   executor, permission and successful-read restrictions. Provider evidence and payment history are expandable. `test/browser/payments.cjs` checks
+   executor, permission and successful-read restrictions. Provider evidence and payment history are expandable. Payables' `test/browser/payments.cjs` checks
    these distinctions and retained payment links offline. Payouts are approvable for 24 hours. Releasing one files a proposal, and nothing is paid
    until the DAO votes. **Agreements** groups requests, offers and active terms by recipient, showing
    policy inclusion separately. Completed records remain in history, and **Offer terms** opens

@@ -1,6 +1,7 @@
 import { AgentApiError } from "@near-intents-agent-api/sdk";
 
-export type RefusalDetails = { availableAt?: string; budgetRemainingUsd?: string };
+import type { RefusalDetails } from "./contract/owner-client.js";
+export type { RefusalDetails };
 /** Supplementary facts only: no retry flags, raw provider metadata, or authorization decisions. */
 export function refusalDetails(error: unknown): RefusalDetails {
   if (!(error instanceof AgentApiError)) return {};

@@ -53,6 +53,9 @@ test("concurrent filing uses one order payment and later status requests never s
   assert.equal(sends.length, 1);
 });
 
+/** A local refusal leaves the order invoice prepared on its identity (retryable), with no refusal recorded on it. */
+const stillPrepared = (input: ReturnType<typeof workOrderInvoice>) => getInvoice(invoiceId(input))?.operation.submissionState === "PREPARED" && getInvoice(invoiceId(input))?.operation.refused === undefined;
+
 test("manual payments cannot bypass the order's single invoice identity", async () => {
   assert.deepEqual(await pay({ asset: order.asset, amount: order.amount, recipient: order.payee, confidential: true }),
     { outcome: "refused", code: "work_order_binding" });
@@ -61,7 +64,8 @@ test("manual payments cannot bypass the order's single invoice identity", async 
 
 test("a mismatched grant deadline is refused at dispatch even when the policy permits the payment", async () => {
   Object.assign(api, { listGrants: async () => [fixtureGrant("invoices")] });
-  assert.equal((await file(workOrderInvoice(order, order.payee), order.payee)).status, "refused");
+  assert.deepEqual(await file(workOrderInvoice(order, order.payee), order.payee), { id: invoiceId(workOrderInvoice(order, order.payee)), status: "refused", code: "work_order_binding" });
+  assert.ok(stillPrepared(workOrderInvoice(order, order.payee)));
   assert.equal(sends.length, 0);
 });
 
@@ -74,7 +78,8 @@ test("deadline crossing during dispatch observations refuses without a provider 
     return result;
   } });
   try {
-    assert.equal((await file(input, order.payee)).status, "refused");
+    assert.deepEqual(await file(input, order.payee), { id: invoiceId(input), status: "refused", code: "work_order_binding" });
+    assert.ok(stillPrepared(input));
     assert.equal(sends.length, 0);
   } finally { mock.restoreAll(); }
 });
@@ -82,7 +87,8 @@ test("deadline crossing during dispatch observations refuses without a provider 
 test("a policy changed between intake and dispatch cannot release an altered order payment", async () => {
   let reads = 0;
   Object.assign(api, { getPolicy: async () => policyView({ ...workOrderPolicy(order), owner_approval: ++reads === 1 }) });
-  assert.equal((await file(workOrderInvoice(order, order.payee), order.payee)).status, "refused");
+  assert.deepEqual(await file(workOrderInvoice(order, order.payee), order.payee), { id: invoiceId(workOrderInvoice(order, order.payee)), status: "refused", code: "work_order_binding" });
+  assert.ok(stillPrepared(workOrderInvoice(order, order.payee)));
   assert.equal(sends.length, 0);
 });
 

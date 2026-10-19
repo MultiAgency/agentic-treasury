@@ -7,7 +7,7 @@ concurrent filing and an interrupted outcome. These are offline application chec
 provider enforcement against a bypassed executor. The signed transfer policy restricts destination
 and per-payment cap; the grant carries its expiry. Neither expresses a lifetime one-payment limit,
 exact invoice matching, nor completion by a deadline. Held payouts still need owner approval.
-No dedicated work-order payment has been mainnet-observed; residual-fund recovery and supplier
+No dedicated work-order payment has been mainnet-observed; residual-fund recovery and payee
 conversion/forwarding remain unimplemented.
 
 Scheduling is not settlement evidence: the timer counts from the latest inbox `run` summary, which
@@ -74,7 +74,7 @@ settings written by another process. Upgrade and preservation requirements are i
 Schedule-stop contention is visible in the Portfolio, Payables and recovery controls: an offline
 browser fixture returns the settings-lock retry error, verifies the schedule stays on and no success
 message appears, then retries successfully. The mutation is not automatically retried. These cases
-are covered in `test/browser/strategy.cjs`; they are not deployed-browser observations.
+are covered in the Treasury app's `test/browser/strategy.cjs`; they are not deployed-browser observations.
 
 What this prototype can claim about staying inside the owner's policy, the evidence for each part, the
 gaps, and what a stronger claim would need. Dated runs are in the [mainnet log](mainnet-log.md). Further source pins and evidence are in the release record
@@ -137,7 +137,7 @@ evidence are not rewritten. Equivalent recipient inputs reach the existing dupli
 check. Expired and revoked grants remain visible as history; only live grants can authorize new
 actions. These changes are tested offline in `test/upstream-compat.test.ts`,
 `test/intents-account.test.ts`, `test/form-validation.test.ts` and
-`test/browser/upstream-compat.cjs`; they have not been verified on mainnet.
+the apps' `test/browser/upstream-compat.cjs`; they have not been verified on mainnet.
 
 **Provider display follow-up (offline-tested).** Upstream's
 [funds changes at demo@f888f7d](https://github.com/NEAR-Intents-Agent-API/demo/commit/f888f7d)
@@ -177,7 +177,7 @@ Supplementary refusal metadata is not persisted in the journal. Payment review s
 transaction hashes and refund fields, marks missing evidence explicitly, and does not infer an explorer
 URL, refund asset, or independent settlement proof. Refund amounts remain exact raw units. These changes
 are covered by `test/provider-display.test.ts`, `test/provider-values.test.ts`,
-`test/payment-status.test.ts` and `test/browser/provider-display.cjs`; deployed behavior is unverified.
+`test/payment-status.test.ts` and the apps' `test/browser/provider-display.cjs`; deployed behavior is unverified.
 
 **Deployed identity is unknown.** `outlayer.near`'s code hash is `2K9si4Kct6awAvbUTgAohivmfnGHV3UVXJc9KyQqvsae`
 with no build metadata, and its build script isn't reproducible. The coordinator reports `git_sha`
@@ -223,6 +223,36 @@ accounting also treats those statuses as terminal (`src/invoice-store.ts`). This
 status semantics. It does not independently establish that a failed operation had no payment effect
 or that a replacement payment is safe. Acceptance case E7 requires that distinction; it remains open.
 A missing operation ID on a claimed or legacy operation cannot be repaired by status-only reconciliation.
+
+**Shared builder payouts (offline-tested and simulated E2E; not mainnet-observed).** A contributor report may be paid
+from the payout agent's shared balance when the owner chooses `shared` at preparation; isolated order agents remain the
+default path (owner decision, 2026-10-19). A shared send whose response is lost keeps its effect but leaves no operation
+ID, so the payment stays `UNKNOWN` even after approval and settlement, is never sent again, and blocks the payout
+agent's later sends until reviewed (`test/e2e/shared-payout.spec.mjs`). A send refused by Proto's own checks before
+submission leaves the payment prepared on its identity for a later send (owner decision, 2026-10-18;
+`test/compensation-http.test.ts`). **Open dependency for making shared the default:** observed provider behaviour for
+looking up, or deduplicating, a submission by its idempotency key, so a lost response can be resolved without
+reconstruction. That is not observable under the current boundaries.
+
+**A lost provider reply blocks its executor until reviewed, on every send path (offline-tested; not mainnet-observed).**
+This is not specific to shared payouts. Any send through `dispatch` (manual payments, invoice and order payouts, swaps)
+whose provider reply is lost is recorded as submission-attempted with no operation ID. It is never sent again, and it
+blocks that executor's later sends (`test/journal.test.ts`, `test/money-safety.test.ts`,
+`test/invoice-durability.test.ts`). The payout itself stays
+reachable: the held-payout list also reads the provider's own history (`src/payouts.ts`, `heldElsewhere`), so the owner
+can still approve it by signature and it can settle.
+
+The blocked operation does not clear, even after settlement. `recover()` polls only operations with an ID and reports this
+one as "acceptance is unknown… review required" (`src/recover.ts`). The provider's history entries carry the operation ID
+but not the idempotency key, so the only link to the recorded attempt would be matching terms and time, which Proto does
+not do. `pnpm reconcile` does not clear it either. The refusal names such operations, says reconcile cannot resolve them
+and points here (`src/lock.ts`, `test/money-safety.test.ts`).
+
+There is no supported review procedure yet. Until the provider's idempotency-key behaviour is observed (the open
+dependency above) or an evidence rule for clearing is decided, the executor stays blocked. Its records must not be edited
+by hand. Reproduced offline on 2026-10-19 with the provider mocked at its API boundary, as a scratch reproduction
+that is not part of the test suite: one transfer, a refused second send, the payout approvable from the provider's
+history, and the operation still unresolved after settlement.
 
 The [SDK recovery guidance at 20ca15c](https://github.com/NEAR-Intents-Agent-API/sdk-typescript/blob/20ca15c0bd54b6f15b22773de0ad4007b16ea851/README.md#L348-L360)
 explicitly allows partial effects under `FAILED`; neither `FAILED` nor `REFUNDED` proves nothing was
@@ -271,7 +301,7 @@ agent's cached action permissions until a successful permission refresh; failed 
 them. Delayed owner-action callbacks check current permissions before preparing. Expired invoice-page
 sessions clear rendered records and invalidate outstanding reads;
 account-scoped draft submission identity is retained for signing in again. Offline browser regressions
-in `test/browser/access-expiry.cjs` and `test/browser/invoices.cjs` reproduce the previous cached-data
+in `test/browser/invoices.cjs` and the apps' `test/browser/access-expiry.cjs` reproduce the previous cached-data
 exposure and verify the correction. A transient provider failure still permits explicitly stale
 observations. Policy digests identify reported policy JSON; they do not verify the owner's signature
 or the provider's enforcement. These tests do not establish hosted behavior.
@@ -506,7 +536,7 @@ lock and records a refusal before submission if either changed. Policy updates l
 reviewed revision and digest before generating the owner's signing payload; the generated request
 retains the provider's `expected_revision`. An open editor preserves its draft after a refresh and
 requires an explicit comparison against the new policy before re-review. Tests are in
-`test/policy-review.test.ts` and `test/browser/web-interface.cjs`; this is not mainnet-observed.
+`test/policy-review.test.ts` and the apps' `test/browser/web-interface.cjs`; this is not mainnet-observed.
 
 The payment check is local: it does not make the provider read and later submission atomic. A policy
 change at the provider after that read can still affect whether the payment is held. The dashboard
@@ -528,10 +558,10 @@ Reviewed strategy saves and schedule mutations share a single-host configuration
 the current strategy digest and persist schedule-off before replacing the strategy. Enablement requires
 an unchanged digest, policy in force, a live held Treasury grant matching the strategy, and no unresolved
 operation; the digest is checked again after asynchronous reads. Stop is independent of provider reads.
-The dashboard binds an open enable confirmation to its reviewed digest and displayed terms. A
+The Treasury app binds an open enable confirmation to its reviewed digest and displayed terms. A
 changed digest or unavailable readiness invalidates it until the user cancels and reviews again
-(`test/browser/strategy.cjs`, offline browser fixtures).
-After a failed strategy or schedule refresh, the dashboard labels readiness unknown rather than
+(the Treasury app's `test/browser/strategy.cjs`, offline browser fixtures).
+After a failed strategy or schedule refresh, the Treasury app labels readiness unknown rather than
 presenting cached authorization as current. Cached strategy details remain available for editing,
 and the stop control remains available. Recovery restores the label after successful reads.
 Treasury owner preparation requires a reviewed saved digest, derives the grant suffix server-side,
@@ -636,7 +666,7 @@ its own setup; a DAO member also needs proposal permission. Reservation is not o
 Creation uses the existing verified owner-intent lifecycle, and another open creation blocks a new
 one on that instance. The 32-instance cap bounds local reservations; it does not establish capacity
 under load, fair admission or protection against many wallets exhausting that cap. Mainnet creation
-through both owner types, and supplier invoice intake for newly reserved Payables agents, remain
+through both owner types, and payee invoice intake for newly reserved Payables agents, remain
 unverified or unimplemented respectively. See `docs/operations.md` for preservation and host limits.
 
 
@@ -660,10 +690,10 @@ behavior. Restoring old credential state can restore revoked authority:
 retain the latest `.machine-auth/` state across rollback, or disable machine routing until credentials
 are revoked or expired. Provider concurrency guarantees remain unverified.
 
-## Standalone supplier frontend candidate
+## Standalone payee frontend candidate
 
 Invoices' extracted frontend and shared backend additions are offline-tested candidates, not hosted
-or mainnet observations. Compatibility is checked using declared supplier capabilities; it is not
+or mainnet observations. Compatibility is checked using declared payee capabilities; it is not
 proof of UI behavior or a signed release manifest. The frontend asset service is a trusted release
 source and receives no session cookies or API traffic. Its independent rollout/rollback must retain
 old hashed assets for open pages. There is no automatic publication, distributed state fencing or

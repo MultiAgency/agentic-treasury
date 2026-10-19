@@ -1,6 +1,6 @@
 import { clearAgentCapabilities, gatewayQueries, redactProposalCaches } from "./app/queries";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { StrictMode, Suspense, lazy, useEffect, useSyncExternalStore } from "react";
+import { StrictMode, Suspense, lazy } from "react";
 import { createRoot } from "react-dom/client";
 import { PublicHome, publicDemo } from "./public";
 import { ErrorBox, Button, Loading } from "./shared/ui";
@@ -41,7 +41,7 @@ onAccessDenial(denial => {
  * visitor sees the public examples and sign-in. Signed-in pages share a workspace frame;
  * `/a/<agent>/` retains that agent's client, cache and permissions.
  */
-function GatewayPage({ activity }: { activity: boolean }) {
+function GatewayPage() {
   const access = useAccessState();
   const query = useQuery(gatewayQueries.session);
   if (query.isPending) return <main className="mx-auto max-w-xl p-8"><Loading label="Loading dashboard…" /></main>;
@@ -59,12 +59,6 @@ function GatewayPage({ activity }: { activity: boolean }) {
     <Button variant="outline" onClick={recheckAccess}>Check access again</Button>
     <a href="/" className="underline">Return to Home</a>
   </main>;
-  // Only the unscoped entry chooses a demo. Exact record URLs never change location.
-  if (gateway?.viewer && !gateway.selfService && gateway.demo && gateway.demo !== "showcase" && !BASE
-    && location.pathname === "/workspace" && !activity && gateway.agents.length === 1) {
-    const agent = gateway.agents[0]!;
-    return <DemoEntry path={`/a/${agent.name}/${gateway.demo === "invoices" ? "payees" : "demo"}`} />;
-  }
   const hiddenAgents = gateway?.viewer && gateway.agents.some(agent => deniedAt(access, `/a/${agent.name}`));
   const visibleGateway = gateway?.viewer ? { ...gateway,
     agents: gateway.agents.filter(agent => !deniedAt(access, `/a/${agent.name}`)),
@@ -74,7 +68,7 @@ function GatewayPage({ activity }: { activity: boolean }) {
   const content = gateway && !gateway.viewer ? (
     <PublicHome daos={ownersOf(gateway.agents)} selfService={gateway.selfService} demo={gateway.demo} />
   ) : (
-    <AuthenticatedApp gateway={visibleGateway} activity={activity} />
+    <AuthenticatedApp gateway={visibleGateway} />
   );
   return <>
     {query.error && <div role="alert" className="flex flex-wrap items-center gap-3 border-b p-4 text-sm">
@@ -89,20 +83,10 @@ function GatewayPage({ activity }: { activity: boolean }) {
   </>;
 }
 
-function DemoEntry({ path }: { path: string }) {
-  useEffect(() => { location.replace(path); }, [path]);
-  return <main className="p-8"><Loading label="Opening your demo…" /></main>;
-}
-
-const subscribeHash = (notify: () => void) => {
-  window.addEventListener("hashchange", notify);
-  return () => window.removeEventListener("hashchange", notify);
-};
 function App() {
-  const hash = useSyncExternalStore(subscribeHash, () => location.hash);
   const demo = publicDemo(location.hostname);
   if (demo && location.pathname === "/") return <PublicHome daos={[]} demo={demo} entry />;
-  return <GatewayPage activity={hash === "#activity"} />;
+  return <GatewayPage />;
 }
 
 createRoot(document.getElementById("root")!).render(

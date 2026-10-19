@@ -7,7 +7,7 @@ import { resumeOwnerIntents, setAgentCreationHandler } from "./owner-intents.js"
 import { startReconciliation } from "./recover.js";
 import { currentWorkOrder } from "./work-order-store.js";
 import { handleWorkOrderCommand } from "./work-order-runtime.js";
-import { workOrderCommand } from "./work-order-protocol.js";
+import { WorkOrderRefusal, workOrderCommand } from "./work-order-protocol.js";
 
 if (!process.send || !executes() || !currentWorkOrder()) throw new Error("Work order executors require private IPC and their own instance.");
 const instanceRelease = await lockfile.lock(`${ENV_FILE}.executor`, {
@@ -29,7 +29,9 @@ process.on("message", (raw: unknown) => {
       if (stopping) throw new Error("Work order executor is stopping.");
       const result = await handleWorkOrderCommand(workOrderCommand.parse(command));
       process.send?.({ id, result });
-    } catch (error) { process.send?.({ id, error: error instanceof Error ? error.message : "Work order action unavailable." }); }
+    } catch (error) {
+      process.send?.({ id, error: error instanceof Error ? error.message : "Work order action unavailable.", ...(error instanceof WorkOrderRefusal && { refusal: error.code }) });
+    }
   }).catch(() => { /* a disconnected caller never authorizes another send */ });
 });
 async function stop() {

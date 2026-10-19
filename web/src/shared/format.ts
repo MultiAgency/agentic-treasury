@@ -1,7 +1,5 @@
 import type { client } from "./client";
-import { ASSETS } from "../../../src/policy.js";
 import type { Kind } from "../features/evidence/beats";
-import { totalUsd } from "../../../src/valuation.js";
 export { exactPayment, fromUnits } from "../features/payables/payment-copy";
 
 export type Overview = Awaited<ReturnType<typeof client.overview>>;
@@ -14,28 +12,6 @@ export const swaps = (data: Overview) => Boolean(data.policy.policy?.actions.inc
 export const kindOf = (data: Overview): Kind => data.area ? (data.area === "treasury" ? "treasury" : "facilitator") : (swaps(data) ? "treasury" : "facilitator");
 
 export const units = (raw: bigint | string, decimals: number) => Number(raw) / 10 ** decimals;
-
-/** The book's value at the API's prices. */
-export const bookValue = (data: Pick<Overview, "book">) => totalUsd(data.book);
-
-/** Payouts are confidential USDC (src/authorize.ts), which an empty wallet's book doesn't list. */
-const USDC = { asset: ASSETS.USDC, decimals: 6, symbol: "USDC" };
-
-/** A raw amount of `asset` in words at the book's decimals, or in raw units when the book doesn't list it. */
-export function amountOf(raw: string, asset: string, book: Holding[]) {
-  const h = book.find((b) => b.asset === asset) ?? (asset === USDC.asset ? USDC : undefined);
-  return h ? amount(raw, h) : `${raw} ${asset.replace(/^nep141:/, "")}`;
-}
-
-/** A money action's request in words: what moves, how much, and to whom. */
-export function describeRequest(request: Record<string, unknown>, book: Holding[], nameOf: (account: string) => string = (a) => a) {
-  const r = request as Partial<Record<"origin_asset" | "destination_asset" | "asset" | "amount" | "recipient", string>>;
-  return r.origin_asset && r.destination_asset && r.amount
-    ? `${amountOf(r.amount, r.origin_asset, book)} → ${book.find((b) => b.asset === r.destination_asset)?.symbol ?? r.destination_asset}`
-    : r.asset && r.amount
-      ? `${amountOf(r.amount, r.asset, book)}${r.recipient ? ` to ${nameOf(r.recipient)}` : ""}`
-      : JSON.stringify(request);
-}
 
 /** An account or id short enough for a badge: its head and tail, when it is longer than `max`. */
 export const short = (id: string, max = 20) => (id.length > max ? `${id.slice(0, 8)}…${id.slice(-6)}` : id);
@@ -71,10 +47,3 @@ export function ago(iso: string) {
 
 /** 125 seconds → "2:05". */
 export const minutesSeconds = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-
-/** Per-asset colour, used everywhere an asset appears in a chart. */
-export const ASSET_COLOR: Record<string, string> = {
-  USDC: "bg-chart-3",
-  wNEAR: "bg-chart-2",
-  ETH: "bg-chart-1",
-};

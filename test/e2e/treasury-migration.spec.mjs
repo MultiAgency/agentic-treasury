@@ -1,0 +1,192 @@
+import { test, expect } from '@playwright/test';
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { environment } from './environment.mjs';
+import { browserContext } from './wallet.mjs';
+import { PAYEE, USDC } from './provider.mjs';
+import { ownerCapabilities } from '../../src/contract/owner-capabilities.ts';
+import { recordConformance } from './conformance.mjs';
+import { outcomeRegion, previewAndExecute, quoteRegion, seedStrategy, signIn } from './treasury-journey.mjs';
+
+// M4: Treasury's migrated releases (A2/B2, A3/B3, …) released independently behind the gateway on a Treasury-only host.
+// The journey is unchanged: quote, explicit confirmation, exact-plan outcome. The app names release B's change
+// (`--treasury-change`), and the spec requires it present in B and absent in A; earlier changes are present in both.
+const apps = JSON.parse(process.env.PROTO_E2E_OWNER_APPS ?? '{}');
+// `account-scoped-reads` (A4) and `session-revalidation` (A5) are asserted by shared-reader.spec.mjs; they have no
+// B-only page text here. `guided-run` (A6): /demo#preview opens the guided run at its preview step.
+const CHANGES = ['unresolved-guidance', 'operations-read-time', 'account-scoped-reads', 'session-revalidation', 'guided-run'];
+const change = JSON.parse(process.env.PROTO_E2E_OWNER_CHANGES ?? '{}').treasury;
+/** Whether a release has a change: B has its own, and both have every earlier generation's. */
+const has = (release, name) => CHANGES.indexOf(name) < CHANGES.indexOf(change) || (release === 'b' && name === change);
+const capabilityOf = procedure => Object.entries(ownerCapabilities).filter(([, c]) => c.procedures.includes(procedure)).map(([name]) => name);
+const UNRESOLVED_GUIDANCE = 'Unresolved operations block new sends. Nothing was sent. Follow their outcomes before another action.';
+
+test.skip(!apps.treasury, 'Requires --treasury-dist and --treasury-dist-next');
+test.skip(!CHANGES.includes(change), `Requires --treasury-change naming release B's change: ${CHANGES.join(' | ')}`);
+test(`Treasury migrated A→B (${change}): journey, B's change in B only, refused C and rollback, without restarting Proto`, async ({ browser }, info) => {
+  test.setTimeout(240_000);
+  const stack = await environment(info.outputPath('environment'), { workspace: true, ownerApp: { product: 'treasury', ...apps.treasury } });
+  const owner = await browserContext(browser, stack, PAYEE);
+  owner.context.setDefaultTimeout(15_000);
+  try {
+    const { release } = stack, page = await owner.context.newPage(), proto = stack.protoPids(), conformance = recordConformance(page);
+    await conformance.ready;
+    const file = (name, path) => readFileSync(join(release.root, release.ids[name], path), 'utf8');
+    expect(file('b', 'index.html'), 'release B must differ from A').not.toBe(file('a', 'index.html'));
+    const served = () => page.evaluate(async () => (await fetch('/a/portfolio/', { cache: 'no-store' })).text());
+    const skill = () => page.evaluate(async () => { const r = await fetch('/skill.md', { cache: 'no-store' }); return { status: r.status, type: r.headers.get('content-type'), body: await r.text() }; });
+    const outcome = outcomeRegion(page), quote = quoteRegion(page);
+    const stop = outcome.getByRole('button', { name: 'Stop following this plan' });
+    const chunks = file('a', 'index.html').match(/\/static\/(js|css)\/[a-zA-Z0-9_.-]+\.[a-f0-9]{8,}\.(js|css)/g) ?? [];
+    expect(chunks.length).toBeGreaterThan(0);
+    const executions = () => owner.applicationRequests.filter(r => r.url.endsWith('/rpc/executePlan')).length;
+    /** B3: the exact-plan view says when its operations were last read (a time, once the read completes). */
+    /** A6: /demo#preview stays on the guided run with its preview step revealed; earlier releases redirect /demo home. Reads only. */
+    const MUTATIONS = /\/rpc\/(rebalance|executePlan|owner\/prepare|owner\/submit|strategy\/save|autopilot\/(set|enable|tick|stop))$/;
+    const expectGuidedRun = async release => {
+      const before = owner.applicationRequests.filter(r => MUTATIONS.test(new URL(r.url).pathname)).length;
+      await page.goto(`${stack.dashboard}/a/portfolio/demo#preview`);
+      const guide = page.getByRole('heading', { name: 'Run it with your treasury', exact: true });
+      if (has(release, 'guided-run')) {
+        await expect(guide).toBeVisible();
+        expect(new URL(page.url()).pathname).toBe('/a/portfolio/demo');
+        await expect(page.getByRole('heading', { name: 'Preview and execute a rebalance', exact: true })).toBeVisible();
+        await expect(page.locator('#preview')).toBeInViewport();
+        await expect(page.locator('#preview').getByRole('button', { name: 'Preview', exact: true })).toHaveCount(1);
+      } else {
+        await expect.poll(() => new URL(page.url()).pathname).toBe('/a/portfolio/');
+        await expect(guide).toHaveCount(0);
+        await expect(page.locator('#preview')).toHaveCount(0);
+      }
+      expect(owner.applicationRequests.filter(r => MUTATIONS.test(new URL(r.url).pathname)).length, 'opening the guided run sends nothing').toBe(before);
+    };
+    const expectReadTime = async release => {
+      const read = outcome.getByText(/^Operations last read: /);
+      if (!has(release, 'operations-read-time')) { await expect(read).toHaveCount(0); return; }
+      await expect(read).toHaveText(/^Operations last read: (?!not yet)\S/);
+      await expect(outcome.getByText('A read time shows when records were checked, not that an operation settled.')).toBeVisible();
+    };
+
+    // A: sign in once; the page and /skill.md come from A.
+    await signIn(page, stack);
+    expect(await served()).toBe(file('a', 'index.html'));
+    expect(await skill()).toEqual({ status: 200, type: expect.stringMatching(/^text\/markdown/), body: file('a', 'skill.md') });
+    const me = await page.evaluate(async () => (await fetch('/gw/me')).json());
+    expect(me.capabilities).toEqual(expect.arrayContaining(['treasury-plans-v1', 'agent-schedule-stop-v1']));
+    expect(me.capabilities.filter(c => c.startsWith('payables-'))).toEqual([]);
+
+    // A's journey: quote → "Execute swaps" (exactly one executePlan) → ?plan=<id> → exact-plan reload with no replay → Stop following.
+    seedStrategy(stack);
+    await page.reload();
+    await previewAndExecute(page, executions);
+    await expect.poll(() => new URL(page.url()).searchParams.get('plan')).toMatch(/^[0-9a-f-]{36}$/);
+    const plan = new URL(page.url()).searchParams.get('plan');
+    await expect(outcome).toBeVisible({ timeout: 30_000 });
+    await expect(outcome.getByRole('heading', { name: 'Follow the outcome' })).toBeVisible();
+    await expect.poll(() => stack.portfolio.swaps.length).toBeGreaterThan(0);
+    expect(executions(), 'exactly one explicit execution').toBe(1);
+    await page.reload();
+    await expect(outcome.getByText('Following the exact plan named in this page’s address.')).toBeVisible();
+    await expectReadTime('a');
+    expect(executions(), 'reload never replays').toBe(1);
+    await stop.click();
+    await expect.poll(() => new URL(page.url()).searchParams.has('plan')).toBe(false);
+    await expect(outcome).toHaveCount(0);
+
+    // An earlier operation without a proven outcome: a swap whose response is lost (not through the app's UI).
+    stack.portfolio.dropSwapResponse(1);
+    const lost = await page.evaluate(async usdc => {
+      const rpc = (procedure, input) => fetch(`/a/portfolio/rpc/${procedure}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ json: input }) });
+      const { json: saved } = await (await rpc('externalPlan', { swaps: [{ from: usdc, to: 'nep141:wrap.near', amount: '1000000' }] })).json();
+      return (await rpc('executePlan', { planId: saved.id })).text();
+    }, USDC);
+    expect(lost).toMatch(/event: error/);
+    const unresolved = await page.evaluate(async () => (await (await fetch('/a/portfolio/rpc/unresolved', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json()).json);
+    expect(unresolved.length).toBeGreaterThan(0);
+
+    // The journey reached its targets: a new target needs another rebalance.
+    seedStrategy(stack, 5000);
+
+    /** Execute once more through the app: exactly one executePlan, refused as unresolved, nothing sent. */
+    const refusedExecution = async () => {
+      const swaps = stack.portfolio.swaps.length, before = executions();
+      await page.goto(`${stack.dashboard}/a/portfolio/`);
+      await previewAndExecute(page, executions);
+      await expect.poll(executions).toBe(before + 1);
+      await expect(quote.getByText(/nothing new was sent|Nothing was sent/).first()).toBeVisible();
+      expect(executions(), 'exactly one executePlan').toBe(before + 1);
+      expect(stack.portfolio.swaps.length, 'nothing sent').toBe(swaps);
+      // The browser drops a response body on navigation: the recorder reads this answer before the page moves on.
+      await conformance.settle();
+    };
+    /** B2's kind-based guidance for an unresolved refusal; without it, only the server's refusal is shown. */
+    const expectUnresolvedGuidance = async release => {
+      if (!has(release, 'unresolved-guidance')) {
+        await expect(quote.getByText(/Earlier money actions have no proven outcome, so nothing new was sent/).first()).toBeVisible();
+        await expect(page.getByText(UNRESOLVED_GUIDANCE)).toHaveCount(0);
+        await expect(page.getByRole('link', { name: 'Review unresolved operations' })).toHaveCount(0);
+        return;
+      }
+      await expect(quote.getByRole('status').filter({ hasText: UNRESOLVED_GUIDANCE })).toBeVisible();
+      await expect(quote.getByRole('link', { name: 'Review unresolved operations' })).toHaveAttribute('href', /\/a\/portfolio\/activity$/);
+      await expect(page.getByText(/outcome is unknown/i)).toHaveCount(0);
+      await expect(page.getByText(/pnpm reconcile|reconcile cannot resolve/)).toHaveCount(0);
+    };
+    await refusedExecution();
+    await expectUnresolvedGuidance('a');
+
+    // Compatible release B: same session; an open A page still loads A's hashed assets; B's change works.
+    release.activate('b');
+    expect(await served()).toBe(file('b', 'index.html'));
+    // An open A page still gets A's own bytes, not a fallback page or B's bundle.
+    for (const chunk of chunks) expect(await page.evaluate(async path => { const r = await fetch(path); return { status: r.status, body: await r.text() }; }, chunk), chunk)
+      .toEqual({ status: 200, body: file('a', chunk.slice(1)) });
+    expect((await skill()).body).toBe(file('b', 'skill.md'));
+    await refusedExecution();
+    await expect(page.getByRole('button', { name: 'Connect wallet', exact: true })).toHaveCount(0);
+    await expectUnresolvedGuidance('b');
+    const executed = executions();
+    await page.goto(`${stack.dashboard}/a/portfolio/?plan=${plan}`);
+    await expect(outcome).toBeVisible();
+    await expectReadTime('b');
+    expect(executions(), 'reopening the plan never replays').toBe(executed);
+    await expectGuidedRun('b');
+
+    // Incompatible release C is refused; records are unchanged: provider swaps, and the agent's saved plans, operation
+    // journal and owner records (every file under them, byte for byte).
+    const swaps = JSON.stringify(stack.portfolio.swaps);
+    const portfolioRecords = () => Object.fromEntries(['.plans', '.ops', '.owner-intents'].flatMap(dir => {
+      const root = join(stack.directory, 'portfolio', dir);
+      return existsSync(root) ? readdirSync(root, { recursive: true }).filter(f => !f.endsWith('.lock') && statSync(join(root, f)).isFile()).map(f => [`${dir}/${f}`, readFileSync(join(root, f), 'utf8')]) : [];
+    }));
+    const recordsBefore = portfolioRecords();
+    expect(Object.keys(recordsBefore).some(f => f.startsWith('.plans/')), 'the executed plan is on disk').toBe(true);
+    release.activate('c');
+    const refused = await page.evaluate(async () => { const r = await fetch('/a/portfolio/', { cache: 'no-store' }); return { status: r.status, body: await r.json() }; });
+    expect(refused.status).toBe(503);
+    expect(refused.body.error).toMatch(/records and any submitted actions are unchanged/);
+
+    // Rollback to A: the same exact plan reopens, with no replay; A's views return.
+    release.activate('a');
+    expect(await served()).toBe(file('a', 'index.html'));
+    expect((await skill()).body).toBe(file('a', 'skill.md'));
+    await page.goto(`${stack.dashboard}/a/portfolio/?plan=${plan}`);
+    await expect(outcome).toBeVisible();
+    await expectReadTime('a');
+    await expectGuidedRun('a');
+    expect(JSON.stringify(stack.portfolio.swaps)).toBe(swaps);
+    expect(portfolioRecords(), 'plans, journal and owner records unchanged across refusal and rollback').toEqual(recordsBefore);
+    expect(executions()).toBe(executed);
+    expect(stack.protoPids(), 'E2E_NO_PROTO_RESTART').toEqual(proto);
+    const requested = new Set(owner.applicationRequests.map(r => new URL(r.url).pathname.match(/^\/a\/[a-z0-9-]+\/rpc\/(.+)$/)?.[1]).filter(Boolean).flatMap(capabilityOf));
+    expect([...requested].filter(c => c.startsWith('payables-'))).toEqual([]);
+    await conformance.settle();
+    writeFileSync(info.outputPath('conformance.json'), JSON.stringify(conformance.results, null, 2));
+    writeFileSync(info.outputPath('conformance-aborted.json'), JSON.stringify(conformance.aborted, null, 2));
+    expect(conformance.results.filter(r => !r.ok)).toEqual([]);
+  } finally {
+    await owner.context.close(); await stack.close();
+    expect(stack.simulated.errors).toEqual([]); expect(stack.portfolio.errors).toEqual([]);
+    expect(owner.unexpected).toEqual([]);
+  }
+});

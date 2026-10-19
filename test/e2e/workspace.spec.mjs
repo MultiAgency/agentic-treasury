@@ -39,25 +39,20 @@ async function scenario(browser, info, run, options = {}) {
 
 test('cross-agent navigation keeps identity and gateway permissions isolated', async ({ browser }, info) => {
   await scenario(browser, info, async (stack, login) => {
-    const { page } = await login(OWNER, '/a/payout/');
-    await expect(page.getByRole('heading', { name: 'Payments', exact: true })).toBeVisible();
-    const payout = await rpc(page, 'payout', 'instance');
-    expect(payout.body.json.agentId).toBe(stack.simulated.id);
-    await page.getByRole('navigation', { name: 'Area', exact: true }).getByRole('link', { name: 'Agreements', exact: true }).click();
-    await expect(page.getByRole('article', { name: `Recipient ${PAYEE}`, exact: true })).toBeVisible();
-    const offer = page.getByText('Offer terms (a bounty, grant award or service agreement)', { exact: true });
-    await expect(offer).toBeVisible();
-    expect(await offer.evaluate(element => element.parentElement.open)).toBe(false);
-    await page.getByRole('navigation', { name: 'Area', exact: true }).getByRole('link', { name: 'Payments', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Payments', exact: true })).toBeVisible();
-    // Cross-agent links must cause a document navigation, resetting client/cache ownership.
+    const { page } = await login(OWNER, '/');
+    await expect(page.getByRole('heading', { name: 'Your agents', exact: true })).toBeVisible();
+    await page.getByRole('link', { name: 'Walkthroughs for payout', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Payables agent', exact: true })).toBeVisible();
+    expect((await rpc(page, 'payout', 'instance')).body.json.agentId).toBe(stack.simulated.id);
+    // Agent links cause a document navigation, resetting client/cache ownership.
     await page.evaluate(() => { window.__candidateDocument = 'payout'; });
-    const link = page.locator('a[href="/a/portfolio/"]').first();
-    await link.click();
-    await expect.poll(() => page.evaluate(() => window.__candidateDocument)).toBeUndefined();
+    await page.getByRole('link', { name: '← All agents', exact: true }).click();
+    await page.getByRole('link', { name: 'Walkthroughs for portfolio', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Treasury agent', exact: true })).toBeVisible();
+    expect(await page.evaluate(() => window.__candidateDocument)).toBeUndefined();
     expect((await rpc(page, 'portfolio', 'instance')).body.json.agentId).toBe(stack.portfolio.id);
-    await page.goBack();
-    await expect(page.getByRole('heading', { name: 'Payments', exact: true })).toBeVisible();
+    await page.goBack(); await page.goBack();
+    await expect(page.getByRole('heading', { name: 'Payables agent', exact: true })).toBeVisible();
     expect((await rpc(page, 'payout', 'instance')).body.json.agentId).toBe(stack.simulated.id);
     expect(stack.simulated.intents).toHaveLength(0);
     expect(stack.simulated.transfers).toHaveLength(0);
@@ -89,7 +84,10 @@ test('each wallet sees only its own agents despite legacy operator configuration
   });
 });
 
+// The strategy screens are Treasury's; this journey runs against its release A (`--treasury-dist`).
+const apps = JSON.parse(process.env.PROTO_E2E_OWNER_APPS ?? '{}');
 test('strategy saves off, authorizes, rejects stale review, enables explicitly and stops during provider failure', async ({ browser }, info) => {
+  test.skip(!apps.treasury, 'The strategy screens require --treasury-dist and --treasury-dist-next');
   await scenario(browser, info, async (stack, login) => {
     const { page, signatures } = await login(PAYEE, '/a/portfolio/automations');
     await expect(page.getByRole('heading', { name: 'Strategy', exact: true })).toBeVisible();
@@ -134,5 +132,5 @@ test('strategy saves off, authorizes, rejects stale review, enables explicitly a
     expect((await rpc(page, 'portfolio', 'autopilot/get')).body.json.on).toBe(false);
     expect(stack.portfolio.transfers).toHaveLength(0);
     expect(stack.portfolio.requests.filter(r => r.method === 'POST' && r.path !== '/chain').map(r => r.path)).toEqual(['/v1/generate-intent', '/v1/submit-intent']);
-  });
+  }, { ownerApp: { product: 'treasury', ...apps.treasury } });
 });

@@ -1,5 +1,8 @@
 import type { Gateway } from "./session";
 import { walkthroughs, type WalkthroughId } from "../features/demo/catalog";
+import { SourceLabel } from "../features/demo/source-label";
+import { appOrigin } from "../features/demo/app-origin";
+import { RecordedSimulations } from "../features/demo/receipts";
 
 /** Only navigation: selecting a guide never starts an action or aggregates private balances. */
 export function Demos({ gateway, workflow }: { gateway: Gateway; workflow?: WalkthroughId }) {
@@ -13,17 +16,20 @@ export function Demos({ gateway, workflow }: { gateway: Gateway; workflow?: Walk
     {(selected ? [selected] : walkthroughs).map(item => {
       const agents = gateway.agents.filter(agent => agent.area === item.area || (!agent.area && (item.area === "treasury" ? agent.name === "treasury" : ["payout", "payables"].includes(agent.name))));
       return <section key={item.id} aria-labelledby={`guide-${item.id}`} className="flex flex-col gap-4 border-t pt-6">
-        <h2 id={`guide-${item.id}`} className="text-xl font-semibold">{item.title}</h2>
+        <div className="flex flex-wrap items-center gap-2"><h2 id={`guide-${item.id}`} className="text-xl font-semibold">{item.title}</h2><SourceLabel source="Live" /></div>
         <p className="text-muted-foreground">{item.summary}</p>
         <ol className="list-decimal space-y-2 pl-5 text-sm">{item.steps.map(step => <li key={step}>{step}</li>)}</ol>
-        {"limitation" in item && <p className="text-sm text-muted-foreground">{item.limitation}</p>}
+        {"variation" in item && <div className="space-y-2 text-sm"><h3 className="font-medium">Variation: {item.variation.title}</h3><p className="text-muted-foreground">{item.variation.summary}</p>
+          <ol className="list-decimal space-y-1 pl-5">{item.variation.steps.map(step => <li key={step}>{step}</li>)}</ol></div>}
+        <p className="text-sm text-muted-foreground"><span className="font-medium text-foreground">Limitation: </span>{item.limitation}</p>
+        <RecordedSimulations workflows={item.id === "invoices" ? ["invoices", "builder"] : [item.id]} />
         <div className="flex flex-wrap gap-5 text-sm">
           {!selected && <a className="underline" href={`/${item.id}`}>Full {item.title.toLowerCase()} walkthrough</a>}
-          <a className="underline" href={item.app}>Open full app<span className="sr-only"> for {item.title}</span></a>
+          <a className="underline" href={appOrigin(item.id, gateway)}>Open full app<span className="sr-only"> for {item.title}</span></a>
         </div>
         {agents.length ? <ul className="space-y-4">{agents.map(agent => <li key={agent.name} className="flex flex-col gap-2">
           <p className="break-all text-sm">Owner: {agent.owner}</p>
-          {item.id === "payables" && <a className="underline" href={`/a/${agent.name}/demos/payables/play`}>Play the Payables demo<span className="sr-only"> with {agent.name}</span></a>}
+          {item.id === "payables" && <span className="flex flex-wrap items-center gap-2"><a className="underline" href={`/a/${agent.name}/demos/payables/play`}>Play the Payables demo<span className="sr-only"> with {agent.name}</span></a><SourceLabel source="Fictional rehearsal" /></span>}
           <a className="underline" href={`/a/${agent.name}/${selected ? "walkthrough" : "demos"}/${item.id}`}>
             {selected ? "Open complete walkthrough" : "Start short guide"}<span className="sr-only"> for {item.id} with {agent.name}</span>
           </a>

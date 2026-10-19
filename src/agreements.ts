@@ -11,7 +11,7 @@ import { readRecordLines } from "./record-lines.js";
 /**
  * Agreements with terms, `.agreements/<agent id>.jsonl`, append-only like the inbox. Either side
  * starts one: a payee the owner doesn't pay yet *requests* it from the invoice page (a contractor, a
- * new supplier), or the owner *offers* it (a purchase order, a bounty or grant award). Neither is a
+ * new payee), or the owner *offers* it (a purchase order, a bounty or grant award). Neither is a
  * payment. The owner agrees by adding the payee to the policy; the payee then files an invoice;
  * nothing is paid because a vote passed.
  *

@@ -19,8 +19,9 @@ import { loadStrategy } from "../strategy.js";
 import { rebalance, targets } from "../treasury.js";
 import { status } from "../owner-intents.js";
 import { agreed } from "../invoices.js";
-import { os } from "./base.js";
-import { run, account } from "./inputs.js";
+import { os, owner } from "./base.js";
+import { readOutput } from "./read-output.js";
+import { run, account } from "../contract/inputs.js";
 
 /** The agent's ops log, one row per action, newest first: the request as sent, the mandate (policy revision and digest) and plan it ran under, and how it settled or was refused. */
 const activity = () =>
@@ -43,7 +44,7 @@ async function linkedDao() {
 export const observationsRoutes = {
 
   /** Local configuration only: no provider calls or state changes. */
-  instance: os.handler(() => ({ agentId: process.env.AGENT_ID ?? null, executor: executes() })),
+  instance: os.use(readOutput("instance")).handler(() => ({ agentId: process.env.AGENT_ID ?? null, executor: executes() })),
   /** Gateway ownership evidence only: no grant adoption, funding lookup or other setup work. */
   ownerIdentity: os.handler(async () => {
     const id = process.env.AGENT_ID;
@@ -56,7 +57,7 @@ export const observationsRoutes = {
    * How far onboarding has got: an agent, its owner, and a live grant whose token this server holds.
    * Adopts a staged grant token whose grant is in force, so it writes the settings file at times.
    */
-  setup: os.handler(async () => {
+  setup: os.use(readOutput("setup")).handler(async () => {
     const id = process.env.AGENT_ID;
     const dao = await linkedDao();
     if (!id) return { agentId: null, wallet: null, owner: null, grant: null, dao, executor: executes() };
@@ -76,7 +77,7 @@ export const observationsRoutes = {
       dao,
     };
   }),
-  overview: os.handler(async () => {
+  overview: owner.overview.use(readOutput("overview")).handler(async () => {
     const id = agentId();
     const area = configuredArea(process.env.DASHBOARD_AREA);
     const [{ managed: book, unmanaged }, policy, grants] = await Promise.all([dashboardHoldings(), api.getPolicy(id), api.listGrants(id)]);
@@ -98,7 +99,7 @@ export const observationsRoutes = {
     };
   }),
   /** Every revision of the owner's mandate, newest first, each with the digest anyone can recompute. */
-  policyHistory: os.handler(async () => {
+  policyHistory: os.use(readOutput("policyHistory")).handler(async () => {
     const revisions = [];
     let cursor: number | undefined;
     do {
@@ -115,12 +116,12 @@ export const observationsRoutes = {
     }));
   }),
   deposit: os.handler(() => depositAddress(ASSETS.USDC)),
-  activity: os.handler(() => activity()),
+  activity: owner.activity.use(readOutput("activity")).handler(() => activity()),
   /**
    * Money actions without a proven outcome: each blocks every new one until resolved. Those held for
    * the owner's approval are listed by `held`, and invoices prepared but never sent by `invoices`.
    */
-  unresolved: os.handler(() =>
+  unresolved: owner.unresolved.use(readOutput("unresolved")).handler(() =>
     readOps()
       .filter(blocksDispatch)
       .map((op) => ({ key: op.idempotencyKey, at: op.at, kind: op.kind, request: op.request, status: op.status ?? null, sent: Boolean(op.correlationId) })),
@@ -131,7 +132,7 @@ export const observationsRoutes = {
   ),
   inbox: {
     // Every open message, however old, so dismissing a repeated one clears every copy; and the latest runs.
-    list: os.handler(() => {
+    list: os.use(readOutput("inbox/list")).handler(() => {
       const entries = readInbox();
       const runs = new Set(entries.filter((e) => e.level === "run").slice(0, 20));
       return entries.filter((e) => (e.level === "run" ? runs.has(e) : !e.dismissed));
@@ -139,8 +140,8 @@ export const observationsRoutes = {
     dismiss: os.input(z.object({ id: z.uuid() })).handler(({ input }) => dismiss(input.id)),
   },
   /** The books: every money execution with its assets, evidence and the mandate it ran under. */
-  ledger: os.handler(() => ledger()),
-  ledgerCsv: os.handler(async () => ledgerCsv(await ledger())),
+  ledger: os.use(readOutput("ledger")).handler(() => ledger()),
+  ledgerCsv: os.use(readOutput("ledgerCsv")).handler(async () => ledgerCsv(await ledger())),
   /** Each balance against its independent record: the chain for public, the API's executions for confidential. */
-  reconcileBooks: os.handler(() => reconcileBooks()),
+  reconcileBooks: os.use(readOutput("reconcileBooks")).handler(() => reconcileBooks()),
 };

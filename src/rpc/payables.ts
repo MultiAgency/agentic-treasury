@@ -5,7 +5,8 @@ import { cancelPreparedInvoice, listInvoices } from "../invoice-store.js";
 import { type AgreementStore, localStore, remoteStore } from "../agreements.js";
 import { agreed } from "../invoices.js";
 import { os } from "./base.js";
-import { transferAccount, units, reviewedPolicy } from "./inputs.js";
+import { readOutput } from "./read-output.js";
+import { transferAccount, units, reviewedPolicy } from "../contract/inputs.js";
 
 const agreementId = z.string().regex(/^[0-9a-f]{32}$/);
 /** This host's agreements when it serves the invoice page; otherwise the invoice host's, if configured. */
@@ -23,7 +24,7 @@ export const payablesRoutes = {
    * owner. Proposing terms or offering only records them; agreeing is the owner's policy update.
    */
   agreements: {
-    list: os.handler(() => agreementStore().list()),
+    list: os.use(readOutput("agreements/list")).handler(() => agreementStore().list()),
     propose: os.input(z.object({ id: agreementId, until: z.iso.datetime() }))
       .handler(({ input }) => agreementStore().propose(input.id, new Date(input.until))),
     offer: os.input(z.object({ payee: transferAccount, amount: z.string(), note: z.string().max(200), until: z.iso.datetime() }))
@@ -31,14 +32,14 @@ export const payablesRoutes = {
     decline: os.input(z.object({ id: agreementId })).handler(({ input }) => agreementStore().decline(input.id)),
   },
   /** Operator review reads the same durable invoice records; it never initiates a second payout. */
-  invoices: os.handler(() => listInvoices()),
+  invoices: os.use(readOutput("invoices")).handler(() => listInvoices()),
   cancelPreparedInvoice: os.input(z.object({ id: z.string().regex(/^[0-9a-f]{32}$/) }))
     .handler(({ input }) => cancelPreparedInvoice(input.id)),
   /** Money actions waiting for the owner's approval. */
-  held: os.handler(() => held({ complete: true })),
+  held: os.use(readOutput("held")).handler(() => held({ complete: true })),
   /** One of this agent's payments as the provider sees it now (`paymentStatus` in src/payouts.ts). */
   // `waitMs`: long-poll at the provider, kept under proxies' and browsers' timeouts.
-  paymentHistory: os.handler(() => paymentHistory()),
-  paymentStatus: os.input(z.object({ correlationId: z.string().min(1).max(200), waitMs: z.number().int().min(0).max(25_000).optional() }))
+  paymentHistory: os.use(readOutput("paymentHistory")).handler(() => paymentHistory()),
+  paymentStatus: os.input(z.object({ correlationId: z.string().min(1).max(200), waitMs: z.number().int().min(0).max(25_000).optional() })).use(readOutput("paymentStatus"))
     .handler(({ input }) => paymentStatus(input.correlationId, input.waitMs)),
 };

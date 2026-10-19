@@ -40,11 +40,12 @@ function workspaceOpener(root, { budget, values, proposals = false }) {
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/*', async route => {
       const { hostname, pathname } = new URL(route.request().url());
-      if (hostname !== 'frontend.test') return route.abort();
+      // `external` lets a suite land on another host (an agent's app) and read the full URL it reached.
+      if (hostname !== 'frontend.test') return options.external ? route.fulfill({ contentType: 'text/html', body: '<title>App</title>' }) : route.abort();
       if (pathname === '/gw/me') {
         if (++gatewayReads > 1 && options.invoiceLinkError) return route.fulfill({ status: 503, json: { error: 'Invoice link unavailable' } });
         return route.fulfill({ json: {
-          agents: state.agents.map(name => ({ name, owner: 'owner.near', dao: Boolean(options.dao) })),
+          agents: state.agents.map(name => ({ name, owner: 'owner.near', dao: Boolean(options.dao) })), ...(options.apps && { apps: options.apps }),
           invoices: options.noInvoiceLink ? null : 'https://invoices.example', viewer: options.public ? null : { account: 'owner.near',
             access: Object.fromEntries(state.agents.map(name => [name, { canSign: !options.dao && !(options.member && name === 'payables'), canPropose: !(options.member && name === 'payables'), canVote: !(options.member && name === 'payables'), canExecute: !(options.member && name === 'payables'), canManage: !(options.member && name === 'payables') }])) },
         } });

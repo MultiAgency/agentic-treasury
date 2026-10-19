@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 import { executes } from "./env.js";
 import { getWorkOrder, listWorkOrders, workOrderDirectory, type WorkOrder } from "./work-order-store.js";
-import type { WorkOrderCommand, WorkOrderReply } from "./work-order-protocol.js";
+import { WorkOrderRefusal, type WorkOrderCommand, type WorkOrderReply } from "./work-order-protocol.js";
 
 /** Only infrastructure credentials enter a child; never the parent grant or local owner signing key. */
 export function workOrderEnvironment(order: WorkOrder, envFile: string, parent: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -67,7 +67,9 @@ function worker(parent: string, id: string): Worker {
     const request = pending.get(raw.id);
     if (!request) return;
     clearTimeout(request.timer); pending.delete(raw.id);
-    if ("error" in raw && typeof raw.error === "string") request.reject(new Error(raw.error));
+    // Only the known refusal code becomes public; any other child error stays generic.
+    if ("error" in raw && typeof raw.error === "string")
+      request.reject("refusal" in raw && raw.refusal === "work_order_not_ready" ? new WorkOrderRefusal(raw.refusal, raw.error) : new Error(raw.error));
     else if ("result" in raw) request.resolve(raw.result);
     else request.reject(new Error("Work order executor returned an invalid result."));
   });

@@ -1,16 +1,14 @@
 import { createGrantCredential, grantCommitment } from "@near-intents-agent-api/sdk";
 
 import { api } from "./api.js";
+import { GRANT_LABELS, type GrantLabel } from "./contract/inputs.js";
+export { GRANT_LABELS, type GrantLabel };
 import { agentId, saveEnv } from "./env.js";
+import { PublicError } from "./public-error.js";
 import { loadStrategy } from "./strategy.js";
 import { strategyDigest, strategyLabelSuffix } from "./strategy-digest.js";
 import { currentWorkOrder, workOrderInvoice } from "./work-order-store.js";
 
-/**
- * What a grant's label says it is for: the agent's own strategies, its payouts, or invoices (the
- * public invoice page). Each purpose (see authorize.ts) names the grant labels that may act for it.
- */
-export type GrantLabel = "treasury" | "payout" | "invoices";
 
 /**
  * A grant's label, which the owner sees when signing and the API shows on every operation the grant
@@ -23,7 +21,6 @@ export function grantLabel(label: GrantLabel, suffix?: string) {
   return full;
 }
 
-export const GRANT_LABELS: GrantLabel[] = ["treasury", "payout", "invoices"];
 
 /**
  * The label of this agent's grants when none is named: `GRANT_PURPOSE` when this instance is set
@@ -55,7 +52,7 @@ export async function grantRequest({ label, suffix, expectedStrategyDigest, requ
   const strategy = chosen === "treasury" ? loadStrategy() : null;
   if (strategy && (requireStrategyReview || expectedStrategyDigest !== undefined)) {
     if (requireStrategyReview && process.env.AUTOPILOT === "on") throw new Error("Turn the schedule off before authorizing a Treasury strategy.");
-    if (expectedStrategyDigest !== strategyDigest(strategy)) throw new Error("Review the current saved strategy before authorizing its grant; the strategy changed or was not reviewed.");
+    if (expectedStrategyDigest !== strategyDigest(strategy)) throw new PublicError("Review the current saved strategy before authorizing its grant; the strategy changed or was not reviewed.");
     if (suffix !== undefined && suffix !== strategyLabelSuffix(strategy)) throw new Error("The grant suffix does not match the reviewed strategy.");
   }
   const full = grantLabel(chosen, strategy && (requireStrategyReview || expectedStrategyDigest !== undefined)
