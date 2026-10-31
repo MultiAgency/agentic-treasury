@@ -1,0 +1,9 @@
+# Published 2026-10-30, inside pnpm's minimum release age; the pinned version this example demonstrates.
+# Remove once 0.3.0 is past the release age.
+minimumReleaseAgeExclude:
+  - '@multiagency/sdk@0.3.0'
+allowBuilds:
+  esbuild: false
+permissions:
+  '@multiagency/sdk':
+    skills: true
