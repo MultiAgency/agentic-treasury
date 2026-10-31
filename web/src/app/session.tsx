@@ -5,9 +5,17 @@ import { Button, Card, ErrorBox, Spinner, errorMessage } from "../shared/ui";
 import { announceSessionChange } from "./session-signal";
 import { disconnect, signChallenge } from "./wallet";
 
-/** Ends the host session and the wallet connection, then starts again at the host's root. */
+/**
+ * Ends the host session and the wallet connection, then starts again at the host's root. If the gateway doesn't
+ * confirm the sign-out, it throws and changes nothing: the wallet stays connected and the page stays put.
+ */
 export async function signOut() {
-  await gateway.signOut();
+  try {
+    await gateway.signOut();
+  } catch (error) {
+    if (error instanceof TypeError) throw new Error("Sign-out didn't reach the gateway. You're still signed in; check your connection and try again.");
+    throw error;
+  }
   await disconnect().catch(() => {});
   announceSessionChange();
   location.assign("/");

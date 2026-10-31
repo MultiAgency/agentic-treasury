@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { agent, failureKind, gateway, onDenial, PlatformError, READS, reads, scope, scopeOfKey, type Denial } from "../src/platform.ts";
+import { agent, failureKind, gateway, isTreasury, onDenial, PlatformError, READS, reads, scope, scopeOfKey, type Denial } from "../src/platform.ts";
 
 /** Each request the app sent, and the answers the fake host gives, in order. */
 let sent: { url: string; method: string; body: string }[] = [];
@@ -72,12 +72,25 @@ test("a gateway denial is reported, with its scope, before the call returns", as
   const denials: Denial[] = [];
   const stop = onDenial(denial => denials.push(denial));
   try {
-    answers.push(json({ error: "No access to this agent", scope: "agent" }, 403));
+    // The body's `access` field names the scope; without it, a 401 is the session and a 403 the narrowest scope.
+    answers.push(json({ error: "Session ended", access: "session" }, 403));
+    await assert.rejects(agent("portfolio").read("overview", undefined), (error: unknown) => failureKind(error) === "forbidden");
+    answers.push(json({ error: "No access to this agent" }, 403));
     await assert.rejects(agent("portfolio").read("overview", undefined), (error: unknown) => failureKind(error) === "forbidden");
     answers.push(json({ error: "Sign in again" }, 401));
     await assert.rejects(gateway.challenge(), (error: unknown) => failureKind(error) === "session");
+    answers.push(json({ error: "This account may not see that agent", access: "agent" }, 403));
+    await assert.rejects(gateway.challenge(), (error: unknown) => failureKind(error) === "forbidden");
+    answers.push(json({ error: "Not permitted" }, 403));
+    await assert.rejects(gateway.challenge(), (error: unknown) => failureKind(error) === "forbidden");
   } finally { stop(); }
-  assert.deepEqual(denials, [{ agent: "portfolio", scope: "agent", message: "No access to this agent" }, { agent: null, scope: "session", message: "Sign in again" }]);
+  assert.deepEqual(denials, [
+    { agent: "portfolio", scope: "session", message: "Session ended" },
+    { agent: "portfolio", scope: "agent", message: "No access to this agent" },
+    { agent: null, scope: "session", message: "Sign in again" },
+    { agent: null, scope: "agent", message: "This account may not see that agent" },
+    { agent: null, scope: "procedure", message: "Not permitted" },
+  ]);
 });
 
 test("the gateway's session: discovery is parsed or refused, never guessed", async () => {
@@ -89,6 +102,25 @@ test("the gateway's session: discovery is parsed or refused, never guessed", asy
   await assert.rejects(gateway.me(), /invalid discovery data/);
 });
 
+test("self-service Treasury: a gateway that names no setup areas sets up every area", async () => {
+  const me = (extra: object) => { answers.push(json({ agents: [], viewer: null, invoices: null, ...extra })); return gateway.me(); };
+  // The platform with no site config sends selfService and leaves out setupAreas.
+  assert.equal((await me({ selfService: true })).selfServiceTreasury, true);
+  assert.equal((await me({ selfService: true, setupAreas: ["treasury"] })).selfServiceTreasury, true);
+  assert.equal((await me({ selfService: true, setupAreas: ["payables"] })).selfServiceTreasury, false);
+  assert.equal((await me({ setupAreas: [] })).selfServiceTreasury, false);
+  // A standalone gateway's own flag is kept when neither is sent.
+  assert.equal((await me({ selfServiceTreasury: true })).selfServiceTreasury, true);
+});
+
+test("an agent is a Treasury agent by its declared area, and by name only when none is declared", () => {
+  const agentNamed = (name: string, area?: "treasury" | "payables") => ({ name, owner: "owner.near", ...(area && { area }) }) as Parameters<typeof isTreasury>[0];
+  assert.equal(isTreasury(agentNamed("portfolio", "treasury")), true);
+  assert.equal(isTreasury(agentNamed("treasury")), true);
+  assert.equal(isTreasury(agentNamed("treasury", "payables")), false);
+  assert.equal(isTreasury(agentNamed("payout")), false);
+});
+
 test("sign-in posts the wallet's signature once; sign-out ends the session", async () => {
   const signed = { accountId: "owner.near", publicKey: "ed25519:k", signature: "s", nonce: "n", callbackUrls: ["https://treasury.test/"] };
   answers.push(json({ message: "Sign in", recipient: "treasury.test", nonce: "n" }), json({ ok: true }), json({}));
@@ -97,6 +129,13 @@ test("sign-in posts the wallet's signature once; sign-out ends the session", asy
   await gateway.signOut();
   assert.deepEqual(sent.map(s => [s.method, s.url]), [["GET", "/gw/challenge"], ["POST", "/gw/session"], ["POST", "/gw/logout"]]);
   assert.deepEqual(JSON.parse(sent[1]!.body), signed);
+});
+
+test("a sign-out the gateway doesn't confirm throws, so nobody is shown as signed out while still signed in", async () => {
+  answers.push(json({ error: "Gateway unavailable" }, 503));
+  await assert.rejects(gateway.signOut(), /still signed in/);
+  answers.push(lost);
+  await assert.rejects(gateway.signOut(), TypeError);
 });
 
 test("cached reads are keyed by host, agent and viewer, so accounts never share records", () => {

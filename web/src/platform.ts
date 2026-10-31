@@ -60,7 +60,7 @@ async function gw<T>(path: `/gw/${string}`, init?: RequestInit): Promise<T> {
   if (response.ok) return body;
   const message = body.error ?? `${path}: ${response.status}`;
   if (response.status === 401 || response.status === 403) {
-    deny({ agent: null, scope: response.status === 401 ? "session" : "procedure", message });
+    deny({ agent: null, scope: gatewayDenialScope(body) ?? (response.status === 401 ? "session" : "procedure"), message });
     throw new PlatformError(response.status === 401 ? { ok: false, kind: "session", status: 401, error: message, source: "gateway" }
       : { ok: false, kind: "forbidden", status: 403, error: message, source: "gateway" });
   }
@@ -81,9 +81,10 @@ export const gateway = {
     const parsed = gatewaySchema.safeParse(body);
     if (!parsed.success) throw new Error("The gateway returned invalid discovery data.");
     const found = parsed.data;
-    // Explicit shared-host area restrictions take precedence over the standalone flag.
+    // Explicit shared-host area restrictions take precedence over the standalone flag. A self-service gateway that
+    // names no areas sets up every area, as the platform's own pages read it.
     if (found.setupAreas === undefined && found.selfService === undefined) return found;
-    return { ...found, selfServiceTreasury: found.selfService === true && found.setupAreas?.includes("treasury") === true };
+    return { ...found, selfServiceTreasury: found.selfService === true && (found.setupAreas?.includes("treasury") ?? true) };
   },
   /** The text the wallet signs to sign in. */
   challenge: () => gw<Challenge>("/gw/challenge"),
@@ -91,9 +92,15 @@ export const gateway = {
   async signIn(signed: SignedChallenge) {
     await gw("/gw/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(signed) });
   },
-  /** Ends the host session. Its answer isn't needed: the page reloads signed out either way. */
-  async signOut() { await fetch("/gw/logout", { method: "POST" }); },
+  /** Ends the host session. Throws unless the gateway confirms it, so nobody is shown as signed out while still signed in. */
+  async signOut() {
+    const response = await fetch("/gw/logout", { method: "POST" });
+    if (!response.ok) throw new Error(`Sign-out didn't complete (the gateway answered ${response.status}). You're still signed in; try again.`);
+  },
 };
+
+/** Whether an agent is a Treasury agent: its declared area, or by name for gateways that declare none (the platform's `areaOf`). */
+export const isTreasury = (agent: GatewayAgent) => (agent.area ?? (agent.name === "treasury" ? "treasury" : "payables")) === "treasury";
 
 // One agent -------------------------------------------------------------------------------------------------------
 

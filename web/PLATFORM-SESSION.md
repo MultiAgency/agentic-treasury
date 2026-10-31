@@ -26,12 +26,14 @@ Changed or not present yet:
 | Where | A | B | Until |
 | --- | --- | --- | --- |
 | Signed-out home | Proof flows ("What Treasury does", "What has been demonstrated", "Known limitations"), the "What works today" and "View requirements" disclosures, and the "NEAR Intents resources" region | Brand, the headline ("Your treasury. Your limits."), the "Get started" region and Connect wallet only. The rest was showcase (`public/`), which the brief leaves behind | Permanent |
-| Setup unavailable | The retained-records task (operation status, run timeline) below the alert | A "Review existing operation records" link | #8 (activity) |
+| Setup unavailable | The retained-records task (operation status, run timeline) below the alert | Nothing: the alert and "Retry setup" only. The "Review existing operation records" link was removed, since it led back to the same screen. Records already loaded stay shown when a later setup read fails | #8 (activity) |
 | An agent not yet created | Onboarding | Status text: "This Treasury agent hasn't been created yet." | #12 (creation) |
 | A self-service host's root | Treasury creation | A "Your treasuries" heading with a link per treasury agent | #12 (creation) |
 | Every page under `/a/<agent>/` | The page | Text: "`<page>` moves here from the Treasury prototype, one feature at a time." So no spec query on those pages passes until its feature lands | Each feature's issue: #6–#12 |
 | The frame on a failed read | Also offered "Turn off" (stop the schedule) | Not offered | #6 (owner actions) |
 | The frame on a new agent | The setup's next step (`SetupNextStep`) | Not shown | #12 (creation) |
+
+A wallet connected to another account than the session's shows an alert under the wallet button ("This wallet is connected to `<wallet>`, but you're signed in as `<account>`. Owner actions are unavailable until they match."), and owner controls stay disabled; a sign-out the gateway doesn't confirm shows its error there instead of reloading. Neither changes a name the specs query.
 
 "Signed in" and "Sign out" (the `ViewerBadge`) don't render in a Treasury-only build in A either, so shared-reader's and account-switch's queries for them don't concern this build.
 

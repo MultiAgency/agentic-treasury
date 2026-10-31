@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useLocation } from "@tanstack/react-router";
 import { ArrowClockwise } from "@phosphor-icons/react";
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { reads, type Overview, type Setup } from "../platform";
 import { Button, Loading, QueryError, Spinner } from "../shared/ui";
 import { TreasuryBrand } from "./brand";
@@ -58,37 +58,40 @@ function AgentFrame() {
       document.getElementById("agent-main")?.focus();
     }
   }, [pathname]);
-  const agentReads = reads(AGENT!, viewer?.account ?? null);
+  const account = viewer?.account ?? null;
+  const agentReads = useMemo(() => reads(AGENT!, account), [account]);
   const setup = useQuery(agentReads.setup);
-  // Keep records mounted while an explicit retry has no setup result yet.
+  // Stays in recovery while an explicit retry has no setup result yet.
   const [setupRecovery, setSetupRecovery] = useState(false);
   useEffect(() => {
     if (setup.isError) setSetupRecovery(true);
     else if (setup.isSuccess) setSetupRecovery(false);
   }, [setup.isError, setup.isSuccess]);
-  const ready = Boolean(setup.data?.agentId) && !setup.error && !setupRecovery;
+  const recovering = Boolean(setup.error) || setupRecovery;
+  const ready = Boolean(setup.data?.agentId) && !recovering;
   const overview = useQuery({ ...agentReads.overview, enabled: ready });
+  // Records already shown stay shown when a later setup read fails; only a first failure replaces the frame.
+  const loaded = Boolean(setup.data?.agentId && overview.data);
   const error = setup.error ?? overview.error;
   const title = pageTitle(pathname.startsWith(`/a/${AGENT}`) ? pathname.slice(`/a/${AGENT}`.length) : pathname);
   useEffect(() => { document.title = `Treasury · ${title}`; }, [title]);
 
-  if (setup.error || setupRecovery)
+  if (recovering && !loaded)
     return <main id="agent-main" tabIndex={-1} className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-10 sm:px-8">
       <TreasuryBrand />
       <h1 className="text-2xl font-semibold">Available records</h1>
       <div className="flex flex-col items-start gap-3 rounded-2xl bg-destructive-muted p-6 text-sm text-destructive-muted-foreground">
         <p role="alert">Setup unavailable</p>
-        <p>Retained records can still be reviewed when access is authorized. Setup, balances, policy and grant status are not confirmed here.</p>
+        <p>Setup, balances, policy and grant status are not confirmed here.</p>
         {setup.error && <p>{setup.error.message}</p>}
         <Button variant="outline" size="sm" disabled={setup.isFetching} onClick={() => setup.refetch()}>
           {setup.isFetching ? <Spinner /> : <ArrowClockwise size={16} />}
           {setup.isFetching ? "Retrying setup…" : "Retry setup"}
         </Button>
       </div>
-      <Link to="/activity" className="underline">Review existing operation records</Link>
     </main>;
   if (!setup.data) return <Notice><Spinner /> Loading…</Notice>;
-  if (!ready)
+  if (!setup.data.agentId)
     return <main id="agent-main" tabIndex={-1} className="mx-auto flex max-w-4xl flex-col gap-12 px-4 py-10 sm:px-8">
       <header className="flex min-w-0 flex-wrap items-center justify-between gap-4"><TreasuryBrand /><WalletButton /></header>
       <p role="status">This Treasury agent hasn't been created yet.</p>
@@ -107,11 +110,11 @@ function AgentFrame() {
     </header>
     {title !== "Overview" && <Button asChild variant="outline" className="self-start"><Link to="/">Back to overview</Link></Button>}
     {error && <>
-      <p className="text-sm">{overview.data ? "Refresh failed. Showing previously loaded records; check again before acting." : "Some agent details could not be loaded. Operation status remains available for retained records."}</p>
+      <p className="text-sm">{overview.data ? "Refresh failed. Showing previously loaded records; check again before acting." : "Some agent details could not be loaded."}</p>
       <QueryError error={error} retry={() => { void setup.refetch(); void overview.refetch(); }} />
     </>}
     {overview.data
       ? <AgentContext.Provider value={{ setup: setup.data, data: overview.data }}><Outlet /></AgentContext.Provider>
-      : error ? <Link to="/activity" className="underline">Review existing operation records</Link> : <Loading label="Loading the book…" />}
+      : error ? null : <Loading label="Loading the book…" />}
   </main>;
 }

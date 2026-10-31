@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { gatewayRead, scopeOfKey, type Gateway } from "./platform";
-import { deniedAt, onAccessDenial, recheckAccess, useAccessState } from "./app/access";
+import { gatewayRead, isTreasury, scopeOfKey, type Gateway } from "./platform";
+import { deniedAt, onAccessDenial, recheckAccess, settleDenials, useAccessState } from "./app/access";
 import { AuthenticatedApp } from "./app/authenticated-app";
 import { SignedOutHome } from "./app/home";
 import { AGENT } from "./app/location";
@@ -14,7 +14,6 @@ import "./treasury-theme.css";
 document.documentElement.classList.add("treasury-theme", "dark");
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false } } });
-const isTreasury = (agent: Gateway["agents"][number]) => agent.area === "treasury" || agent.name === "treasury";
 
 onAccessDenial(denial => {
   if (denial.scope === "procedure") {
@@ -41,7 +40,10 @@ onSessionChange(() => { void queryClient.invalidateQueries({ queryKey: gatewayRe
 let viewer: string | null | undefined;
 queryClient.getQueryCache().subscribe(event => {
   if (event.type !== "updated" || event.action.type !== "success" || event.query.queryHash !== JSON.stringify(gatewayRead.queryKey)) return;
-  const account = (event.query.state.data as Gateway | undefined)?.viewer?.account ?? null;
+  const session = (event.query.state.data as Gateway | undefined)?.viewer ?? null;
+  // The refreshed permissions answer for the account now signed in, so earlier denials no longer stand in for them.
+  settleDenials(session);
+  const account = session?.account ?? null;
   if (viewer === account) return;
   viewer = account;
   const earlier = (query: { queryKey: readonly unknown[] }) => { const scope = scopeOfKey(query.queryKey); return Boolean(scope) && scope!.account !== (account ?? ""); };

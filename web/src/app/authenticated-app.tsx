@@ -1,12 +1,10 @@
 import { RouterProvider } from "@tanstack/react-router";
 import { useEffect } from "react";
-import type { Gateway } from "../platform";
+import { isTreasury, type Gateway } from "../platform";
 import { GatewayContext } from "./gateway-context";
 import { AGENT } from "./location";
 import { router } from "./router";
 import { ViewerContext, viewerOf } from "./viewer";
-
-const isTreasury = (agent: Gateway["agents"][number]) => agent.area === "treasury" || agent.name === "treasury";
 
 /** Signed in: the Treasury agent's pages. At the host's root, open the account's treasury. */
 export function AuthenticatedApp({ gateway }: { gateway: Gateway }) {
