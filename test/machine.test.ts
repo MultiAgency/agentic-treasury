@@ -23,9 +23,10 @@ test("a credential's scopes bound what compiles", () => {
   assert.equal(typeof machine, "function");
 });
 
-test("exit codes: 0 ok, 2 nothing sent, 3 unknown", () => {
+test("exit codes: 0 ok, 2 nothing sent, 3 unknown, 4 partial", () => {
   assert.equal(exitCode({ ok: true }), 0);
   for (const kind of ["session", "forbidden", "refused", "busy", "unresolved", "provider", "unavailable"] as const)
     assert.equal(exitCode({ ok: false, kind } as Parameters<typeof exitCode>[0]), 2, kind);
   assert.equal(exitCode({ ok: false, kind: "unknown", procedure: "executePlan", identity: { planId: "p" } }), 3);
+  assert.equal(exitCode({ ok: false, kind: "partial", error: "", legs: [] }), 4);
 });

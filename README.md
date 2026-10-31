@@ -43,15 +43,48 @@ pnpm treasury status
 
 ## Commands
 
+The agent proposes and the owner approves, each with its own credential:
+
 | Command | Credential | Effect |
 | --- | --- | --- |
 | `status` | `TREASURY_PROPOSE_TOKEN` (`read`) | Reads `overview`, `unresolved` and `activity`. Moves nothing |
+| `plan` | `TREASURY_PROPOSE_TOKEN` (`prepare`) | `rebalance`: quotes legs toward the owner's saved targets and saves a plan. Moves nothing |
+| `plan swap <from> <to> <amount>` | `TREASURY_PROPOSE_TOKEN` (`prepare`) | `externalPlan`: quotes one chosen swap (atomic units of `<from>`) and saves a plan. Moves nothing |
+| `execute <planId> [--yes]` | `TREASURY_EXECUTE_TOKEN` (`execute-plan`) | The owner's approval: executes a saved plan, which the executor claims at most once |
+| `sweep [--execute [--yes]]` | `TREASURY_SWEEP_TOKEN` (`sweep`) | Previews, or shields, managed public balances |
 
-Results print as JSON, decided by `kind`. Exit codes: `0` ok, `2` nothing was sent, `3` unknown (an action may have taken effect; read `activity` and `unresolved`, and never send it again).
+`execute` and `sweep --execute` move funds only with `--yes` or a "y" answered at a terminal; otherwise they send nothing. Results print as JSON values, one after another (stream events as they arrive, then `{ outcome }`), decided by `kind`.
+
+| Exit | Outcome | Meaning |
+| --- | --- | --- |
+| `0` | ok | Every leg (or shield) reported `SUCCESS`, or a read or proposal succeeded |
+| `2` | `refused`, `forbidden`, `session`, `busy`, `unresolved`, `provider`, `unavailable` | Nothing was sent |
+| `3` | `unknown` | An action may have taken effect: its answer was lost, or a leg's status isn't final |
+| `4` | `partial` | At least one leg or shield was sent, and not every leg succeeded. Funds may have moved; read activity and unresolved before acting again. The outcome lists each leg's status and `correlationId` |
+
+`execute` and `sweep` are decided from the legs they report, not from how their stream ends. The executor can reject a plan before any leg or after earlier legs moved funds, and it ends normally after a leg that didn't succeed.
+- A leg counts as sent unless its status is `NOT_SENT`, or if a shield before it was sent.
+- `rejected` with nothing sent is `refused` (2).
+- Anything sent, followed by `rejected` or a leg that isn't `SUCCESS`, is `partial` (4). `FAILED` and `REFUNDED` don't prove that nothing moved.
+- A status other than `SUCCESS`, `FAILED`, `REFUNDED` or `NOT_SENT` hasn't settled, so the outcome is `unknown` (3).
+
+After `unknown` or `partial`, the CLI reads `unresolved` and `activity` with the read credential and prints them as `{ recorded }`. It never sends the action again.
+
+To issue the owner's approval credentials on the stack:
+
+```sh
+pnpm stack:credential <run>/stack execute 600
+pnpm stack:credential <run>/stack sweep 600
+```
+
+On the stack, the simulator quotes only USDC → wNEAR. The stack's default targets hold ETH, so `rebalance` can't quote toward them. As a **test-only workaround**, the stack test writes the owner's targets straight into the agent's strategy file, the way the platform's treasury conformance spec does: the stack has no control for them at 5cd4d4d. This is the one place this repository reaches past the stack's control files.
 
 ## Checks
 
 ```sh
 pnpm typecheck
-pnpm test
+pnpm test                                  # unit tests
+TREASURY_STACK=<run>/stack pnpm test:stack # the CLI end to end on a running stack
 ```
+
+The stack test issues its own credentials (kept in memory, never in `.env`). It covers status, a proposed rebalance executed once with the owner's confirmation, a chosen swap, scope refusals and sweep. It's repeatable on one stack. The stack can't cause a Treasury provider outage or a lost reply at 5cd4d4d, so `test/commands.test.ts` covers `provider`, `unavailable` and `unknown` with a faked client: their exit codes, and that `unknown` reads `unresolved` and `activity` and never resends. It also covers every row of the execution mapping above: rejected before any leg, rejected after a leg, `FAILED`/`REFUNDED` legs, unsettled legs and shields, and sweep shields.

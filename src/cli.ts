@@ -1,28 +1,23 @@
+import { createInterface } from "node:readline/promises";
+import { run } from "./commands.ts";
 import { config, token } from "./config.ts";
 import { machine } from "./machine.ts";
 import { EXIT } from "./outcome.ts";
-import { status } from "./status.ts";
 
-const USAGE = "Usage: treasury status";
-
-/** Results as JSON; the SDK parses atomic amounts as bigint, printed as decimal strings. */
+/** Results as JSON, one value after another; the SDK parses atomic amounts as bigint, printed as decimal strings. */
 const print = (value: unknown) => console.log(JSON.stringify(value, (_key, v) => typeof v === "bigint" ? v.toString() : v, 2));
 
-async function main(command: string | undefined): Promise<number> {
-  switch (command) {
-    case "status": {
-      const { report, code } = await status(machine(config(), token("propose"), ["read"]));
-      print(report);
-      return code;
-    }
-    default:
-      console.error(USAGE);
-      return EXIT.notSent;
-  }
+/** An answer at a terminal. Without one, nothing is sent. */
+async function confirm(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return false;
+  const prompt = createInterface({ input: process.stdin, output: process.stderr });
+  try { return /^y(es)?$/i.test((await prompt.question(`${question} This moves funds. [y/N] `)).trim()); } finally { prompt.close(); }
 }
 
 try {
-  process.exitCode = await main(process.argv[2]);
+  const target = config();
+  process.exitCode = await run(process.argv.slice(2), (role, scopes) => machine(target, token(role), scopes),
+    { print, warn: text => console.error(text), confirm });
 } catch (error) {
   // Configuration and usage errors, before anything is sent.
   console.error(error instanceof Error ? error.message : error);
