@@ -3,14 +3,10 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import type { Role } from "../src/config.ts";
-import type { Scope } from "../src/machine.ts";
+import { ROLES, type Role } from "../src/config.ts";
 
 export const USDC = "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
 export const WNEAR = "nep141:wrap.near";
-
-/** The scopes the owner issues each role's credential with. */
-export const ISSUED: Record<Role, Scope[]> = { propose: ["read", "prepare"], execute: ["execute-plan"], sweep: ["sweep"] };
 
 export type Stack = { directory: string; origin: string; agent: string; ca: string };
 
@@ -36,9 +32,14 @@ async function control<T>({ directory }: Stack, command: Record<string, unknown>
   return result.value;
 }
 
-/** The owner issues a `portfolio` machine credential for the role, as on its access page. Returns the token. */
+/** The platform's credential lifetimes (`src/gateway/machine-auth.ts` at 5cd4d4d). */
+export const TTL = { min: 60, max: 86_400 } as const;
+
+/** The owner issues a `portfolio` machine credential for the role, with its scopes, as on its access page. Returns the token. */
 export async function issue(target: Stack, role: Role, ttlSeconds: number): Promise<string> {
-  return (await control<{ token: string }>(target, { command: "machineCredential", label: `treasury ${role}`, scopes: ISSUED[role], ttlSeconds })).token;
+  if (!Number.isInteger(ttlSeconds) || ttlSeconds < TTL.min || ttlSeconds > TTL.max)
+    throw new Error(`ttlSeconds must be an integer from ${TTL.min} to ${TTL.max}`);
+  return (await control<{ token: string }>(target, { command: "machineCredential", label: `treasury ${role}`, scopes: ROLES[role].scopes, ttlSeconds })).token;
 }
 
 /**

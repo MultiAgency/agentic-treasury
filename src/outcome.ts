@@ -15,30 +15,44 @@ export type Outcome = { ok: true } | OwnerFailure | Partial;
 export const exitCode = (result: Outcome): number =>
   result.ok ? EXIT.ok : result.kind === "unknown" ? EXIT.unknown : result.kind === "partial" ? EXIT.partial : EXIT.notSent;
 
-/** Hands each event of a stream to `onEvent` as it arrives; the stream's end is its outcome. Never resends. */
-export async function follow<E>(stream: AsyncGenerator<E, OwnerFailure | undefined>, onEvent: (event: E) => void): Promise<Outcome> {
-  for (let next = await stream.next(); ; next = await stream.next()) {
-    if (next.done) return next.value ?? { ok: true };
-    onEvent(next.value);
+/** What an action is looked up by when its outcome is unknown: the procedure and the input it was sent with. */
+export type Sent = { procedure: OwnerProcedure; identity: Record<string, unknown> };
+
+/**
+ * Hands each event of a stream to `onEvent` as it arrives; the stream's end is its outcome. Never resends. A throw after
+ * the first event (ours or the stream's) leaves part of the action possibly done: it closes the stream as unknown.
+ */
+export async function follow<E>(stream: AsyncGenerator<E, OwnerFailure | undefined>, onEvent: (event: E) => void, sent: Sent): Promise<Outcome> {
+  let started = false;
+  try {
+    for (let next = await stream.next(); ; next = await stream.next()) {
+      if (next.done) return next.value ?? { ok: true };
+      started = true;
+      onEvent(next.value);
+    }
+  } catch (error) {
+    if (!started) throw error;
+    void stream.return(undefined).catch(() => {});
+    return { ok: false, kind: "unknown", ...sent };
   }
 }
 
 /** The provider's final statuses (the platform's `src/ops.ts`). FAILED and REFUNDED don't prove that nothing moved. */
 const SETTLED = new Set(["SUCCESS", "FAILED", "REFUNDED"]);
 const NOT_SENT = "NOT_SENT";
-const sent = (status: string) => status !== NOT_SENT;
-const unsettled = (status: string) => sent(status) && !SETTLED.has(status);
+const wasSent = (status: string) => status !== NOT_SENT;
+const unsettled = (status: string) => wasSent(status) && !SETTLED.has(status);
 
 /**
  * Decides an execution from the legs it reported, not from how its stream ended: the executor rejects a plan before any
  * leg, or after earlier legs moved funds, and ends normally after a leg that didn't succeed.
  */
-export function settle(ended: Outcome, legs: Leg[], rejected: string[] | null, unknown: { procedure: OwnerProcedure; identity: Record<string, unknown> }): Outcome {
+export function settle(ended: Outcome, legs: Leg[], rejected: string[] | null, sent: Sent): Outcome {
   // The SDK already reports a stream lost after any event as unknown, and any other failure as proven before sending.
   if (!ended.ok) return ended;
   if (legs.some(leg => unsettled(leg.status) || (leg.shield && unsettled(leg.shield.status))))
-    return { ok: false, kind: "unknown", ...unknown };
-  const moved = legs.filter(leg => sent(leg.status) || (leg.shield && sent(leg.shield.status)));
+    return { ok: false, kind: "unknown", ...sent };
+  const moved = legs.filter(leg => wasSent(leg.status) || (leg.shield && wasSent(leg.shield.status)));
   const problems = rejected ? `: ${rejected.join("; ")}` : "";
   if (!moved.length)
     return rejected || legs.length ? { ok: false, kind: "refused", error: `Nothing was sent${problems}` } : { ok: true };

@@ -21,7 +21,8 @@ function fake(answers: Record<string, unknown>) {
     call: async (path: string) => { sent.push(`${role}:${path}`); return answer(path); },
     async *stream(path: string) {
       sent.push(`${role}:${path}`);
-      const { events = [], end } = answer(path) as { events?: unknown[]; end?: OwnerFailure };
+      const { events = [], end, throws } = answer(path) as { events?: unknown[]; end?: OwnerFailure; throws?: Error };
+      if (throws) throw throws;
       yield* events;
       return end;
     },
@@ -45,6 +46,47 @@ test("unknown sweep: exit 3, reads what was recorded, never resends", async () =
   assert.deepEqual(route.sent.sort(), ["propose:activity", "propose:unresolved", "sweep:sweep"]);
 });
 
+test("a lost sweep preview is a lost read: unavailable, exit 2, no records read", async () => {
+  const route = fake({ sweep: { events: [{ type: "plan", exposed: [] }], end: unknown("sweep", { execute: false }) }, ...recorded });
+  assert.equal(await run(["sweep"], route.connect, route.io), 2);
+  assert.deepEqual(route.sent, ["sweep:sweep"]);
+  assert.deepEqual(route.printed.at(-1), { outcome: { ok: false, kind: "unavailable" } });
+});
+
+test("a throw after the first event is unknown: exit 3, records read, never resent", async () => {
+  const route = fake({ executePlan: { events: [{ type: "action", index: 0, status: "SUCCESS", correlationId: "c0" }, { type: "action", index: 1, status: "SUCCESS", correlationId: "c1" }] }, ...recorded });
+  const io = { ...route.io, print: (value: unknown) => {
+    if ((value as { type?: string }).type === "action") throw new Error("stdout closed");
+    route.printed.push(value);
+  } };
+  assert.equal(await run(["execute", "p", "--yes"], route.connect, io), 3);
+  assert.deepEqual(route.sent.sort(), ["execute:executePlan", "propose:activity", "propose:unresolved"]);
+  assert.deepEqual(route.printed[0], { outcome: { ok: false, kind: "unknown", procedure: "executePlan", identity: { planId: "p" } } });
+});
+
+test("a throw before the first event stays a throw", async () => {
+  const route = fake({ executePlan: { throws: new Error("before anything") } });
+  await assert.rejects(run(["execute", "p", "--yes"], route.connect, route.io), /before anything/);
+  assert.deepEqual(route.sent, ["execute:executePlan"]);
+});
+
+test("usage errors are reported before anything is configured or sent", async () => {
+  const route = fake({});
+  const connect = (() => { throw new Error("Set TREASURY_ORIGIN in .env"); }) as Connect;
+  const warned: string[] = [], io = { ...route.io, warn: (text: string) => warned.push(text) };
+  for (const argv of [[], ["bogus"], ["plan", "swap", "a", "b"], ["plan", "swap", "a", "b", "0"], ["plan", "swap", "a", "b", "1", "000000"],
+    ["plan", "extra"], ["execute"], ["execute", "p", "q"], ["status", "x"], ["sweep", "x"], ["sweep", "--unknown"]])
+    assert.equal(await run(argv, connect, io), 2, argv.join(" "));
+  assert.equal(warned.length, 11);
+  assert.ok(warned.every(text => text.startsWith("Usage:")));
+});
+
+test("plan swap with a stray space in the amount: usage, exit 2, no plan proposed", async () => {
+  const route = fake({ externalPlan: { ok: true, value: { id: "p" } } });
+  assert.equal(await run(["plan", "swap", "a", "b", "1", "000000"], route.connect, route.io), 2);
+  assert.deepEqual(route.sent, []);
+});
+
 test("unknown proposal: exit 3, reads what was recorded", async () => {
   const route = fake({ externalPlan: unknown("externalPlan"), ...recorded });
   assert.equal(await run(["plan", "swap", "a", "b", "1"], route.connect, route.io), 3);
@@ -53,7 +95,7 @@ test("unknown proposal: exit 3, reads what was recorded", async () => {
 
 test("unknown stays exit 3 when what was recorded can't be read", async () => {
   const route = fake({ executePlan: { end: unknown("executePlan", { planId: "p" }) } });
-  const connect: Connect = (role, scopes) => { if (role === "propose") throw new Error("Set TREASURY_PROPOSE_TOKEN in .env"); return route.connect(role, scopes); };
+  const connect = (role => { if (role === "propose") throw new Error("Set TREASURY_PROPOSE_TOKEN in .env"); return route.connect(role); }) as Connect;
   assert.equal(await run(["execute", "p", "--yes"], connect, route.io), 3);
   assert.deepEqual(route.sent, ["execute:executePlan"]);
 });

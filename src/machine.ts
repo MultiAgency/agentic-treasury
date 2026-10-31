@@ -1,5 +1,5 @@
 import { ownerClient, type OwnerClient, type OwnerFailure, type OwnerInputs, type OwnerOutput, type OwnerProcedure, type OwnerResult } from "@multiagency/sdk";
-import type { Config } from "./config.ts";
+import { token, type Config, type Granted, type Role } from "./config.ts";
 
 /**
  * What each machine credential scope reaches on `/machine/v1` (the platform's `src/gateway/machine-auth.ts` at 5cd4d4d).
@@ -17,14 +17,22 @@ type Reach<S extends Scope> = (typeof SCOPES)[S][number];
 type Streamed = Parameters<OwnerClient["stream"]>[0];
 type Args<P extends OwnerProcedure> = undefined extends OwnerInputs[P] ? [input?: OwnerInputs[P]] : [input: OwnerInputs[P]];
 
-/** `ownerClient` narrowed to the procedures a credential's scopes reach, so a call outside them doesn't compile. */
+/** Type-only: which scopes a client was issued with. Generic methods alone don't stop one client standing in for another's. */
+declare const granted: unique symbol;
+
+/**
+ * `ownerClient` narrowed to the procedures a credential's scopes reach, so a call outside them doesn't compile. A client
+ * is usable where a subset of its scopes is expected, never where another scope is.
+ */
 export type Machine<S extends Scope> = {
+  readonly [granted]?: { readonly [K in S]: true };
   call<P extends Exclude<Reach<S>, Streamed>>(path: P, ...input: Args<P>): Promise<OwnerResult<OwnerOutput<P>>>;
   stream<P extends Extract<Reach<S>, Streamed>>(path: P, input: OwnerInputs[P]): AsyncGenerator<OwnerOutput<P>, OwnerFailure | undefined>;
 };
 
-/** The agent's machine route with a bearer credential; `scopes` are the ones the owner issued it with. */
-export function machine<S extends Scope>({ origin, agent }: Config, token: string, _scopes: readonly S[]): Machine<S> {
+/** The agent's machine route under the role's bearer credential, reaching only the scopes that role is issued with. */
+export function machine<R extends Role>({ origin, agent }: Config, role: R, env: NodeJS.ProcessEnv = process.env): Machine<Granted<R>> {
+  const bearer = token(role, env);
   return ownerClient({ base: `${origin}/machine/v1/a/${agent}` as `https://${string}`, fetch: (input, init) => fetch(input, {
-    ...init, headers: { ...Object.fromEntries(new Headers(init?.headers)), authorization: `Bearer ${token}` }, credentials: "omit", redirect: "error" }) });
+    ...init, headers: { ...Object.fromEntries(new Headers(init?.headers)), authorization: `Bearer ${bearer}` }, credentials: "omit", redirect: "error" }) });
 }

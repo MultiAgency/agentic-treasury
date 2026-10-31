@@ -11,7 +11,7 @@ export async function rebalance(propose: Machine<"prepare">, onEvent: (event: Ow
   const outcome = await follow(propose.stream("rebalance", undefined), event => {
     if (event.type === "saved") planId = event.plan.id;
     onEvent(event);
-  });
+  }, { procedure: "rebalance", identity: {} });
   return { outcome, planId };
 }
 

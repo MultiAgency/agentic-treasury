@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import { run } from "./commands.ts";
-import { config, token } from "./config.ts";
+import { config, type Config } from "./config.ts";
 import { machine } from "./machine.ts";
 import { EXIT } from "./outcome.ts";
 
@@ -14,12 +14,13 @@ async function confirm(question: string): Promise<boolean> {
   try { return /^y(es)?$/i.test((await prompt.question(`${question} This moves funds. [y/N] `)).trim()); } finally { prompt.close(); }
 }
 
+// Configuration is read when a command first connects, after its arguments are checked.
+let target: Config | undefined;
 try {
-  const target = config();
-  process.exitCode = await run(process.argv.slice(2), (role, scopes) => machine(target, token(role), scopes),
+  process.exitCode = await run(process.argv.slice(2), role => machine(target ??= config(), role),
     { print, warn: text => console.error(text), confirm });
 } catch (error) {
-  // Configuration and usage errors, before anything is sent.
+  // Configuration errors, before anything is sent: a throw once a stream has an event is `unknown` (see `follow`).
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = EXIT.notSent;
 }

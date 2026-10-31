@@ -3,7 +3,7 @@
 import { before, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { TOKENS, type Role } from "../src/config.ts";
+import { ROLES, type Role } from "../src/config.ts";
 import { issue, stack, targets, USDC, WNEAR, type Stack } from "../scripts/stack.ts";
 
 const directory = process.env.TREASURY_STACK;
@@ -24,7 +24,7 @@ before(async () => {
 /** Runs the CLI with stdin that isn't a terminal; its output is a sequence of JSON values. */
 function treasury(args: string[], credentials: Partial<Record<Role, string>> = tokens) {
   const env = { PATH: process.env.PATH, NODE_EXTRA_CA_CERTS: target.ca, TREASURY_ORIGIN: target.origin, TREASURY_AGENT: target.agent,
-    ...Object.fromEntries(Object.entries(credentials).map(([role, token]) => [TOKENS[role as Role], token])) };
+    ...Object.fromEntries(Object.entries(credentials).map(([role, token]) => [ROLES[role as Role].token, token])) };
   const run = spawnSync(process.execPath, ["src/cli.ts", ...args], { env, encoding: "utf8", input: "" });
   for (const token of Object.values(tokens)) assert.ok(!run.stdout.includes(token) && !run.stderr.includes(token), "no token is printed");
   const values = run.stdout.trim() ? run.stdout.trim().split(/\n(?=[{[])/).map(text => JSON.parse(text)) : [];

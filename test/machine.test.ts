@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import type { Connect } from "../src/commands.ts";
+import { ROLES } from "../src/config.ts";
 import { machine, type Machine } from "../src/machine.ts";
 import { exitCode } from "../src/outcome.ts";
 
@@ -21,6 +23,28 @@ test("a credential's scopes bound what compiles", () => {
   };
   assert.equal(typeof typed, "function");
   assert.equal(typeof machine, "function");
+});
+
+test("a role's client reaches only the scopes that role is issued with", () => {
+  const typed = (connect: Connect) => {
+    const read: Machine<"read"> = connect("propose");
+    const execute: Machine<"execute-plan"> = connect("execute");
+    void read; void execute;
+    // @ts-expect-error the execute role's credential doesn't read
+    const readWithExecute: Machine<"read"> = connect("execute");
+    // @ts-expect-error the sweep role's credential doesn't execute plans
+    const executeWithSweep: Machine<"execute-plan"> = connect("sweep");
+    // @ts-expect-error the propose role's credential doesn't execute plans
+    const executeWithPropose: Machine<"execute-plan"> = connect("propose");
+    void readWithExecute; void executeWithSweep; void executeWithPropose;
+    // @ts-expect-error the execute role's credential doesn't read
+    void connect("execute").call("activity");
+    // @ts-expect-error the propose role's credential doesn't sweep
+    void connect("propose").stream("sweep", { execute: true });
+  };
+  assert.equal(typeof typed, "function");
+  assert.deepEqual(Object.fromEntries(Object.entries(ROLES).map(([role, { scopes }]) => [role, [...scopes]])),
+    { propose: ["read", "prepare"], execute: ["execute-plan"], sweep: ["sweep"] });
 });
 
 test("exit codes: 0 ok, 2 nothing sent, 3 unknown, 4 partial", () => {

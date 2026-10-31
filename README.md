@@ -10,7 +10,7 @@ SDK and platform feedback goes to [MultiAgency/platform](https://github.com/Mult
 
 ## What the agent may do
 
-Each credential reaches only its scopes, and the scopes don't imply one another. `src/machine.ts` narrows `ownerClient` to them, so a call outside a credential's scopes doesn't compile, and the server refuses it with `forbidden` anyway.
+Each credential reaches only its scopes, and the scopes don't imply one another. `src/config.ts` fixes the scopes each role's credential is issued with, and `src/machine.ts` narrows `ownerClient` to them. A call outside a role's scopes doesn't compile, and neither does using one role's client where another's scopes are expected. The server refuses either with `forbidden` anyway.
 
 | Scope | Procedures |
 | --- | --- |
@@ -39,7 +39,7 @@ export NODE_EXTRA_CA_CERTS=<run>/stack/environment/localhost.crt
 pnpm treasury status
 ```
 
-`stack:credential` acts as the owner through the stack's `machineCredential` control. It writes the token to `.env` (mode 0600) and never prints it. Node reads `NODE_EXTRA_CA_CERTS` before it loads `.env`, so the stack's CA is exported in the shell instead.
+`stack:credential` acts as the owner through the stack's `machineCredential` control. It takes a role (`propose`, `execute` or `sweep`) and an optional lifetime in whole seconds from 60 to 86400 (default 3600), and prints the platform's error if issuing fails. It writes the token into `.env` through a new 0600 file renamed over it, so the token is never readable under another mode. Other lines, comments and blank lines are kept, and the token is never printed. Node reads `NODE_EXTRA_CA_CERTS` before it loads `.env`, so the stack's CA is exported in the shell instead.
 
 ## Commands
 
@@ -67,6 +67,10 @@ The agent proposes and the owner approves, each with its own credential:
 - `rejected` with nothing sent is `refused` (2).
 - Anything sent, followed by `rejected` or a leg that isn't `SUCCESS`, is `partial` (4). `FAILED` and `REFUNDED` don't prove that nothing moved.
 - A status other than `SUCCESS`, `FAILED`, `REFUNDED` or `NOT_SENT` hasn't settled, so the outcome is `unknown` (3).
+- A throw after the stream's first event, including one in the CLI's own output, is `unknown` (3).
+- A lost sweep preview (`sweep` without `--execute`) is `unavailable` (2), with no records read: a preview takes no money lock and returns before any send.
+
+Arguments are checked before `.env` is read, so a usage error prints usage (exit 2) even without configuration.
 
 After `unknown` or `partial`, the CLI reads `unresolved` and `activity` with the read credential and prints them as `{ recorded }`. It never sends the action again.
 
@@ -87,4 +91,4 @@ pnpm test                                  # unit tests
 TREASURY_STACK=<run>/stack pnpm test:stack # the CLI end to end on a running stack
 ```
 
-The stack test issues its own credentials (kept in memory, never in `.env`). It covers status, a proposed rebalance executed once with the owner's confirmation, a chosen swap, scope refusals and sweep. It's repeatable on one stack. The stack can't cause a Treasury provider outage or a lost reply at 5cd4d4d, so `test/commands.test.ts` covers `provider`, `unavailable` and `unknown` with a faked client: their exit codes, and that `unknown` reads `unresolved` and `activity` and never resends. It also covers every row of the execution mapping above: rejected before any leg, rejected after a leg, `FAILED`/`REFUNDED` legs, unsettled legs and shields, and sweep shields.
+The stack test issues its own credentials (kept in memory, never in `.env`). It covers status, a proposed rebalance executed once with the owner's confirmation, a chosen swap, scope refusals and sweep. It's repeatable on one stack. The stack can't cause a Treasury provider outage or a lost reply at 5cd4d4d, so `test/commands.test.ts` covers `provider`, `unavailable` and `unknown` with a faked client: their exit codes, and that `unknown` reads `unresolved` and `activity` and never resends. It also covers every row of the execution mapping above: rejected before any leg, rejected after a leg, `FAILED`/`REFUNDED` legs, unsettled legs and shields, sweep shields, a lost preview, a throw mid-stream, and usage errors. `test/stack-credential.test.ts` runs the credential script against a fake stack directory.
