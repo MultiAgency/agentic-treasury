@@ -1,20 +1,5 @@
 node_modules/
-dist/
 .env
 .env.*
 !.env.example
 .DS_Store
-# runtime state
-.ops/
-.invoices/
-.owner-intents/
-.strategy/
-.plans/
-.evidence/
-.inbox/
-.agreements/
-.notify/
-.work-orders/
-.hosted/
-.agent-connections/
-.machine-auth/

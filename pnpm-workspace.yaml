@@ -2,8 +2,6 @@
 # Remove once 0.3.0 is past the release age.
 minimumReleaseAgeExclude:
   - '@multiagency/sdk@0.3.0'
-allowBuilds:
-  esbuild: false
 permissions:
   '@multiagency/sdk':
     skills: true
