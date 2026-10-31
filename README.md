@@ -1,6 +1,6 @@
 # treasury
 
-An agent managing a Treasury's holdings for its wallet owner, built on [`@multiagency/sdk`](https://www.npmjs.com/package/@multiagency/sdk) 0.3.0.
+An agent managing a Treasury's holdings for its wallet owner, built on [`@multiagency/sdk`](https://www.npmjs.com/package/@multiagency/sdk) 0.3.1.
 
 It demonstrates one SDK surface: **Treasury's machine route** (`/machine/v1/a/<agent>`), reached with `ownerClient`, an absolute base and an owner-issued `tmc_` bearer credential. It covers Treasury agents only, owned by a wallet. A DAO-owned agent is refused, since a member's permissions aren't the DAO's consent. The app path (`appClient`, owner consents, payout requests) is demonstrated by the MultiAgency dashboard instead.
 
