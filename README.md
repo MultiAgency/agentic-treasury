@@ -4,7 +4,7 @@ An agent managing a Treasury's holdings for its wallet owner, built on [`@multia
 
 It demonstrates one SDK surface: **Treasury's machine route** (`/machine/v1/a/<agent>`), reached with `ownerClient`, an absolute base and an owner-issued `tmc_` bearer credential. It covers Treasury agents only, owned by a wallet. A DAO-owned agent is refused, since a member's permissions aren't the DAO's consent. The app path (`appClient`, owner consents, payout requests) is demonstrated by the MultiAgency dashboard instead.
 
-The platform host doesn't serve the machine route yet, so this runs against the platform's simulated stack at [`5cd4d4d`](https://github.com/MultiAgency/platform/commit/5cd4d4d). Its provider, chain, signatures and settlement are simulated. Pointing at a hosted platform is a separate decision. The host, agent and credentials live in `.env`.
+The platform host doesn't serve the machine route yet, so this runs against the platform's simulated stack at [`766b3f3`](https://github.com/MultiAgency/platform/commit/766b3f3) (tag `sdk-v0.3.1`, the commit SDK 0.3.1 was published from). Its provider, chain, signatures and settlement are simulated. Pointing at a hosted platform is a separate decision. The host, agent and credentials live in `.env`.
 
 SDK and platform feedback goes to [MultiAgency/platform](https://github.com/MultiAgency/platform).
 
@@ -26,7 +26,7 @@ Nothing on this route signs owner actions or changes policy, grants, schedules o
 Requires Node ≥ 24.22 and pnpm 12.15.
 
 ```sh
-git clone https://github.com/MultiAgency/platform.git ../platform && git -C ../platform checkout 5cd4d4d
+git clone https://github.com/MultiAgency/platform.git ../platform && git -C ../platform checkout 766b3f3
 (cd ../platform && pnpm install --frozen-lockfile && pnpm test:e2e:stack --no-browser --treasury)
 ```
 
@@ -62,6 +62,8 @@ The agent proposes and the owner approves, each with its own credential:
 | `3` | `unknown` | An action may have taken effect: its answer was lost, or a leg's status isn't final |
 | `4` | `partial` | At least one leg or shield was sent, and not every leg succeeded. Funds may have moved; read activity and unresolved before acting again. The outcome lists each leg's status and `correlationId` |
 
+On the machine route, `forbidden` from the gateway (`source: "gateway"`) also covers a provider outage. The gateway re-checks the agent's identity with the provider on every call, and refuses with 403 when that check goes unanswered (the platform's `src/gateway/machine-authority.ts`). Nothing was sent either way.
+
 `execute` and `sweep` are decided from the legs they report, not from how their stream ends. The executor can reject a plan before any leg or after earlier legs moved funds, and it ends normally after a leg that didn't succeed.
 - A leg counts as sent unless its status is `NOT_SENT`, or if a shield before it was sent.
 - `rejected` with nothing sent is `refused` (2).
@@ -81,14 +83,22 @@ pnpm stack:credential <run>/stack execute 600
 pnpm stack:credential <run>/stack sweep 600
 ```
 
-On the stack, the simulator quotes only USDC → wNEAR. The stack's default targets hold ETH, so `rebalance` can't quote toward them. As a **test-only workaround**, the stack test writes the owner's targets straight into the agent's strategy file, the way the platform's treasury conformance spec does: the stack has no control for them at 5cd4d4d. This is the one place this repository reaches past the stack's control files.
+On the stack, the simulator quotes a swap between any two listed tokens, so `rebalance` works against the stack's default targets (USDC 50%, wNEAR 25%, ETH 25%). The stack test sets the owner's targets with the stack's `setTargets` control, which saves them through `strategy/save` as the owner and turns autopilot off. This repository reaches the stack only through its state file and control files.
 
 ## Checks
 
 ```sh
 pnpm typecheck
 pnpm test                                  # unit tests
-TREASURY_STACK=<run>/stack pnpm test:stack # the CLI end to end on a running stack
+pnpm test:stack                            # the CLI end to end on a fresh stack it starts and stops
 ```
 
-The stack test issues its own credentials (kept in memory, never in `.env`). It covers status, a proposed rebalance executed once with the owner's confirmation, a chosen swap, scope refusals and sweep. It's repeatable on one stack. The stack can't cause a Treasury provider outage or a lost reply at 5cd4d4d, so `test/commands.test.ts` covers `provider`, `unavailable` and `unknown` with a faked client: their exit codes, and that `unknown` reads `unresolved` and `activity` and never resends. It also covers every row of the execution mapping above: rejected before any leg, rejected after a leg, `FAILED`/`REFUNDED` legs, unsettled legs and shields, sweep shields, a lost preview, a throw mid-stream, and usage errors. `test/stack-credential.test.ts` runs the credential script against a fake stack directory.
+The stack test starts a fresh stack from `../platform` (or `TREASURY_PLATFORM`), which must be checked out at 766b3f3 with its dependencies installed, and stops it afterwards. The stack's files go under the platform's `.test-artifacts/`, as its own runs' do. A run takes under a minute. It issues its own credentials, kept in memory and never written to `.env`, and covers:
+- a proposed rebalance executed once with the owner's confirmation, and refused when executed again;
+- a swap the agent refuses to plan (`refused`, exit 2);
+- scope refusals;
+- a sweep that shields a public balance (`fundPublic`);
+- an outage of the agent's provider (`setUnavailable` on `portfolio`), which the gateway answers with `forbidden`;
+- last, a lost swap reply (`dropSwapResponse`): `execute` exits 3, reads the records, and the swap was applied once and not resent. The operation stays unresolved until the owner's `recover`, which leaves that stack blocked; it's stopped afterwards anyway.
+
+`test/commands.test.ts` covers the same outcomes with a faked client (`provider`, `unavailable`, `unknown`: their exit codes, and that `unknown` reads `unresolved` and `activity` and never resends). It also covers every row of the execution mapping above: rejected before any leg, rejected after a leg, `FAILED`/`REFUNDED` legs, unsettled legs and shields, sweep shields, a lost preview, a throw mid-stream, and usage errors. `test/stack-credential.test.ts` runs the credential script against a fake stack directory.
