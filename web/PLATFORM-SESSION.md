@@ -33,7 +33,7 @@ Changed or not present yet:
 | The frame on a failed read | Also offered "Turn off" (stop the schedule) | Not offered | #6 (owner actions) |
 | The frame on a new agent | The setup's next step (`SetupNextStep`) | Not shown | #12 (creation) |
 
-A wallet connected to another account than the session's shows an alert under the wallet button ("This wallet is connected to `<wallet>`, but you're signed in as `<account>`. Owner actions are unavailable until they match."), and owner controls stay disabled; a sign-out the gateway doesn't confirm shows its error there instead of reloading. Neither changes a name the specs query.
+A wallet connected to another account than the session's shows a status note under the wallet button ("This wallet is connected to `<wallet>`, but you're signed in as `<account>`. Owner actions are unavailable until they match."), and owner controls stay disabled; a sign-out the gateway doesn't confirm shows its error there instead of reloading. Neither changes a name the specs query.
 
 "Signed in" and "Sign out" (the `ViewerBadge`) don't render in a Treasury-only build in A either, so shared-reader's and account-switch's queries for them don't concern this build.
 

@@ -26,7 +26,8 @@ export function WalletButton() {
           }}>Disconnect</DropdownMenuItem>
         </DropdownMenuGroup></DropdownMenuContent>
       </DropdownMenu>
-      {mismatch && <p role="alert" className="text-right text-sm">
+      {/* A status, not an alert: it stays while the mismatch does, and an alert would be announced again on every page. */}
+      {mismatch && <p role="status" className="text-right text-sm">
         This wallet is connected to {wallet.accountId}, but you're signed in as {viewer.account}. Owner actions are unavailable until they match.
       </p>}
       <ErrorBox error={error} />
