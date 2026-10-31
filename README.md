@@ -21,6 +21,11 @@ Each credential reaches only its scopes, and the scopes don't imply one another.
 
 Nothing on this route signs owner actions or changes policy, grants, schedules or payments.
 
+Two limits are the owner's to manage, not the route's:
+
+- **An execute credential runs any saved plan of this Treasury**, not only the one you proposed. The gateway checks its scope, not which plan it executes (the platform's `src/gateway/machine-auth.ts`). Execute only the plan ID you mean, and issue execute credentials with a short lifetime.
+- **A plan run through `execute` has no spending ceiling of its own.** Autopilot's per-run `maxUsd` applies only to autopilot (the platform's `src/autopilot.ts`). Only the owner's policy and grants limit a plan, and spending caps don't cap market exposure.
+
 ## Run it on the simulated stack
 
 Requires Node ≥ 24.22 and pnpm 12.15.
